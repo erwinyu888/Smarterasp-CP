@@ -117,13 +117,15 @@ const controlPanelSections = [
 
 const websiteActions = [
   { label: "Error Logs", icon: "logs" },
-  { label: "Add Domain", icon: "add-domain" },
   { label: "SSL", icon: "ssl" },
   { label: "CDN", icon: "cdn" },
-  { label: "Git Deploy", icon: "git" },
-  { label: "Web Deploy", icon: "deploy" },
   { label: "File Manager", icon: "folder" },
   { label: "More Functions", icon: "more" }
+];
+
+const deployActions = [
+  { label: "Github", icon: "git" },
+  { label: "VSDeploy", icon: "deploy" }
 ];
 
 const websites = [
@@ -548,6 +550,13 @@ function HostingCpPlaceholder({ title }) {
 
 function WebsitesSection() {
   const [viewMode, setViewMode] = useState("cards");
+  const [siteRecords, setSiteRecords] = useState(websites);
+
+  function updateSiteName(index, siteName) {
+    setSiteRecords((currentSites) =>
+      currentSites.map((site, siteIndex) => (siteIndex === index ? { ...site, siteName } : site))
+    );
+  }
 
   return (
     <section className="websites-section">
@@ -562,35 +571,44 @@ function WebsitesSection() {
             className={viewMode === "cards" ? "active" : ""}
             type="button"
             onClick={() => setViewMode("cards")}
+            title="Cards"
+            aria-label="Cards"
           >
             <MenuIcon name="cards" />
-            <span>Cards</span>
           </button>
           <button
             className={viewMode === "table" ? "active" : ""}
             type="button"
             onClick={() => setViewMode("table")}
+            title="Table"
+            aria-label="Table"
           >
             <MenuIcon name="table" />
-            <span>Table</span>
           </button>
         </div>
       </div>
 
-      {viewMode === "cards" ? <WebsiteCards /> : <WebsiteTable />}
+      {viewMode === "cards" ? (
+        <WebsiteCards sites={siteRecords} onUpdateSiteName={updateSiteName} />
+      ) : (
+        <WebsiteTable sites={siteRecords} onUpdateSiteName={updateSiteName} />
+      )}
     </section>
   );
 }
 
-function WebsiteCards() {
+function WebsiteCards({ sites, onUpdateSiteName }) {
   return (
     <div className="website-card-grid">
-      {websites.map((site) => (
-        <article className="panel-card website-card" key={site.siteName}>
+      {sites.map((site, siteIndex) => (
+        <article className="panel-card website-card" key={`${site.siteName}-${siteIndex}`}>
           <div className="website-card-header">
-            <div>
+            <div className="website-title-group">
               <span className="status-pill">{site.status}</span>
-              <h2>{site.siteName}</h2>
+              <div className="website-title-row">
+                <SiteNameEditor siteName={site.siteName} onChange={(siteName) => onUpdateSiteName(siteIndex, siteName)} />
+                <DeployButtons />
+              </div>
             </div>
             <span className="runtime-pill">{site.runtime}</span>
           </div>
@@ -603,6 +621,9 @@ function WebsiteCards() {
                   <span className="ssl-domain-badge">SSL</span>
                 </a>
               ))}
+              <button className="add-domain-chip" type="button" title="+ Add Domain" aria-label="+ Add Domain">
+                <MenuIcon name="add-domain" />
+              </button>
             </div>
           </div>
           <WebsiteActionButtons />
@@ -612,7 +633,7 @@ function WebsiteCards() {
   );
 }
 
-function WebsiteTable() {
+function WebsiteTable({ sites, onUpdateSiteName }) {
   return (
     <div className="table-wrap website-table">
       <table>
@@ -626,9 +647,14 @@ function WebsiteTable() {
           </tr>
         </thead>
         <tbody>
-          {websites.map((site) => (
-            <tr key={site.siteName}>
-              <td>{site.siteName}</td>
+          {sites.map((site, siteIndex) => (
+            <tr key={`${site.siteName}-${siteIndex}`}>
+              <td>
+                <div className="website-table-name">
+                  <SiteNameEditor siteName={site.siteName} onChange={(siteName) => onUpdateSiteName(siteIndex, siteName)} />
+                  <DeployButtons />
+                </div>
+              </td>
               <td>
                 <div className="table-domain-list">
                   {site.mappedDomains.map((domain) => (
@@ -637,6 +663,9 @@ function WebsiteTable() {
                       <span className="ssl-domain-badge">SSL</span>
                     </a>
                   ))}
+                  <button className="add-domain-chip" type="button" title="+ Add Domain" aria-label="+ Add Domain">
+                    <MenuIcon name="add-domain" />
+                  </button>
                 </div>
               </td>
               <td>{site.runtime}</td>
@@ -646,6 +675,56 @@ function WebsiteTable() {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function SiteNameEditor({ siteName, onChange }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftName, setDraftName] = useState(siteName);
+
+  function commitName() {
+    const nextName = draftName.trim();
+    onChange(nextName || siteName);
+    setDraftName(nextName || siteName);
+    setIsEditing(false);
+  }
+
+  if (isEditing) {
+    return (
+      <input
+        autoFocus
+        className="site-name-input"
+        value={draftName}
+        onBlur={commitName}
+        onChange={(event) => setDraftName(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commitName();
+          if (event.key === "Escape") {
+            setDraftName(siteName);
+            setIsEditing(false);
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <button className="site-name-button" type="button" onClick={() => setIsEditing(true)} title="Edit site name">
+      {siteName}
+    </button>
+  );
+}
+
+function DeployButtons() {
+  return (
+    <div className="deploy-buttons" aria-label="Deploy options">
+      {deployActions.map((action) => (
+        <button className="deploy-button" type="button" key={action.label}>
+          <MenuIcon name={action.icon} />
+          <span>{action.label}</span>
+        </button>
+      ))}
     </div>
   );
 }
