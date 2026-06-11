@@ -3,3 +3,4 @@ bin/
 obj/
 ClientApp/node_modules/
 ClientApp/.vite/
+.env
