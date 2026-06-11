@@ -362,6 +362,71 @@ html[data-theme="light"] .sidebar {
   margin-bottom: 14px;
 }
 
+.mock-plan-select-wrap {
+  position: relative;
+}
+
+.mock-plan-trigger,
+.mock-plan-option {
+  align-items: center;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: flex;
+  font: inherit;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 0 12px;
+  width: 100%;
+}
+
+.mock-plan-trigger:focus,
+.mock-plan-option:focus {
+  border-color: #4da3ff;
+  outline: none;
+}
+
+.mock-plan-trigger .menu-icon:last-child {
+  color: var(--muted);
+  height: 14px;
+  width: 14px;
+}
+
+.mock-plan-trigger-label,
+.mock-plan-option-label {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.mock-plan-trigger-label .menu-icon,
+.mock-plan-option-label .menu-icon {
+  height: 14px;
+  width: 14px;
+}
+
+.mock-plan-menu {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px;
+}
+
+.mock-plan-option {
+  background: transparent;
+  min-height: 34px;
+}
+
+.mock-plan-option.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 .project-brand {
   border-radius: 8px;
   gap: 9px;
@@ -684,7 +749,6 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
   margin-bottom: 0;
 }
 
-.demo-badge,
 .status-pill {
   background: rgba(33, 166, 122, 0.1);
   border: 1px solid rgba(33, 166, 122, 0.36);
@@ -1236,6 +1300,15 @@ html[data-theme="light"] .ssl-domain-badge {
 
 .website-action-buttons .secondary-button {
   min-height: 31px;
+}
+
+.website-action-buttons .icon-only-button {
+  align-items: center;
+  aspect-ratio: 1;
+  display: inline-flex;
+  justify-content: center;
+  min-width: 31px;
+  padding: 0;
 }
 
 .website-action-buttons .secondary-button,

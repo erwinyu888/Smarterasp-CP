@@ -356,20 +356,55 @@ function Panel({ theme, onManageHosting, onToggleTheme }) {
 
 function HostingControlPanel({ theme, onBackToPanel, onToggleTheme }) {
   const [activeSection, setActiveSection] = useState("dashboard");
+  const [selectedHostingPlan, setSelectedHostingPlan] = useState("Hosting Plan 1");
+  const [isHostingPlanMenuOpen, setIsHostingPlanMenuOpen] = useState(false);
   const activeTitle = useMemo(
     () => controlPanelSections.find((section) => section.id === activeSection)?.label ?? "Dashboard",
     [activeSection]
   );
+  const hostingPlanOptions = ["Hosting Plan 1", "Hosting Plan 2", "Hosting Plan 3"];
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-top">
-          <a className="brand project-brand" href="/panel" onClick={onBackToPanel}>
-            <span className="user-dot blue-dot"></span>
-            <span className="brand-name">Control Panel</span>
-            <span className="plan-pill">Hosting</span>
-          </a>
+          <div className="mock-plan-select-wrap">
+            <button
+              aria-expanded={isHostingPlanMenuOpen}
+              aria-haspopup="listbox"
+              className="mock-plan-trigger"
+              type="button"
+              onClick={() => setIsHostingPlanMenuOpen((open) => !open)}
+            >
+              <span className="mock-plan-trigger-label">
+                <MenuIcon name="server" />
+                <span>{selectedHostingPlan}</span>
+              </span>
+              <MenuIcon name="chevron-down" />
+            </button>
+            {isHostingPlanMenuOpen && (
+              <div className="mock-plan-menu" role="listbox" aria-label="Mock hosting plans">
+                {hostingPlanOptions.map((plan) => (
+                  <button
+                    aria-selected={selectedHostingPlan === plan}
+                    className={selectedHostingPlan === plan ? "mock-plan-option active" : "mock-plan-option"}
+                    key={plan}
+                    role="option"
+                    type="button"
+                    onClick={() => {
+                      setSelectedHostingPlan(plan);
+                      setIsHostingPlanMenuOpen(false);
+                    }}
+                  >
+                    <span className="mock-plan-option-label">
+                      <MenuIcon name="server" />
+                      <span>{plan}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <nav className="side-nav" aria-label="Hosting control panel sections">
           <button className="nav-item back-account-item" type="button" onClick={onBackToPanel}>
@@ -404,13 +439,12 @@ function HostingControlPanel({ theme, onBackToPanel, onToggleTheme }) {
       <main className="workspace">
         <div className="workspace-header">
           <div>
-            <p className="kicker">Mock hosting control panel</p>
+            <p className="kicker">Your hosting control panel</p>
             <h1>{activeTitle}</h1>
           </div>
           <div className="workspace-actions">
             <button className="secondary-button compact" type="button" onClick={onBackToPanel}>Back to Plans</button>
             <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
-            <span className="demo-badge">Demo mode only</span>
           </div>
         </div>
         {activeSection === "dashboard" && <HostingDashboard />}
@@ -620,9 +654,14 @@ function WebsiteActionButtons({ compact = false }) {
   return (
     <div className={compact ? "website-action-buttons compact-actions" : "website-action-buttons"}>
       {websiteActions.map((action) => (
-        <button className="secondary-button compact" type="button" key={action.label}>
+        <button
+          aria-label={action.label}
+          className="secondary-button compact icon-only-button"
+          title={action.label}
+          type="button"
+          key={action.label}
+        >
           <MenuIcon name={action.icon} />
-          <span>{action.label}</span>
         </button>
       ))}
     </div>
@@ -661,6 +700,11 @@ function MenuIcon({ name }) {
         <rect x="3.5" y="4" width="17" height="6" rx="1.5" />
         <rect x="3.5" y="14" width="17" height="6" rx="1.5" />
         <path d="M7 7h.01M7 17h.01M11 7h6M11 17h6" />
+      </>
+    ),
+    "chevron-down": (
+      <>
+        <path d="m7 10 5 5 5-5" />
       </>
     ),
     back: (
@@ -800,10 +844,7 @@ function MenuIcon({ name }) {
     ),
     git: (
       <>
-        <circle cx="6.5" cy="6.5" r="2" />
-        <circle cx="17.5" cy="17.5" r="2" />
-        <circle cx="6.5" cy="17.5" r="2" />
-        <path d="M8 8 16 16M6.5 8.5v7" />
+        <path d="M12 4.2c-4.2 0-7.6 3.4-7.6 7.6 0 3.35 2.18 6.2 5.2 7.2.38.07.52-.16.52-.37v-1.4c-2.12.46-2.56-.9-2.56-.9-.34-.88-.85-1.12-.85-1.12-.7-.48.05-.47.05-.47.77.05 1.17.79 1.17.79.69 1.18 1.8.84 2.24.64.07-.5.27-.84.49-1.03-1.7-.19-3.48-.85-3.48-3.8 0-.84.3-1.53.79-2.07-.08-.19-.34-.95.08-1.98 0 0 .65-.21 2.12.79a7.2 7.2 0 0 1 3.86 0c1.47-1 2.11-.79 2.11-.79.43 1.03.17 1.79.09 1.98.49.54.79 1.23.79 2.07 0 2.96-1.79 3.61-3.49 3.79.28.24.52.71.52 1.44v2.13c0 .21.14.45.53.37 3.01-1 5.19-3.85 5.19-7.2 0-4.2-3.4-7.6-7.6-7.6Z" />
       </>
     ),
     deploy: (
