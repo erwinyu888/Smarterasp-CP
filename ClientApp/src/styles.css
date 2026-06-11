@@ -333,6 +333,17 @@ a:focus {
   text-align: center;
 }
 
+.login-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 6px;
+  color: #ff8d8d;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px 12px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 256px 1fr;

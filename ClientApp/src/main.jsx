@@ -240,6 +240,40 @@ function App() {
 }
 
 function Login({ onLogin, theme, onToggleTheme }) {
+  const [login, setLogin] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleLoginSubmit(event) {
+    event.preventDefault();
+    setLoginError("");
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ login, password })
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success) {
+        setLoginError(result?.message ?? "Login failed. Please check your username and password.");
+        return;
+      }
+
+      onLogin(event);
+    } catch {
+      setLoginError("Unable to reach the login service. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <main className="login-page">
       <header className="login-header">
@@ -262,18 +296,31 @@ function Login({ onLogin, theme, onToggleTheme }) {
           <p>Manage hosting, domains, VPN services, add-ons, affiliate activity, and billing in one place.</p>
         </div>
 
-        <form className="login-form">
-          <button className="ghost-button" type="button">
-            <span className="round-token">GH</span>
-            Continue with GitHub
-          </button>
-          <div className="divider">or</div>
+        <form className="login-form" onSubmit={handleLoginSubmit}>
           <label>
-            Email address
-            <input type="email" placeholder="you@example.com" autoComplete="email" />
+            Username
+            <input
+              type="text"
+              placeholder="account username"
+              autoComplete="username"
+              value={login}
+              onChange={(event) => setLogin(event.target.value)}
+            />
           </label>
-          <a className="primary-button full" href="/panel" onClick={onLogin}>Login</a>
-          <p className="small-copy">This is a mockup. No real account action will be performed.</p>
+          <label>
+            Password
+            <input
+              type="password"
+              placeholder="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </label>
+          {loginError && <p className="login-error">{loginError}</p>}
+          <button className="primary-button full" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Logging in..." : "Login"}
+          </button>
         </form>
       </section>
     </main>
