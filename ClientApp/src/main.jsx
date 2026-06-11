@@ -98,7 +98,9 @@ const sections = [
   { id: "vpn", label: "VPN", stat: "2", icon: "shield" },
   { id: "addon", label: "Add-On", stat: "4", icon: "plus" },
   { id: "affiliate", label: "Affiliate", stat: "Earn 60%", icon: "share" },
-  { id: "billing", label: "Billing", stat: "0", icon: "card", statTone: "warning" }
+  { id: "billing", label: "Billing", stat: "0", icon: "card", statTone: "warning" },
+  { id: "settings", label: "Settings", stat: "Sec", icon: "settings" },
+  { id: "new-order", label: "+ New Order", stat: "Buy", icon: "order", tone: "order" }
 ];
 
 const controlPanelSections = [
@@ -214,6 +216,44 @@ const billingTabs = [
   ["renewal", "Renewal Notice", "Next renewal notice: sample-client.org on July 15, 2026."]
 ];
 
+const vpnKbArticles = [
+  ["How to set up VPN with your Windows 10 PC?", "http://www.smarterasp.net/support/kb/a2180/how-to-set-up-vpn-with-your-windows-10-pc.aspx"],
+  ["How to set up VPN with your Andriod phone?", "http://www.smarterasp.net/support/kb/a2183/how-to-set-up-vpn-with-your-andriod-phone.aspx"],
+  ["How to set up VPN with your iPhone or iPad?", "http://www.smarterasp.net/support/kb/a2181/how-to-set-up-vpn-with-your-iphone-or-ipad.aspx"],
+  ["How to set up VPN with your Mac?", "http://www.smarterasp.net/support/kb/a2182/how-to-set-up-vpn-with-your-mac.aspx"],
+  ["How to set up VPN with your Ubuntu?", "http://www.smarterasp.net/support/kb/a2191/how-to-setup-vpn-with-your-ubuntu.aspx"],
+  ["How to set up OpenVPN?", "http://www.smarterasp.net/support/kb/a2245/how-to-change-vpn-configuration-to-openvpn-and-set-it-up-in-client-apps.aspx"],
+  ["How to fix \"IKE authentication credentials are unacceptable\"?", "http://www.smarterasp.net/support/kb/a2195/how-to-fix-ike-authentication-credentials-are-unacceptable-when-connect-to-our-vpn-service.aspx"]
+];
+
+const hostingKbArticles = [
+  ["Why do you need dedicated pool per site?", "http://www.smarterasp.net/support/kb/a2247/why-do-you-need-dedicated-pool-per-site.aspx"],
+  ["What's the purpose of the email field when creating new hosting?", "http://www.smarterasp.net/support/KB/a333/whats-purpose-the-email-field-when-creating-new-hosting.aspx"]
+];
+
+const domainKbArticles = [
+  ["Registrant verification FAQs", "http://www.smarterasp.net/support/KB/a1555/registrant-verification-faqs.aspx"],
+  ["What is transfer verification email address?", "http://www.smarterasp.net/support/KB/a1453/what-is-transfer-verification-email-address.aspx"],
+  ["How to setup MX records for Google Mail/Gmail?", "http://www.smarterasp.net/support/KB/a303/how-to-setup-mx-records-for-google-mail-gmail.aspx"]
+];
+
+const billingKbArticles = [
+  ["Why do I need to deposit money?", "http://www.smarterasp.net/support/KB/a188/why-do-i-need-to-deposit-money.aspx"]
+];
+
+const resellerKbArticles = [
+  ["Quick start of reseller plan", "http://www.smarterasp.net/support/KB/a1512/quick-start-of-reseller-plan.aspx"],
+  ["What's the URL/control panel for my resold client to login?", "http://www.smarterasp.net/support/KB/a336/whats-the-urlcontrol-panel-for-my-resold-client-to-login.aspx"],
+  ["How to set your own domain name servers?", "http://www.smarterasp.net/support/KB/a343/how-to-set-your-own-domain-name-servers.aspx"],
+  ["API documentation", "https://www.smarterasp.net/support/KB/c61/api.aspx"],
+  ["How to integrate WHMCS?", "https://www.smarterasp.net/support/KB/a1647/how-to-integrate-whmcs.aspx"]
+];
+
+const securityGuideArticles = [
+  ["Google Authenticator help", "https://support.google.com/accounts/answer/1066447?hl=en"],
+  ["Authy download", "https://authy.com/download/"]
+];
+
 const domainExtensions = [
   ".com", ".net", ".org", ".io", ".app", ".ai", ".co", ".dev", ".shop", ".store", ".online", ".site", ".website", ".tech", ".cloud", ".host", ".hosting", ".digital", ".software", ".systems",
   ".biz", ".info", ".name", ".pro", ".mobi", ".me", ".tv", ".cc", ".us", ".ca", ".uk", ".co.uk", ".de", ".fr", ".it", ".es", ".nl", ".be", ".ch", ".at",
@@ -261,6 +301,7 @@ function App() {
   const [route, setRoute] = useState(() => {
     if (window.location.pathname === "/panel") return "panel";
     if (window.location.pathname === "/panel_cp") return "panel_cp";
+    if (window.location.pathname.startsWith("/checkout")) return "checkout";
     return "login";
   });
   const [theme, setTheme] = useState(() => localStorage.getItem("controlpanel-theme") ?? "dark");
@@ -283,12 +324,12 @@ function App() {
 
         if (response.ok && result?.success) {
           setCurrentUser(result.user);
-        } else if (route !== "login") {
+        } else if (route !== "login" && route !== "checkout") {
           window.history.replaceState({}, "", "/");
           setRoute("login");
         }
       } catch {
-        if (isMounted && route !== "login") {
+        if (isMounted && route !== "login" && route !== "checkout") {
           window.history.replaceState({}, "", "/");
           setRoute("login");
         }
@@ -305,7 +346,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!isAuthReady || currentUser || route === "login") return;
+    if (!isAuthReady || currentUser || route === "login" || route === "checkout") return;
 
     window.history.replaceState({}, "", "/");
     setRoute("login");
@@ -356,9 +397,84 @@ function App() {
     return <HostingControlPanel theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onLogout={handleLogout} onToggleTheme={toggleTheme} />;
   }
 
+  if (route === "checkout") {
+    return <CheckoutHandoff theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} />;
+  }
+
   return route === "panel"
     ? <Panel theme={theme} currentUser={currentUser} onLogout={handleLogout} onManageHosting={goToControlPanel} onToggleTheme={toggleTheme} />
     : <Login onLogin={handleLogin} theme={theme} onToggleTheme={toggleTheme} />;
+}
+
+function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
+  const [order, setOrder] = useState(null);
+  const [orderMessage, setOrderMessage] = useState("");
+  const query = useMemo(() => new URLSearchParams(window.location.search), []);
+  const guid = query.get("guid") ?? "";
+  const amount = query.get("amount") ?? "";
+  const isDeposit = window.location.pathname.includes("deposit");
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadOrder() {
+      if (!guid) return;
+      setOrderMessage("Loading checkout order...");
+      try {
+        const response = await fetch(`/api/account/checkout-temp/${encodeURIComponent(guid)}`);
+        const result = await response.json().catch(() => null);
+        if (!isMounted) return;
+        if (!response.ok || !result?.success) {
+          setOrderMessage(result?.message ?? "Unable to load checkout order.");
+          return;
+        }
+
+        setOrder(result.order);
+        setOrderMessage(result.message);
+      } catch {
+        if (isMounted) setOrderMessage("Unable to reach checkout order service.");
+      }
+    }
+
+    loadOrder();
+    return () => {
+      isMounted = false;
+    };
+  }, [guid]);
+
+  const title = isDeposit ? "Account Balance Deposit" : order?.productName ?? "Checkout Handoff";
+  const total = isDeposit ? Number(amount || 0) : order?.amount;
+
+  return (
+    <main className="checkout-page">
+      <header className="login-header">
+        <a className="brand" href="/panel" onClick={onBackToPanel} aria-label="Back to Account Panel">
+          <span className="brand-mark">CP</span>
+          <span>ControlPanel</span>
+        </a>
+        <nav className="login-links" aria-label="Checkout navigation">
+          {currentUser && <span>{currentUser.login}</span>}
+          <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+        </nav>
+      </header>
+      <section className="checkout-handoff-card">
+        <span className="status-pill blue">Checkout Handoff</span>
+        <h1>{title}</h1>
+        <p>This page confirms the order handoff created by the Account Panel rebuild.</p>
+        <dl className="card-meta single">
+          {guid && <div><dt>GUID</dt><dd>{guid}</dd></div>}
+          {order?.productId !== undefined && <div><dt>Product ID</dt><dd>{order.productId}</dd></div>}
+          {order?.pageType !== undefined && <div><dt>Page Type</dt><dd>{order.pageType}</dd></div>}
+          <div><dt>Total</dt><dd>{formatMoney(total || 0)}</dd></div>
+          {order?.info1 && <div><dt>Info 1</dt><dd>{order.info1}</dd></div>}
+          {order?.info2 && <div><dt>Info 2</dt><dd>{order.info2}</dd></div>}
+        </dl>
+        {orderMessage && <p className="renewal-action-message">{orderMessage}</p>}
+        <button className="primary-button" type="button" onClick={onBackToPanel}>
+          Back to Account Panel
+        </button>
+      </section>
+    </main>
+  );
 }
 
 function Login({ onLogin, theme, onToggleTheme }) {
@@ -546,7 +662,11 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
         <nav className="side-nav" aria-label="Account panel sections">
           {renderedSections.map((section) => (
             <button
-              className={section.id === activeSection ? "nav-item active" : "nav-item"}
+              className={[
+                "nav-item",
+                section.id === activeSection ? "active" : "",
+                section.tone === "order" ? "new-order-item" : ""
+              ].filter(Boolean).join(" ")}
               key={section.id}
               type="button"
               onClick={() => setActiveSection(section.id)}
@@ -555,7 +675,13 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
                 <MenuIcon name={section.icon} />
                 <span>{section.label}</span>
               </span>
-              <strong className={section.statTone === "warning" ? "nav-stat warning" : "nav-stat"}>{section.stat}</strong>
+              <strong className={[
+                "nav-stat",
+                section.statTone === "warning" ? "warning" : "",
+                section.tone === "order" ? "order" : ""
+              ].filter(Boolean).join(" ")}>
+                {section.stat}
+              </strong>
             </button>
           ))}
         </nav>
@@ -578,9 +704,9 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
           </a>
         </div>
         <div className="reward-card" aria-label="Account balance">
-          <span className="user-dot green-dot"></span>
+          <ProfileAvatar username={currentUser?.login ?? "OPENREWARD"} />
           <div>
-            <strong>OPENREWARD</strong>
+            <strong>{(currentUser?.login ?? "OPENREWARD").toUpperCase()}</strong>
             <span>Funds {accountFunds}</span>
           </div>
         </div>
@@ -624,6 +750,30 @@ function formatUsdFull(amount) {
   const value = Number(amount);
   if (Number.isNaN(value)) return "$0.00";
   return `$${value.toFixed(2)}`;
+}
+
+function profileAvatarStyle(username) {
+  const palette = [
+    ["#30a46c", "#ffffff"],
+    ["#3291ff", "#ffffff"],
+    ["#f59e0b", "#111111"],
+    ["#ef4444", "#ffffff"],
+    ["#8b5cf6", "#ffffff"],
+    ["#14b8a6", "#06201d"]
+  ];
+  const seed = [...(username || "account")].reduce((total, letter) => total + letter.charCodeAt(0), 0);
+  const [backgroundColor, color] = palette[seed % palette.length];
+  return { backgroundColor, color };
+}
+
+function ProfileAvatar({ username }) {
+  const label = (username || "account").trim();
+  const initial = label.charAt(0).toUpperCase() || "A";
+  return (
+    <span className="profile-avatar" style={profileAvatarStyle(label)} aria-hidden="true">
+      {initial}
+    </span>
+  );
 }
 
 async function writeTextToClipboard(text) {
@@ -724,7 +874,7 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
           ))}
         </nav>
         <div className="reward-card" aria-label="Account balance">
-          <span className="user-dot green-dot"></span>
+          <ProfileAvatar username="OPENREWARD" />
           <div>
             <strong>OPENREWARD</strong>
             <span>Funds $179.92</span>
@@ -1335,6 +1485,20 @@ function MenuIcon({ name }) {
         <circle cx="12" cy="12" r="1.6" />
         <circle cx="18.5" cy="12" r="1.6" />
       </>
+    ),
+    settings: (
+      <>
+        <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" />
+        <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2 2 0 0 1-2.83 2.83l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2 2 0 0 1-4 0v-.08a1.8 1.8 0 0 0-1.1-1.66 1.8 1.8 0 0 0-1.98.36l-.05.05a2 2 0 0 1-2.83-2.83l.05-.05A1.8 1.8 0 0 0 4.6 15a1.8 1.8 0 0 0-1.66-1.1H2.9a2 2 0 0 1 0-4h.08A1.8 1.8 0 0 0 4.6 8.8a1.8 1.8 0 0 0-.36-1.98l-.05-.05a2 2 0 0 1 2.83-2.83l.05.05a1.8 1.8 0 0 0 1.98.36 1.8 1.8 0 0 0 1.1-1.66V2.6a2 2 0 0 1 4 0v.08a1.8 1.8 0 0 0 1.1 1.66 1.8 1.8 0 0 0 1.98-.36l.05-.05a2 2 0 0 1 2.83 2.83l-.05.05a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.66 1.1h.08a2 2 0 0 1 0 4h-.08A1.8 1.8 0 0 0 19.4 15Z" />
+      </>
+    ),
+    order: (
+      <>
+        <path d="M6 6h15l-1.6 8.2a2 2 0 0 1-2 1.6H9.1a2 2 0 0 1-2-1.6L5.8 3.8H3" />
+        <path d="M10 10h6M13 7v6" />
+        <circle cx="9.5" cy="20" r="1.4" />
+        <circle cx="18" cy="20" r="1.4" />
+      </>
     )
   };
 
@@ -1351,6 +1515,8 @@ function DashboardSection({ activeSection, dashboard, dashboardError, isDashboar
   if (activeSection === "addon") return <AddonSection />;
   if (activeSection === "affiliate") return <AffiliateSection />;
   if (activeSection === "billing") return <BillingSection />;
+  if (activeSection === "settings") return <SettingsSection />;
+  if (activeSection === "new-order") return <NewOrderSection onChangeSection={onChangeSection} />;
   return (
     <HostingSection
       dashboard={dashboard}
@@ -1363,13 +1529,287 @@ function DashboardSection({ activeSection, dashboard, dashboardError, isDashboar
   );
 }
 
+function NewOrderSection({ onChangeSection }) {
+  const orderOptions = [
+    { type: "hosting", title: "Buy Hosting Account", description: "ASP.NET hosting plans", icon: "server", catalog: true },
+    { type: "managed-hosting", title: "Buy Managed Hosting", badge: "NEW", description: "Fully managed ASP.NET hosting", icon: "server", catalog: true },
+    { type: "windows-vps", title: "Buy Windows VPS", description: "Windows virtual private servers", icon: "server", catalog: true },
+    { type: "linux-vps", title: "Buy Linux VPS", badge: "NEW", description: "Linux virtual private servers", icon: "server", catalog: true },
+    { type: "cloud", title: "Buy Cloud Server", description: "Scalable cloud servers", icon: "server", catalog: true },
+    { type: "dedicated", title: "Buy Dedicated Server", description: "Dedicated hardware servers", icon: "server", catalog: true },
+    { type: "reseller", title: "Buy Reseller Account", description: "Resell hosting to your clients", icon: "share", catalog: true },
+    { type: "domain-purchase", title: "Purchase New Domain", icon: "globe", section: "domain", description: "Search and register a new domain name." },
+    { type: "domain-transfer", title: "Transfer an Existing Domain", icon: "globe", description: "Move an existing domain to this account." }
+  ];
+  const [activeType, setActiveType] = useState("hosting");
+  const [catalog, setCatalog] = useState(null);
+  const [selectedPrices, setSelectedPrices] = useState({});
+  const [checkoutOrder, setCheckoutOrder] = useState(null);
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [busyProductId, setBusyProductId] = useState(null);
+  const [transferDomain, setTransferDomain] = useState("");
+  const [transferWhois, setTransferWhois] = useState(false);
+  const [isTransferBusy, setIsTransferBusy] = useState(false);
+
+  const activeOption = orderOptions.find((option) => option.type === activeType) ?? orderOptions[0];
+
+  useEffect(() => {
+    let ignore = false;
+    const option = orderOptions.find((item) => item.type === activeType);
+    setCatalog(null);
+    setCheckoutOrder(null);
+    setMessage("");
+
+    if (!option?.catalog) {
+      return () => {
+        ignore = true;
+      };
+    }
+
+    async function loadCatalog() {
+      setIsLoading(true);
+      try {
+        const response = await fetch(`/api/account/new-orders/catalog?type=${encodeURIComponent(activeType)}`);
+        const result = await response.json().catch(() => null);
+        if (ignore) return;
+
+        if (!response.ok || !result?.success) {
+          setMessage(result?.message ?? "Unable to load this catalog.");
+          return;
+        }
+
+        setCatalog(result.catalog);
+      } catch {
+        if (!ignore) setMessage("Unable to reach the new order catalog.");
+      } finally {
+        if (!ignore) setIsLoading(false);
+      }
+    }
+
+    loadCatalog();
+    return () => {
+      ignore = true;
+    };
+  }, [activeType]);
+
+  function selectOption(option) {
+    setActiveType(option.type);
+    if (option.section) {
+      onChangeSection(option.section);
+    }
+  }
+
+  function selectedPriceFor(product) {
+    const selectedPriceId = selectedPrices[product.productId];
+    return product.prices?.find((price) => price.priceId === selectedPriceId) ?? product.prices?.[0] ?? null;
+  }
+
+  async function createNewOrder(product) {
+    const selectedPrice = selectedPriceFor(product);
+    if (!selectedPrice) {
+      setMessage(`${product.name} has no available billing terms.`);
+      return;
+    }
+
+    setBusyProductId(product.productId);
+    setMessage("");
+    setCheckoutOrder(null);
+
+    try {
+      const response = await fetch("/api/account/new-orders/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: activeType,
+          productId: product.productId,
+          priceId: selectedPrice.priceId
+        })
+      });
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success) {
+        setMessage(result?.message ?? "Unable to create checkout.");
+        return;
+      }
+
+      setCheckoutOrder(result.order);
+      setMessage("Checkout order created.");
+    } catch {
+      setMessage("Unable to reach checkout service.");
+    } finally {
+      setBusyProductId(null);
+    }
+  }
+
+  async function createTransferCheckout() {
+    setIsTransferBusy(true);
+    setMessage("");
+    setCheckoutOrder(null);
+
+    try {
+      const response = await fetch("/api/account/new-orders/domain-transfer/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domainName: transferDomain,
+          whoisPrivacy: transferWhois
+        })
+      });
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success) {
+        setMessage(result?.message ?? "Unable to create transfer checkout.");
+        return;
+      }
+
+      setCheckoutOrder(result.order);
+      setMessage("Domain transfer checkout created.");
+    } catch {
+      setMessage("Unable to reach domain transfer checkout.");
+    } finally {
+      setIsTransferBusy(false);
+    }
+  }
+
+  return (
+    <section className="new-order-section">
+      <article className="panel-card new-order-hero">
+        <span className="status-pill order-pill">Quick order</span>
+        <h2>Start a New Order</h2>
+        <p>Choose a product category, review the live catalog, select the billing term, and continue to checkout.</p>
+      </article>
+
+      <div className="new-order-workspace">
+        <nav className="new-order-list" aria-label="New order options">
+        {orderOptions.map((option) => (
+          <button
+            className={`new-order-card ${activeType === option.type ? "active" : ""}`}
+            key={option.title}
+            type="button"
+            onClick={() => selectOption(option)}
+          >
+            <span className="new-order-icon"><MenuIcon name={option.icon} /></span>
+            <span className="new-order-card-copy">
+              <span>
+                {option.title}
+                {option.badge && <em>{option.badge}</em>}
+              </span>
+              <small>{option.description}</small>
+            </span>
+          </button>
+        ))}
+        </nav>
+
+        <article className="panel-card new-order-detail">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">New Order</span>
+              <h2>{activeOption.title}</h2>
+              <p>{catalog?.description ?? activeOption.description ?? "Modern account panel order flow."}</p>
+            </div>
+          </div>
+
+          {activeOption.section === "domain" && (
+            <div className="new-order-empty">
+              <p>Domain purchase is already rebuilt with live OpenSRS availability search and checkout.</p>
+              <button className="primary-button compact" type="button" onClick={() => onChangeSection("domain")}>Search Domains</button>
+            </div>
+          )}
+
+          {activeType === "domain-transfer" && (
+            <div className="new-order-empty">
+              <p>Enter a domain to transfer. Pricing comes from the same TLD product price table used by the old transfer page.</p>
+              <div className="new-order-transfer-row">
+                <input
+                  type="text"
+                  placeholder="example.com"
+                  aria-label="Domain to transfer"
+                  value={transferDomain}
+                  onChange={(event) => setTransferDomain(event.target.value)}
+                />
+                <button className="primary-button compact" type="button" disabled={isTransferBusy} onClick={createTransferCheckout}>
+                  {isTransferBusy ? "Creating..." : "Create Checkout"}
+                </button>
+              </div>
+              <label className="new-order-checkbox">
+                <input type="checkbox" checked={transferWhois} onChange={(event) => setTransferWhois(event.target.checked)} />
+                <span>Add Whois Privacy (+$8)</span>
+              </label>
+            </div>
+          )}
+
+          {activeOption.catalog && (
+            <>
+              {isLoading && <p className="inline-status">Loading live catalog...</p>}
+              {message && <p className="inline-status">{message}</p>}
+              {!isLoading && !message && catalog?.products?.length === 0 && (
+                <p className="inline-status">No active products were found for this legacy catalog.</p>
+              )}
+              <div className="new-order-products">
+                {(catalog?.products ?? []).map((product) => {
+                  const selectedPrice = selectedPriceFor(product);
+                  return (
+                    <article className="new-order-product" key={product.productId}>
+                      <div>
+                        <span className="status-pill muted">Product #{product.productId}</span>
+                        <h3>{product.name}</h3>
+                        <p>{product.description || product.productType}</p>
+                      </div>
+                      <div className="new-order-product-actions">
+                        <select
+                          aria-label={`${product.name} billing term`}
+                          value={selectedPrice?.priceId ?? ""}
+                          onChange={(event) => setSelectedPrices((current) => ({
+                            ...current,
+                            [product.productId]: Number(event.target.value)
+                          }))}
+                        >
+                          {(product.prices ?? []).map((price) => (
+                            <option key={price.priceId} value={price.priceId}>
+                              {formatPaymentTerm(price.paymentTerm)} - {formatMoney(price.amount, price.currency)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className="primary-button compact"
+                          type="button"
+                          disabled={!selectedPrice || busyProductId === product.productId}
+                          onClick={() => createNewOrder(product)}
+                        >
+                          {busyProductId === product.productId ? "Creating..." : "Create Checkout"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+            </>
+          )}
+
+          {checkoutOrder && (
+            <aside className="checkout-ready-row new-order-checkout">
+              <span>{checkoutOrder.guid}</span>
+              <a className="primary-button compact as-link" href={checkoutOrder.checkoutUrl}>Open Checkout</a>
+            </aside>
+          )}
+        </article>
+      </div>
+    </section>
+  );
+}
+
 function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManageHosting, onReloadDashboard, onShowAffiliate }) {
   const accounts = dashboard?.hostingAccounts?.length ? dashboard.hostingAccounts : [];
   const notices = dashboard?.renewalNotices?.length ? dashboard.renewalNotices : [];
+  const urgentLogs = dashboard?.urgentLogs ?? [];
   const statusSummary = dashboard?.hostingStatusSummary ?? [];
   const [renewalBusyId, setRenewalBusyId] = useState(null);
   const [renewalPreview, setRenewalPreview] = useState(null);
   const [renewalMessage, setRenewalMessage] = useState("");
+  const [urgentBusyId, setUrgentBusyId] = useState(null);
+  const [urgentMessage, setUrgentMessage] = useState("");
 
   async function loadHostingRenewalPreview(notice) {
     setRenewalBusyId(notice.clientProductId);
@@ -1404,6 +1844,24 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
     return result.order;
   }
 
+  async function hideUrgentLog(logId) {
+    setUrgentBusyId(logId);
+    setUrgentMessage("");
+
+    try {
+      const response = await fetch(`/api/account/urgent-logs/${logId}/hide`, { method: "POST" });
+      const result = await response.json().catch(() => null);
+      setUrgentMessage(result?.message ?? "Unable to hide urgent notice.");
+      if (response.ok && result?.success) {
+        onReloadDashboard();
+      }
+    } catch {
+      setUrgentMessage("Unable to reach urgent notice service.");
+    } finally {
+      setUrgentBusyId(null);
+    }
+  }
+
   return (
     <section className="hosting-stack">
       <article className="panel-card account-summary-panel">
@@ -1434,6 +1892,35 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
           <p>{dashboardError}</p>
           <button className="secondary-button compact" type="button" onClick={onReloadDashboard}>Retry</button>
         </article>
+      )}
+
+      {(isDashboardLoading || urgentLogs.length > 0 || urgentMessage) && (
+        <div className="panel-card urgent-panel">
+          <div className="renewal-panel-header">
+            <h2>Urgent Notices</h2>
+            <span>{isDashboardLoading ? "Loading" : `${urgentLogs.length} items`}</span>
+          </div>
+          <div className="urgent-list">
+            {isDashboardLoading && <p className="empty-state">Loading urgent notices...</p>}
+            {!isDashboardLoading && urgentLogs.map((log) => (
+              <article className="urgent-item" key={log.id}>
+                <div>
+                  <span>{formatDateTime(log.createdAt)} · {log.customerLogin || "Account"}</span>
+                  <p>{log.message}</p>
+                </div>
+                <button
+                  className="secondary-button compact"
+                  type="button"
+                  disabled={urgentBusyId !== null}
+                  onClick={() => hideUrgentLog(log.id)}
+                >
+                  {urgentBusyId === log.id ? "Hiding..." : "Dismiss"}
+                </button>
+              </article>
+            ))}
+          </div>
+          {urgentMessage && <p className="renewal-action-message">{urgentMessage}</p>}
+        </div>
       )}
 
       <div className="panel-card renewal-panel">
@@ -1505,6 +1992,8 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
         ))}
       </div>
 
+      <KnowledgeBaseCard title="Hosting Guides" articles={hostingKbArticles} />
+
       <article className="affiliate-promo panel-card">
         <div>
           <span className="status-pill blue">Pays 60%</span>
@@ -1527,6 +2016,13 @@ function formatDate(value) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+function formatDateTime(value) {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 function toCheckoutPreview(order, itemCount = 1) {
   return {
     checkoutId: order.guid,
@@ -1540,6 +2036,36 @@ function toCheckoutPreview(order, itemCount = 1) {
   };
 }
 
+const domainRegistrarActionDefaults = {
+  nameservers: "NS1.SITE4NOW.NET, NS2.SITE4NOW.NET",
+  contact: [
+    "first_name=Open",
+    "last_name=Reward",
+    "org_name=OPENREWARD",
+    "address1=123 Sample Street",
+    "address2=",
+    "address3=",
+    "city=Los Angeles",
+    "state=CA",
+    "postal_code=90001",
+    "country=US",
+    "phone=+1.5555555555",
+    "fax=",
+    "email=support@example.com",
+    "url="
+  ].join("\n"),
+  "privacy-on": "",
+  "privacy-off": "",
+  lock: "",
+  unlock: "",
+  status: "",
+  "auth-code": "",
+  "auto-renew-on": "",
+  "auto-renew-off": "",
+  forwarding: "support@example.com",
+  dns: "A @ 208.98.35.146\nCNAME www sample.com\nMX @ mail.sample.com 10\nTXT @ v=spf1 a mx include:_spf.site4now.net -all"
+};
+
 function DomainSection() {
   const [accountDomains, setAccountDomains] = useState([]);
   const [domainSearch, setDomainSearch] = useState("");
@@ -1551,10 +2077,23 @@ function DomainSection() {
   const [domainCart, setDomainCart] = useState([]);
   const [domainCheckoutPreview, setDomainCheckoutPreview] = useState(null);
   const [domainCheckoutMessage, setDomainCheckoutMessage] = useState("");
+  const [domainTransferName, setDomainTransferName] = useState("");
+  const [domainTransferWhois, setDomainTransferWhois] = useState(false);
+  const [domainTransferPreview, setDomainTransferPreview] = useState(null);
+  const [domainTransferMessage, setDomainTransferMessage] = useState("");
+  const [isDomainTransferBusy, setIsDomainTransferBusy] = useState(false);
   const [domainLookupMessage, setDomainLookupMessage] = useState("");
   const [isDomainSearching, setIsDomainSearching] = useState(false);
   const [isDomainCheckingOut, setIsDomainCheckingOut] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState(null);
+  const [domainRenewalPreview, setDomainRenewalPreview] = useState(null);
+  const [domainActionMessage, setDomainActionMessage] = useState("");
+  const [domainDnsPreview, setDomainDnsPreview] = useState([]);
+  const [isDomainActionBusy, setIsDomainActionBusy] = useState(false);
+  const [domainRegistrarForm, setDomainRegistrarForm] = useState({
+    action: "nameservers",
+    value: domainRegistrarActionDefaults.nameservers
+  });
   const [isLoadingDomains, setIsLoadingDomains] = useState(true);
   const [domainError, setDomainError] = useState("");
 
@@ -1694,6 +2233,112 @@ function DomainSection() {
     }
   }
 
+  async function createDomainTransferCheckout(event) {
+    event.preventDefault();
+    setIsDomainTransferBusy(true);
+    setDomainTransferMessage("");
+    setDomainTransferPreview(null);
+
+    try {
+      const response = await fetch("/api/account/new-orders/domain-transfer/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domainName: domainTransferName,
+          whoisPrivacy: domainTransferWhois
+        })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setDomainTransferMessage(result?.message ?? "Unable to create domain transfer checkout.");
+        return;
+      }
+
+      setDomainTransferPreview(toCheckoutPreview(result.order, 1));
+      setDomainTransferMessage(result.message);
+    } catch {
+      setDomainTransferMessage("Unable to reach domain transfer checkout service.");
+    } finally {
+      setIsDomainTransferBusy(false);
+    }
+  }
+
+  async function renewSelectedDomain() {
+    if (!selectedDomain?.clientProductId) return;
+    setIsDomainActionBusy(true);
+    setDomainActionMessage("");
+    setDomainRenewalPreview(null);
+
+    try {
+      const response = await fetch(`/api/account/renewals/${selectedDomain.clientProductId}/renew`, { method: "POST" });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setDomainActionMessage(result?.message ?? "Unable to prepare domain renewal.");
+        return;
+      }
+
+      setDomainRenewalPreview(result.renewal);
+      setDomainActionMessage(result.message);
+    } catch {
+      setDomainActionMessage("Unable to reach domain renewal service.");
+    } finally {
+      setIsDomainActionBusy(false);
+    }
+  }
+
+  async function createDomainRenewalCheckout(renewal) {
+    const response = await fetch(`/api/account/renewals/${renewal.clientProductId}/checkout`, { method: "POST" });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.message ?? "Unable to create domain renewal checkout.");
+    }
+
+    return result.order;
+  }
+
+  async function submitDomainRegistrarAction(event) {
+    event.preventDefault();
+    if (!selectedDomain?.id) return;
+    setIsDomainActionBusy(true);
+    setDomainActionMessage("");
+    setDomainDnsPreview([]);
+
+    try {
+      const isDnsAction = domainRegistrarForm.action === "dns";
+      const response = await fetch(`/api/account/domains/${selectedDomain.id}/${isDnsAction ? "dns-preview" : "registrar-action"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isDnsAction ? { records: domainRegistrarForm.value } : domainRegistrarForm)
+      });
+      const result = await response.json().catch(() => null);
+      setDomainActionMessage(result?.message ?? "Unable to prepare registrar action.");
+      if (isDnsAction && result?.success) {
+        setDomainDnsPreview(result.records ?? []);
+      }
+    } catch {
+      setDomainActionMessage("Unable to reach registrar action service.");
+    } finally {
+      setIsDomainActionBusy(false);
+    }
+  }
+
+  function selectDomainRegistrarAction(action) {
+    const dnsDefault = selectedDomain?.domainName
+      ? [
+          "A @ 208.98.35.146",
+          `CNAME www ${selectedDomain.domainName}`,
+          `MX @ mail.${selectedDomain.domainName} 10`,
+          "TXT @ v=spf1 a mx include:_spf.site4now.net -all"
+        ].join("\n")
+      : domainRegistrarActionDefaults.dns;
+    setDomainRegistrarForm({
+      action,
+      value: action === "dns" ? dnsDefault : domainRegistrarActionDefaults[action] ?? ""
+    });
+    setDomainActionMessage("");
+    setDomainDnsPreview([]);
+  }
+
   return (
     <section className="domain-section">
       <article className="panel-card domain-search-panel">
@@ -1802,6 +2447,37 @@ function DomainSection() {
         )}
       </article>
 
+      <article className="panel-card domain-transfer-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Transfer an Existing Domain</h2>
+            <p>Move a domain into this account and create the transfer checkout from the live TLD price table.</p>
+          </div>
+        </div>
+        <form className="domain-transfer-form" onSubmit={createDomainTransferCheckout}>
+          <input
+            type="text"
+            placeholder="example.com"
+            aria-label="Domain to transfer"
+            value={domainTransferName}
+            onChange={(event) => setDomainTransferName(event.target.value)}
+          />
+          <label className="domain-transfer-checkbox">
+            <input
+              type="checkbox"
+              checked={domainTransferWhois}
+              onChange={(event) => setDomainTransferWhois(event.target.checked)}
+            />
+            <span>Add Whois Privacy (+$8)</span>
+          </label>
+          <button className="primary-button compact" type="submit" disabled={isDomainTransferBusy}>
+            {isDomainTransferBusy ? "Creating..." : "Create Transfer Checkout"}
+          </button>
+        </form>
+        {domainTransferMessage && <p className="inline-status">{domainTransferMessage}</p>}
+        {domainTransferPreview && <CheckoutPreviewCard preview={domainTransferPreview} onClose={() => setDomainTransferPreview(null)} />}
+      </article>
+
       <article className="panel-card domain-live-panel">
         <div className="domain-live-header">
           <div>
@@ -1855,10 +2531,101 @@ function DomainSection() {
               <div><dt>Expiration</dt><dd>{formatDate(selectedDomain.expirationDate)}</dd></div>
               <div><dt>Days Left</dt><dd>{selectedDomain.daysLeft ?? "N/A"}</dd></div>
             </dl>
-            <button className="primary-button" type="button" disabled>Domain management bridge pending</button>
+            <div className="billing-action-row">
+              <button
+                className="primary-button"
+                type="button"
+                disabled={!selectedDomain.clientProductId || isDomainActionBusy}
+                onClick={renewSelectedDomain}
+              >
+                {isDomainActionBusy ? "Checking..." : "Renew Domain"}
+              </button>
+            </div>
+            <div className="domain-quick-actions" aria-label="Domain quick actions">
+              {[
+                ["status", "Status"],
+                ["auth-code", "Auth Code"],
+                ["lock", "Lock"],
+                ["unlock", "Unlock"],
+                ["privacy-on", "Privacy On"],
+                ["privacy-off", "Privacy Off"],
+                ["auto-renew-on", "Auto Renew On"],
+                ["auto-renew-off", "Auto Renew Off"],
+                ["dns", "DNS"]
+              ].map(([action, label]) => (
+                <button
+                  className={domainRegistrarForm.action === action ? "secondary-button compact active" : "secondary-button compact"}
+                  key={action}
+                  type="button"
+                  onClick={() => selectDomainRegistrarAction(action)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <form className="domain-action-form" onSubmit={submitDomainRegistrarAction}>
+              <label>
+                Registrar Action
+                <select
+                  className="inline-select"
+                  value={domainRegistrarForm.action}
+                  onChange={(event) => selectDomainRegistrarAction(event.target.value)}
+                >
+                  <option value="nameservers">Update Nameservers</option>
+                  <option value="contact">Update Contact</option>
+                  <option value="privacy-on">Enable WHOIS Privacy</option>
+                  <option value="privacy-off">Disable WHOIS Privacy</option>
+                  <option value="lock">Lock Domain</option>
+                  <option value="unlock">Unlock Domain</option>
+                  <option value="status">Refresh Registrar Status</option>
+                  <option value="auth-code">Get Auth Code</option>
+                  <option value="auto-renew-on">Enable Auto Renew</option>
+                  <option value="auto-renew-off">Disable Auto Renew</option>
+                  <option value="forwarding">Update Forwarding Email</option>
+                  <option value="dns">Update DNS</option>
+                </select>
+              </label>
+              {domainRegistrarForm.action !== "status" && domainRegistrarForm.action !== "auth-code" && domainRegistrarForm.action !== "lock" && domainRegistrarForm.action !== "unlock" && domainRegistrarForm.action !== "privacy-on" && domainRegistrarForm.action !== "privacy-off" && domainRegistrarForm.action !== "auto-renew-on" && domainRegistrarForm.action !== "auto-renew-off" && (
+                <label>
+                  {domainRegistrarForm.action === "dns" ? "DNS Records" : domainRegistrarForm.action === "forwarding" ? "Forwarding Email" : "Detail"}
+                  <textarea
+                    value={domainRegistrarForm.value}
+                    onChange={(event) => setDomainRegistrarForm((form) => ({ ...form, value: event.target.value }))}
+                  />
+                </label>
+              )}
+              <button className="secondary-button" type="submit" disabled={isDomainActionBusy}>
+                {isDomainActionBusy ? "Working..." : "Run Action"}
+              </button>
+            </form>
+            {domainActionMessage && <p className="renewal-action-message">{domainActionMessage}</p>}
+            {domainDnsPreview.length > 0 && (
+              <div className="domain-dns-preview">
+                <span>DNS Preview</span>
+                <div className="domain-dns-preview-grid">
+                  {domainDnsPreview.map((record, index) => (
+                    <div className="domain-dns-preview-row" key={`${record.type}-${record.name}-${index}`}>
+                      <span className="domain-dns-type">{record.type}</span>
+                      <span>{record.name}</span>
+                      <span>{record.value}</span>
+                      <span>{record.priority ?? "-"}</span>
+                      <span>{record.ttl}s</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {domainRenewalPreview && (
+              <RenewalCheckoutPreview
+                renewal={domainRenewalPreview}
+                onClose={() => setDomainRenewalPreview(null)}
+                onCheckout={createDomainRenewalCheckout}
+              />
+            )}
           </aside>
         )}
       </article>
+      <KnowledgeBaseCard title="Domain Guides" articles={domainKbArticles} />
     </section>
   );
 }
@@ -1869,6 +2636,17 @@ function VpnSection() {
   const [vpnError, setVpnError] = useState("");
   const [selectedVpn, setSelectedVpn] = useState(null);
   const [vpnCheckoutPreview, setVpnCheckoutPreview] = useState(null);
+  const [vpnSelection, setVpnSelection] = useState({});
+  const [vpnCheckoutMessage, setVpnCheckoutMessage] = useState("");
+  const [isVpnCheckingOut, setIsVpnCheckingOut] = useState(false);
+  const [vpnUserForm, setVpnUserForm] = useState({
+    user: "",
+    password: "",
+    type: "IKEv2",
+    area: "US"
+  });
+  const [vpnActionMessage, setVpnActionMessage] = useState("");
+  const [isVpnActionBusy, setIsVpnActionBusy] = useState(false);
 
   async function loadVpn() {
     setIsLoadingVpn(true);
@@ -1898,6 +2676,84 @@ function VpnSection() {
   const quotaLabel = quota > 0 ? `${used} of ${quota} users` : `${used} active users`;
   const quotaPercent = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
   const services = vpn?.services ?? [];
+  const vpnCatalog = vpn?.catalog ?? [];
+  const selectedVpnProduct = vpnCatalog.find((product) => product.productId === Number(vpnSelection.productId)) ?? vpnCatalog[0];
+  const selectedVpnPrice = selectedVpnProduct?.prices?.find((price) => price.priceId === Number(vpnSelection.priceId)) ?? selectedVpnProduct?.prices?.[0];
+
+  async function checkoutVpn() {
+    if (!selectedVpnProduct || !selectedVpnPrice) {
+      setVpnCheckoutMessage("No VPN product is available for checkout.");
+      return;
+    }
+
+    setIsVpnCheckingOut(true);
+    setVpnCheckoutMessage("");
+    setVpnCheckoutPreview(null);
+
+    try {
+      const response = await fetch("/api/account/vpn/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: selectedVpnProduct.productId,
+          priceId: selectedVpnPrice.priceId,
+          quantity: Number(vpnSelection.quantity) || 1
+        })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setVpnCheckoutMessage(result?.message ?? "Unable to create VPN checkout.");
+        return;
+      }
+
+      setVpnCheckoutPreview(toCheckoutPreview(result.order, Number(vpnSelection.quantity) || 1));
+      setVpnCheckoutMessage(result.message);
+    } catch {
+      setVpnCheckoutMessage("Unable to reach VPN checkout service.");
+    } finally {
+      setIsVpnCheckingOut(false);
+    }
+  }
+
+  async function createVpnUser(event) {
+    event.preventDefault();
+    setIsVpnActionBusy(true);
+    setVpnActionMessage("");
+
+    try {
+      const response = await fetch("/api/account/vpn/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(vpnUserForm)
+      });
+      const result = await response.json().catch(() => null);
+      setVpnActionMessage(result?.message ?? "Unable to prepare VPN user.");
+    } catch {
+      setVpnActionMessage("Unable to reach VPN user service.");
+    } finally {
+      setIsVpnActionBusy(false);
+    }
+  }
+
+  async function runVpnUserAction(action) {
+    if (!selectedVpn?.vpnClientId) return;
+    setIsVpnActionBusy(true);
+    setVpnActionMessage("");
+
+    try {
+      const response = await fetch(`/api/account/vpn/users/${selectedVpn.vpnClientId}/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action })
+      });
+      const result = await response.json().catch(() => null);
+      setVpnActionMessage(result?.message ?? "Unable to prepare VPN action.");
+    } catch {
+      setVpnActionMessage("Unable to reach VPN action service.");
+    } finally {
+      setIsVpnActionBusy(false);
+    }
+  }
 
   return (
     <section className="vpn-section">
@@ -1965,30 +2821,132 @@ function VpnSection() {
             <div><dt>Location</dt><dd>{[selectedVpn.area, selectedVpn.dataCenter].filter(Boolean).join(" · ") || "Not assigned"}</dd></div>
             <div><dt>Status</dt><dd>{selectedVpn.status}</dd></div>
           </dl>
-          <button className="primary-button" type="button" disabled>VPN management bridge pending</button>
+          <div className="vpn-user-actions">
+            <button className="secondary-button compact" type="button" disabled={isVpnActionBusy} onClick={() => runVpnUserAction("openvpn")}>OpenVPN</button>
+            <button className="secondary-button compact" type="button" disabled={isVpnActionBusy} onClick={() => runVpnUserAction("download-config")}>Config</button>
+            <button className="secondary-button compact" type="button" disabled={isVpnActionBusy} onClick={() => runVpnUserAction("reset-password")}>Reset Password</button>
+            <button className="secondary-button compact danger-button" type="button" disabled={isVpnActionBusy} onClick={() => runVpnUserAction("delete")}>Delete</button>
+          </div>
         </aside>
       )}
 
-      <article className="service-card purchase-card vpn-purchase-card">
-        <span className="status-pill blue">New</span>
-        <h2>Buy VPN Services</h2>
-        <p>Reserve additional VPN seats for remote access.</p>
-        <strong>From $9/month</strong>
-        <button
-          className="primary-button"
-          type="button"
-          onClick={() => setVpnCheckoutPreview({
-            checkoutId: `VPN-${Date.now()}`,
-            title: "VPN checkout preview",
-            itemCount: 1,
-            total: 9,
-            currency: "USD",
-            note: "VPN order/provisioning writes are disabled until VpnAccountService is rebuilt."
-          })}
-        >
-          Buy VPN
-        </button>
+      <article className="panel-card vpn-user-card">
+        <div className="billing-header">
+          <div>
+            <span className="status-pill blue">User</span>
+            <h2>Create VPN User</h2>
+          </div>
+        </div>
+        <form className="vpn-user-form" onSubmit={createVpnUser}>
+          <label>
+            Username
+            <input
+              type="text"
+              value={vpnUserForm.user}
+              onChange={(event) => setVpnUserForm((form) => ({ ...form, user: event.target.value }))}
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={vpnUserForm.password}
+              onChange={(event) => setVpnUserForm((form) => ({ ...form, password: event.target.value }))}
+            />
+          </label>
+          <label>
+            Type
+            <select
+              className="inline-select"
+              value={vpnUserForm.type}
+              onChange={(event) => setVpnUserForm((form) => ({ ...form, type: event.target.value }))}
+            >
+              <option value="IKEv2">IKEv2</option>
+              <option value="OpenVPN">OpenVPN</option>
+            </select>
+          </label>
+          <label>
+            Location
+            <select
+              className="inline-select"
+              value={vpnUserForm.area}
+              onChange={(event) => setVpnUserForm((form) => ({ ...form, area: event.target.value }))}
+            >
+              <option value="US">US</option>
+              <option value="EU">EU</option>
+              <option value="Asia">Asia</option>
+            </select>
+          </label>
+          <button className="primary-button compact" type="submit" disabled={isVpnActionBusy}>
+            {isVpnActionBusy ? "Preparing..." : "Create User"}
+          </button>
+        </form>
       </article>
+
+      <div className="vpn-purchase-grid">
+        <article className="service-card purchase-card vpn-purchase-card">
+          <div className="vpn-purchase-title">
+            <h2>Buy VPN Services</h2>
+            <span>as low as $1/month!</span>
+          </div>
+          <p>Reserve additional VPN seats for remote access.</p>
+          {vpnCatalog.length ? (
+            <div className="vpn-buy-form">
+              <label>
+                Product
+                <select
+                  className="inline-select"
+                  value={selectedVpnProduct?.productId ?? ""}
+                  onChange={(event) => setVpnSelection({ productId: Number(event.target.value), quantity: vpnSelection.quantity ?? 1 })}
+                >
+                  {vpnCatalog.map((product) => (
+                    <option key={product.productId} value={product.productId}>{product.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Billing
+                <select
+                  className="inline-select"
+                  value={selectedVpnPrice?.priceId ?? ""}
+                  onChange={(event) => setVpnSelection((selection) => ({ ...selection, priceId: Number(event.target.value) }))}
+                >
+                  {(selectedVpnProduct?.prices ?? []).map((price) => (
+                    <option key={price.priceId} value={price.priceId}>
+                      {formatVpnPriceOption(price)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Qty
+                <input
+                  className="qty-input"
+                  type="number"
+                  min="1"
+                  max="99"
+                  value={vpnSelection.quantity ?? 1}
+                  onChange={(event) => setVpnSelection((selection) => ({ ...selection, quantity: event.target.value }))}
+                />
+              </label>
+            </div>
+          ) : (
+            <strong>No VPN products available</strong>
+          )}
+          <button
+            className="primary-button compact vpn-buy-button"
+            type="button"
+            disabled={isVpnCheckingOut || !vpnCatalog.length}
+            onClick={checkoutVpn}
+          >
+            {isVpnCheckingOut ? "Creating..." : "Buy VPN"}
+          </button>
+        </article>
+
+        <KnowledgeBaseCard title="VPN Setup Guides" articles={vpnKbArticles} />
+      </div>
+      {vpnActionMessage && <p className="renewal-action-message">{vpnActionMessage}</p>}
+      {vpnCheckoutMessage && <p className="renewal-action-message">{vpnCheckoutMessage}</p>}
       {vpnCheckoutPreview && <CheckoutPreviewCard preview={vpnCheckoutPreview} onClose={() => setVpnCheckoutPreview(null)} />}
     </section>
   );
@@ -2004,6 +2962,9 @@ function AddonSection() {
   const [addonCheckoutMessage, setAddonCheckoutMessage] = useState("");
   const [isAddonCheckingOut, setIsAddonCheckingOut] = useState(false);
   const [selectedAddon, setSelectedAddon] = useState(null);
+  const [addonRenewalPreview, setAddonRenewalPreview] = useState(null);
+  const [addonActionMessage, setAddonActionMessage] = useState("");
+  const [isAddonActionBusy, setIsAddonActionBusy] = useState(false);
   const [isLoadingAddons, setIsLoadingAddons] = useState(true);
   const [addonError, setAddonError] = useState("");
 
@@ -2100,6 +3061,39 @@ function AddonSection() {
     } finally {
       setIsAddonCheckingOut(false);
     }
+  }
+
+  async function renewSelectedAddon() {
+    if (!selectedAddon?.clientProductId) return;
+    setIsAddonActionBusy(true);
+    setAddonActionMessage("");
+    setAddonRenewalPreview(null);
+
+    try {
+      const response = await fetch(`/api/account/renewals/${selectedAddon.clientProductId}/renew`, { method: "POST" });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setAddonActionMessage(result?.message ?? "Unable to prepare add-on renewal.");
+        return;
+      }
+
+      setAddonRenewalPreview(result.renewal);
+      setAddonActionMessage(result.message);
+    } catch {
+      setAddonActionMessage("Unable to reach add-on renewal service.");
+    } finally {
+      setIsAddonActionBusy(false);
+    }
+  }
+
+  async function createAddonRenewalCheckout(renewal) {
+    const response = await fetch(`/api/account/renewals/${renewal.clientProductId}/checkout`, { method: "POST" });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.message ?? "Unable to create add-on renewal checkout.");
+    }
+
+    return result.order;
   }
 
   const addonCartTotal = addonCart.reduce((total, item) => total + (Number(item.amount) * item.qty), 0);
@@ -2242,7 +3236,22 @@ function AddonSection() {
               <div><dt>Payment Term</dt><dd>{selectedAddon.paymentTerm || "N/A"}</dd></div>
               <div><dt>Amount</dt><dd>{formatMoney(selectedAddon.amount)}</dd></div>
             </dl>
-            <button className="primary-button" type="button" disabled>Add-on management bridge pending</button>
+            <div className="billing-action-row">
+              <button className="primary-button" type="button" disabled={isAddonActionBusy} onClick={renewSelectedAddon}>
+                {isAddonActionBusy ? "Checking..." : "Renew Add-On"}
+              </button>
+              <button className="secondary-button" type="button" onClick={() => setAddonActionMessage("Provisioning changes for this add-on will be handled inside the hosting control panel after payment.")}>
+                Provisioning Notes
+              </button>
+            </div>
+            {addonActionMessage && <p className="renewal-action-message">{addonActionMessage}</p>}
+            {addonRenewalPreview && (
+              <RenewalCheckoutPreview
+                renewal={addonRenewalPreview}
+                onClose={() => setAddonRenewalPreview(null)}
+                onCheckout={createAddonRenewalCheckout}
+              />
+            )}
           </aside>
         )}
       </article>
@@ -2332,6 +3341,12 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
   const [invoiceMessage, setInvoiceMessage] = useState("");
   const [invoiceBusyId, setInvoiceBusyId] = useState(null);
   const [balanceActionMessage, setBalanceActionMessage] = useState("");
+  const [depositAmount, setDepositAmount] = useState("25.00");
+  const [transferAmount, setTransferAmount] = useState("10.00");
+  const [transferTarget, setTransferTarget] = useState("");
+  const [balanceCheckoutPreview, setBalanceCheckoutPreview] = useState(null);
+  const [transferPreview, setTransferPreview] = useState(null);
+  const [isBalanceActionBusy, setIsBalanceActionBusy] = useState(false);
   const [productActionMessage, setProductActionMessage] = useState("");
 
   async function loadInvoice(purchase) {
@@ -2392,6 +3407,60 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
     return result.order;
   }
 
+  async function createDepositCheckout() {
+    setIsBalanceActionBusy(true);
+    setBalanceActionMessage("");
+    setBalanceCheckoutPreview(null);
+    setTransferPreview(null);
+
+    try {
+      const response = await fetch("/api/account/billing/deposit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(depositAmount) })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setBalanceActionMessage(result?.message ?? "Unable to create deposit checkout.");
+        return;
+      }
+
+      setBalanceCheckoutPreview(toCheckoutPreview(result.order));
+      setBalanceActionMessage(result.message);
+    } catch {
+      setBalanceActionMessage("Unable to reach deposit checkout service.");
+    } finally {
+      setIsBalanceActionBusy(false);
+    }
+  }
+
+  async function checkTransferCredit() {
+    setIsBalanceActionBusy(true);
+    setBalanceActionMessage("");
+    setBalanceCheckoutPreview(null);
+    setTransferPreview(null);
+
+    try {
+      const response = await fetch("/api/account/billing/transfer-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(transferAmount), targetLogin: transferTarget })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setBalanceActionMessage(result?.message ?? "Unable to check transfer.");
+        return;
+      }
+
+      setTransferPreview(result.preview);
+      setBalanceActionMessage(result.preview?.note ?? result.message);
+    } catch {
+      setBalanceActionMessage("Unable to reach transfer service.");
+    } finally {
+      setIsBalanceActionBusy(false);
+    }
+  }
+
   if (activeTab === "balance") {
     return (
       <div className="billing-balance-layout">
@@ -2402,13 +3471,44 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
         </div>
         <div className="billing-action-card">
           <h3>Add Funds</h3>
-          <p>Deposit and transfer checks are prepared without creating payment records.</p>
-          <div className="billing-action-row">
-            <button className="primary-button" type="button" onClick={() => setBalanceActionMessage("Deposit checkout bridge pending. Legacy DepositCredit writes are disabled in this preview.")}>Deposit Money</button>
-            <button className="secondary-button" type="button" onClick={() => setBalanceActionMessage("Transfer credit bridge pending. Legacy TransferCredit writes are disabled in this preview.")}>Transfer Credit</button>
+          <p>Deposit money into the account balance or validate a credit transfer to another account.</p>
+          <div className="balance-action-grid">
+            <label>
+              Deposit Amount
+              <input type="number" min="1" step="0.01" value={depositAmount} onChange={(event) => setDepositAmount(event.target.value)} />
+            </label>
+            <button className="primary-button" type="button" disabled={isBalanceActionBusy} onClick={createDepositCheckout}>
+              {isBalanceActionBusy ? "Checking..." : "Deposit Money"}
+            </button>
+            <label>
+              Transfer To
+              <input type="text" placeholder="customer login" value={transferTarget} onChange={(event) => setTransferTarget(event.target.value)} />
+            </label>
+            <label>
+              Transfer Amount
+              <input type="number" min="1" step="0.01" value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} />
+            </label>
+            <button className="secondary-button" type="button" disabled={isBalanceActionBusy || !transferTarget.trim()} onClick={checkTransferCredit}>
+              {isBalanceActionBusy ? "Checking..." : "Transfer Credit"}
+            </button>
           </div>
           {balanceActionMessage && <p className="renewal-action-message">{balanceActionMessage}</p>}
+          {balanceCheckoutPreview && <CheckoutPreviewCard preview={balanceCheckoutPreview} onClose={() => setBalanceCheckoutPreview(null)} />}
+          {transferPreview && (
+            <div className="transfer-preview-card">
+              <span className={transferPreview.eligible ? "status-pill" : "status-pill muted"}>
+                {transferPreview.eligible ? "Eligible" : "Not eligible"}
+              </span>
+              <dl className="card-meta single">
+                <div><dt>Target</dt><dd>{transferPreview.targetLogin}</dd></div>
+                <div><dt>Target ID</dt><dd>{transferPreview.targetCustomerId ?? "N/A"}</dd></div>
+                <div><dt>Amount</dt><dd>{formatMoney(transferPreview.amount)}</dd></div>
+                <div><dt>Available Balance</dt><dd>{formatMoney(transferPreview.availableBalance)}</dd></div>
+              </dl>
+            </div>
+          )}
         </div>
+        <KnowledgeBaseCard title="Billing Guides" articles={billingKbArticles} />
       </div>
     );
   }
@@ -2604,7 +3704,7 @@ function BillingPurchaseDetail({ purchase, onClose }) {
         <div><dt>Fees</dt><dd>{formatMoney(purchase.fees)}</dd></div>
         <div><dt>Transaction</dt><dd>{purchase.transactionCode || "N/A"}</dd></div>
       </dl>
-      <button className="primary-button" type="button" disabled>Printable invoice pending</button>
+      <button className="primary-button" type="button" onClick={() => window.print()}>Print Invoice</button>
     </aside>
   );
 }
@@ -2653,6 +3753,314 @@ function formatPaymentTerm(term) {
   return labels[term] ?? term;
 }
 
+function paymentTermMonths(term) {
+  const months = {
+    monthly: 1,
+    quarterly: 3,
+    "semi-annually": 6,
+    annually: 12,
+    biennially: 24,
+    "3y": 36
+  };
+  return months[term] ?? 0;
+}
+
+function formatVpnPriceOption(price) {
+  const term = formatPaymentTerm(price.paymentTerm);
+  const total = formatMoney(price.amount, price.currency);
+  const months = paymentTermMonths(price.paymentTerm);
+  if (!months || months === 1) {
+    return `${term} ${total}`;
+  }
+
+  return `${term} ${total} total (${formatMoney(Number(price.amount) / months, price.currency)}/mo)`;
+}
+
+function KnowledgeBaseCard({ title, articles, badge = "KB Articles" }) {
+  return (
+    <article className="panel-card kb-card">
+      <div>
+        <span className="status-pill blue">{badge}</span>
+        <h2>{title}</h2>
+      </div>
+      <div className="kb-list">
+        {articles.map(([articleTitle, url]) => (
+          <a href={url} key={url} target="_blank" rel="noreferrer">
+            <span>KB Article</span>
+            <strong>{articleTitle}</strong>
+          </a>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function editableAccountValue(value) {
+  if (!value || value === "NA" || value === "N/A") return "";
+  return value;
+}
+
+function profileFormFromSettings(profile) {
+  return {
+    name: editableAccountValue(profile?.name),
+    companyName: editableAccountValue(profile?.companyName),
+    mobileNumber: editableAccountValue(profile?.mobileNumber),
+    browserLanguage: editableAccountValue(profile?.browserLanguage),
+    vat: editableAccountValue(profile?.vat)
+  };
+}
+
+function SettingsSection() {
+  const [settings, setSettings] = useState(null);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
+  const [settingsError, setSettingsError] = useState("");
+  const [profileForm, setProfileForm] = useState({
+    name: "",
+    companyName: "",
+    mobileNumber: "",
+    browserLanguage: "",
+    vat: ""
+  });
+  const [profileMessage, setProfileMessage] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: ""
+  });
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  async function loadSettings() {
+    setIsLoadingSettings(true);
+    setSettingsError("");
+    try {
+      const response = await fetch("/api/account/settings");
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setSettingsError(result?.message ?? "Unable to load account settings.");
+        return;
+      }
+
+      setSettings(result.dashboard);
+      setProfileForm(profileFormFromSettings(result.dashboard?.profile));
+    } catch {
+      setSettingsError("Unable to reach account settings service.");
+    } finally {
+      setIsLoadingSettings(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  function updatePasswordField(field, value) {
+    setPasswordForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateProfileField(field, value) {
+    setProfileForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    setIsSavingProfile(true);
+    setProfileMessage("");
+
+    try {
+      const response = await fetch("/api/account/settings/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profileForm)
+      });
+      const result = await response.json().catch(() => null);
+      setProfileMessage(result?.message ?? "Unable to update profile.");
+      if (response.ok && result?.success) {
+        setSettings(result.dashboard);
+        setProfileForm(profileFormFromSettings(result.dashboard?.profile));
+      }
+    } catch {
+      setProfileMessage("Unable to reach profile update service.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
+
+  async function changePassword(event) {
+    event.preventDefault();
+    setIsChangingPassword(true);
+    setPasswordMessage("");
+
+    try {
+      const response = await fetch("/api/account/settings/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(passwordForm)
+      });
+      const result = await response.json().catch(() => null);
+      setPasswordMessage(result?.message ?? "Unable to update password.");
+      if (response.ok && result?.success) {
+        setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      }
+    } catch {
+      setPasswordMessage("Unable to reach password update service.");
+    } finally {
+      setIsChangingPassword(false);
+    }
+  }
+
+  const profile = settings?.profile;
+  const twoFactor = settings?.twoFactor;
+
+  return (
+    <section className="settings-section">
+      <article className="panel-card settings-overview-card">
+        <div className="billing-header">
+          <div>
+            <span className="status-pill blue">Live account</span>
+            <h2>Account Settings</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={loadSettings}>Refresh</button>
+        </div>
+        {isLoadingSettings && <p className="empty-state">Loading account settings...</p>}
+        {settingsError && (
+          <div className="dashboard-error-panel inline-error">
+            <p>{settingsError}</p>
+            <button className="secondary-button compact" type="button" onClick={loadSettings}>Retry</button>
+          </div>
+        )}
+        {profile && (
+          <div className="settings-card-grid">
+            <article className="settings-info-card">
+              <span className="status-pill">Profile</span>
+              <dl className="card-meta single">
+                <div><dt>Customer ID</dt><dd>{profile.customerId}</dd></div>
+                <div><dt>Login</dt><dd>{profile.login}</dd></div>
+                <div><dt>Account Type</dt><dd>{profile.customerType}</dd></div>
+                <div><dt>Status</dt><dd>{profile.status}</dd></div>
+                <div><dt>Name</dt><dd>{profile.name || "N/A"}</dd></div>
+                <div><dt>Company</dt><dd>{profile.companyName || "N/A"}</dd></div>
+                <div><dt>Start Date</dt><dd>{formatDate(profile.accountStartDate)}</dd></div>
+              </dl>
+            </article>
+
+            <article className="settings-info-card">
+              <span className="status-pill">Security</span>
+              <dl className="card-meta single">
+                <div><dt>Email</dt><dd>{profile.emailDisplay || "Stored securely"}</dd></div>
+                <div><dt>Mobile</dt><dd>{profile.mobileNumber || "N/A"}</dd></div>
+                <div><dt>Email Verified</dt><dd>{profile.reVerify ? "Yes" : "Needs verification"}</dd></div>
+                <div><dt>Security Version</dt><dd>{profile.securityVersion || "N/A"}</dd></div>
+                <div><dt>2FA Status</dt><dd>{twoFactor?.isEnabled ? "Enabled" : "Disabled"}</dd></div>
+                <div><dt>2FA Created</dt><dd>{formatDate(twoFactor?.enterDate)}</dd></div>
+              </dl>
+            </article>
+          </div>
+        )}
+      </article>
+
+      <article className="panel-card profile-card">
+        <div>
+          <span className="status-pill blue">Profile</span>
+          <h2>Update Profile</h2>
+          <p>Update the account display and contact fields used across the account panel.</p>
+        </div>
+        <form className="settings-form settings-form-grid" onSubmit={saveProfile}>
+          <label>
+            Name
+            <input
+              type="text"
+              value={profileForm.name}
+              onChange={(event) => updateProfileField("name", event.target.value)}
+            />
+          </label>
+          <label>
+            Company
+            <input
+              type="text"
+              value={profileForm.companyName}
+              onChange={(event) => updateProfileField("companyName", event.target.value)}
+            />
+          </label>
+          <label>
+            Mobile
+            <input
+              type="tel"
+              value={profileForm.mobileNumber}
+              onChange={(event) => updateProfileField("mobileNumber", event.target.value)}
+            />
+          </label>
+          <label>
+            Browser Language
+            <input
+              type="text"
+              value={profileForm.browserLanguage}
+              onChange={(event) => updateProfileField("browserLanguage", event.target.value)}
+            />
+          </label>
+          <label>
+            VAT
+            <input
+              type="text"
+              value={profileForm.vat}
+              onChange={(event) => updateProfileField("vat", event.target.value)}
+            />
+          </label>
+          <div className="settings-form-actions">
+            <button className="primary-button" type="submit" disabled={isSavingProfile || !profileForm.name.trim()}>
+              {isSavingProfile ? "Saving..." : "Save Profile"}
+            </button>
+          </div>
+        </form>
+        {profileMessage && <p className="renewal-action-message">{profileMessage}</p>}
+      </article>
+
+      <article className="panel-card password-card">
+        <div>
+          <span className="status-pill blue">Password</span>
+          <h2>Change Account Password</h2>
+          <p>This updates the main account login password. Hosting control panel, FTP, and IIS user sync will be handled in the hosting control panel workflow.</p>
+        </div>
+        <form className="settings-form" onSubmit={changePassword}>
+          <label>
+            Current Password
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={passwordForm.currentPassword}
+              onChange={(event) => updatePasswordField("currentPassword", event.target.value)}
+            />
+          </label>
+          <label>
+            New Password
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={passwordForm.newPassword}
+              onChange={(event) => updatePasswordField("newPassword", event.target.value)}
+            />
+          </label>
+          <label>
+            Confirm New Password
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={passwordForm.confirmPassword}
+              onChange={(event) => updatePasswordField("confirmPassword", event.target.value)}
+            />
+          </label>
+          <button className="primary-button" type="submit" disabled={isChangingPassword}>
+            {isChangingPassword ? "Updating..." : "Update Password"}
+          </button>
+        </form>
+        {passwordMessage && <p className="renewal-action-message">{passwordMessage}</p>}
+      </article>
+      <KnowledgeBaseCard title="Security App Guides" articles={securityGuideArticles} badge="2FA Guides" />
+    </section>
+  );
+}
+
 function AffiliateSection() {
   const tabs = [
     ["getting-started", "Getting Started"],
@@ -2697,55 +4105,58 @@ function AffiliateSection() {
   const currentCommissions = commissions.filter((commission) => commission.isReleased);
 
   return (
-    <section className="panel-card affiliate-panel">
-      <div className="billing-header">
-        <div>
-          <span className="status-pill blue">Pays 60%</span>
-          <h2>Affiliate Program</h2>
+    <section className="affiliate-stack">
+      <article className="panel-card affiliate-panel">
+        <div className="billing-header">
+          <div>
+            <span className="status-pill blue">Pays 60%</span>
+            <h2>Affiliate Program</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={loadAffiliate}>Refresh</button>
         </div>
-        <button className="secondary-button compact" type="button" onClick={loadAffiliate}>Refresh</button>
-      </div>
 
-      <div className="affiliate-summary-grid">
-        <AffiliateMetric label="Referrals" value={summary?.totalReferrals ?? "..."} />
-        <AffiliateMetric label="Paid Referrals" value={summary?.paidReferrals ?? "..."} />
-        <AffiliateMetric label="Pending" value={formatMoney(summary?.pendingCommission ?? 0)} />
-        <AffiliateMetric label="Available" value={formatMoney(summary?.availableCommission ?? 0)} />
-      </div>
-
-      <div className="tabs" role="tablist" aria-label="Affiliate tabs">
-        {tabs.map(([id, label]) => (
-          <button
-            aria-selected={id === activeTab}
-            className={id === activeTab ? "tab active" : "tab"}
-            key={id}
-            role="tab"
-            type="button"
-            onClick={() => setActiveTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {isLoadingAffiliate && <p className="empty-state">Loading affiliate data...</p>}
-      {affiliateError && (
-        <div className="dashboard-error-panel inline-error">
-          <p>{affiliateError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadAffiliate}>Retry</button>
+        <div className="affiliate-summary-grid">
+          <AffiliateMetric label="Referrals" value={summary?.totalReferrals ?? "..."} />
+          <AffiliateMetric label="Paid Referrals" value={summary?.paidReferrals ?? "..."} />
+          <AffiliateMetric label="Pending" value={formatMoney(summary?.pendingCommission ?? 0)} />
+          <AffiliateMetric label="Available" value={formatMoney(summary?.availableCommission ?? 0)} />
         </div>
-      )}
-      {!isLoadingAffiliate && !affiliateError && (
-        <div className="tab-panel" role="tabpanel">
-          {activeTab === "getting-started" && <AffiliateGettingStarted />}
-          {activeTab === "referrals" && <AffiliateReferrals referrals={affiliate?.referrals ?? []} />}
-          {activeTab === "pending" && <AffiliateCommissions commissions={pendingCommissions} emptyText="No pending commissions found." showRelease />}
-          {activeTab === "current" && <AffiliateCommissions commissions={currentCommissions} emptyText="No released commissions found." />}
-          {activeTab === "withdraw" && <AffiliateWithdraw summary={summary} />}
-          {activeTab === "pay-log" && <AffiliatePayLog payouts={affiliate?.payouts ?? []} />}
-          {activeTab === "promo-assets" && <AffiliatePromoAssets />}
+
+        <div className="tabs" role="tablist" aria-label="Affiliate tabs">
+          {tabs.map(([id, label]) => (
+            <button
+              aria-selected={id === activeTab}
+              className={id === activeTab ? "tab active" : "tab"}
+              key={id}
+              role="tab"
+              type="button"
+              onClick={() => setActiveTab(id)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      )}
+
+        {isLoadingAffiliate && <p className="empty-state">Loading affiliate data...</p>}
+        {affiliateError && (
+          <div className="dashboard-error-panel inline-error">
+            <p>{affiliateError}</p>
+            <button className="secondary-button compact" type="button" onClick={loadAffiliate}>Retry</button>
+          </div>
+        )}
+        {!isLoadingAffiliate && !affiliateError && (
+          <div className="tab-panel" role="tabpanel">
+            {activeTab === "getting-started" && <AffiliateGettingStarted />}
+            {activeTab === "referrals" && <AffiliateReferrals referrals={affiliate?.referrals ?? []} />}
+            {activeTab === "pending" && <AffiliateCommissions commissions={pendingCommissions} emptyText="No pending commissions found." showRelease />}
+            {activeTab === "current" && <AffiliateCommissions commissions={currentCommissions} emptyText="No released commissions found." />}
+            {activeTab === "withdraw" && <AffiliateWithdraw summary={summary} />}
+            {activeTab === "pay-log" && <AffiliatePayLog payouts={affiliate?.payouts ?? []} />}
+            {activeTab === "promo-assets" && <AffiliatePromoAssets />}
+          </div>
+        )}
+      </article>
+      <KnowledgeBaseCard title="Reseller Guides" articles={resellerKbArticles} />
     </section>
   );
 }

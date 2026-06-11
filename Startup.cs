@@ -10,9 +10,12 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
+using System.Net.Mail;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 #nullable enable
 
@@ -20,7 +23,9 @@ namespace controlpanel
 {
     public class Startup
     {
+        private const int ConstPageTypeNewCp = 1;
         private const int ConstPageTypeBuyDomain = 3;
+        private const int ConstPageTypeTransferDomain = 4;
         private const int ConstPageTypeCpRenew = 5;
         private const int ConstPageTypeWebQuota = 6;
         private const int ConstPageTypeMssqlDb = 7;
@@ -81,22 +86,36 @@ namespace controlpanel
                 endpoints.MapGet("/api/auth/me", HandleCurrentUserAsync);
                 endpoints.MapPost("/api/auth/logout", HandleLogoutAsync);
                 endpoints.MapGet("/api/account/dashboard", HandleAccountDashboardAsync);
+                endpoints.MapPost("/api/account/urgent-logs/{logId:int}/hide", HandleHideUrgentLogAsync);
                 endpoints.MapGet("/api/account/domains", HandleAccountDomainsAsync);
                 endpoints.MapPost("/api/account/domains/search", HandleDomainAvailabilitySearchAsync);
                 endpoints.MapPost("/api/account/domains/checkout-preview", HandleDomainCheckoutPreviewAsync);
                 endpoints.MapPost("/api/account/domains/checkout", HandleDomainCheckoutAsync);
+                endpoints.MapPost("/api/account/domains/{domainId:int}/dns-preview", HandleDomainDnsPreviewAsync);
+                endpoints.MapPost("/api/account/domains/{domainId:int}/registrar-action", HandleDomainRegistrarActionAsync);
                 endpoints.MapGet("/api/account/billing", HandleAccountBillingAsync);
+                endpoints.MapPost("/api/account/billing/deposit", HandleBillingDepositAsync);
+                endpoints.MapPost("/api/account/billing/transfer-preview", HandleBillingTransferPreviewAsync);
                 endpoints.MapGet("/api/account/billing/orders/{orderId:int}/invoice", HandleBillingInvoiceAsync);
                 endpoints.MapGet("/api/account/renewals", HandleAccountRenewalsAsync);
                 endpoints.MapPost("/api/account/renewals/{clientProductId:int}/hide", HandleHideRenewalNoticeAsync);
                 endpoints.MapPost("/api/account/renewals/{clientProductId:int}/renew", HandleRenewalCheckoutPreviewAsync);
                 endpoints.MapPost("/api/account/renewals/{clientProductId:int}/checkout", HandleRenewalCheckoutAsync);
                 endpoints.MapGet("/api/account/vpn", HandleAccountVpnAsync);
+                endpoints.MapPost("/api/account/vpn/checkout", HandleVpnCheckoutAsync);
+                endpoints.MapPost("/api/account/vpn/users", HandleVpnUserCreatePreviewAsync);
+                endpoints.MapPost("/api/account/vpn/users/{vpnClientId:int}/action", HandleVpnUserActionAsync);
                 endpoints.MapGet("/api/account/addons", HandleAccountAddonsAsync);
                 endpoints.MapPost("/api/account/addons/checkout-preview", HandleAddonCheckoutPreviewAsync);
                 endpoints.MapPost("/api/account/addons/checkout", HandleAddonCheckoutAsync);
                 endpoints.MapGet("/api/account/affiliate", HandleAccountAffiliateAsync);
                 endpoints.MapPost("/api/account/affiliate/withdraw-preview", HandleAffiliateWithdrawPreviewAsync);
+                endpoints.MapGet("/api/account/new-orders/catalog", HandleNewOrderCatalogAsync);
+                endpoints.MapPost("/api/account/new-orders/checkout", HandleNewOrderCheckoutAsync);
+                endpoints.MapPost("/api/account/new-orders/domain-transfer/checkout", HandleDomainTransferCheckoutAsync);
+                endpoints.MapGet("/api/account/settings", HandleAccountSettingsAsync);
+                endpoints.MapPost("/api/account/settings/profile", HandleAccountProfileUpdateAsync);
+                endpoints.MapPost("/api/account/settings/password", HandleAccountPasswordChangeAsync);
                 endpoints.MapGet("/api/account/checkout-temp/{guid}", HandleCheckoutTempOrderAsync);
                 endpoints.MapGet("/api/hosting/sites", HandleHostingSitesAsync);
                 endpoints.MapFallbackToFile("index.html");
@@ -128,15 +147,62 @@ namespace controlpanel
             var customer = await LoadCustomerSummaryAsync(connection, sessionUser.CustomerId);
             var hostingAccounts = await LoadHostingAccountsAsync(connection, sessionUser.CustomerId);
             var statusSummary = await LoadHostingStatusSummaryAsync(connection, sessionUser.CustomerId);
+            var urgentLogs = await LoadUrgentLogsAsync(connection, sessionUser.CustomerId);
 
             var dashboard = new AccountDashboard(
                 customer,
                 hostingAccounts,
                 statusSummary,
-                BuildRenewalNotices(hostingAccounts)
+                BuildRenewalNotices(hostingAccounts),
+                urgentLogs
             );
 
             await Results.Ok(new DashboardResponse(true, "Dashboard loaded.", dashboard)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHideUrgentLogAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Not signed in."),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (!TryReadRouteInt(context, "logId", out var logId))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Invalid urgent log id.")).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            const string sql = @"
+UPDATE dbo.customer_urgent_log
+SET hide = 1
+WHERE customer_urgent_log_id = @logId
+  AND customer_profile_id = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@logId", logId);
+            command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+            var updated = await command.ExecuteNonQueryAsync();
+
+            await Results.Ok(new AccountActionResponse(
+                updated > 0,
+                updated > 0 ? "Urgent notice hidden." : "Urgent notice was not found for this account."
+            )).ExecuteAsync(context);
         }
 
         private async Task HandleAccountDomainsAsync(HttpContext context)
@@ -223,12 +289,13 @@ namespace controlpanel
             };
             httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Smarterasp-ControlPanel-Rebuild/1.0");
 
+            var openSrs = GetOpenSrsSettings();
             var checks = new List<Task<DomainAvailabilityResult>>();
             foreach (var domainName in normalized)
             {
                 checks.Add(owned.Contains(domainName)
                     ? Task.FromResult(new DomainAvailabilityResult(domainName, false, "Already in your account", "account"))
-                    : CheckDomainAvailabilityWithRdapAsync(httpClient, domainName));
+                    : CheckDomainAvailabilityAsync(httpClient, domainName, openSrs));
             }
 
             var results = new List<DomainAvailabilityResult>(await Task.WhenAll(checks));
@@ -369,6 +436,181 @@ namespace controlpanel
             await Results.Ok(new CheckoutCreateResponse(true, "Domain checkout order created.", order)).ExecuteAsync(context);
         }
 
+        private async Task HandleDomainRegistrarActionAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Not signed in."),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (!TryReadRouteInt(context, "domainId", out var domainId))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Invalid domain id.")).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<DomainRegistrarActionRequest>();
+            var action = NormalizeAccountText(request?.Action, 40).ToLowerInvariant();
+            var value = NormalizeAccountText(request?.Value, 600);
+
+            var allowedActions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "nameservers",
+                "contact",
+                "privacy-on",
+                "privacy-off",
+                "lock",
+                "unlock",
+                "status",
+                "auth-code",
+                "auto-renew-on",
+                "auto-renew-off",
+                "forwarding",
+                "dns"
+            };
+
+            if (!allowedActions.Contains(action))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Select a valid registrar action.")).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var domains = await LoadAccountDomainsAsync(connection, sessionUser.CustomerId);
+            var domain = domains.Find(item => item.Id == domainId);
+            if (domain == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Domain was not found on this account."),
+                    statusCode: StatusCodes.Status404NotFound
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (action is "nameservers" or "lock" or "unlock" or "privacy-on" or "privacy-off" or "status" or "auth-code" or "contact" or "auto-renew-on" or "auto-renew-off" or "forwarding")
+            {
+                var openSrs = GetOpenSrsSettings();
+                if (!openSrs.IsConfigured)
+                {
+                    await Results.Problem("Missing OpenSRS API settings.").ExecuteAsync(context);
+                    return;
+                }
+
+                var credential = await LoadDomainCredentialAsync(connection, sessionUser.CustomerId, domain.RegisterInfoId);
+                if (credential == null)
+                {
+                    await Results.BadRequest(new AccountActionResponse(false, "Domain manager profile credentials were not found for this domain.")).ExecuteAsync(context);
+                    return;
+                }
+
+                using var httpClient = new HttpClient
+                {
+                    Timeout = TimeSpan.FromSeconds(15)
+                };
+                httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Smarterasp-ControlPanel-Rebuild/1.0");
+
+                var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+                var result = action switch
+                {
+                    "nameservers" => await UpdateDomainNameserversWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, value, remoteIp),
+                    "privacy-on" => await UpdateDomainWhoisPrivacyWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, true, remoteIp),
+                    "privacy-off" => await UpdateDomainWhoisPrivacyWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, false, remoteIp),
+                    "status" => await GetDomainStatusWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, remoteIp),
+                    "auth-code" => await GetDomainAuthCodeWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, remoteIp),
+                    "contact" => await UpdateDomainContactWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, value, remoteIp),
+                    "auto-renew-on" => await UpdateDomainExpireActionWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, true, remoteIp),
+                    "auto-renew-off" => await UpdateDomainExpireActionWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, false, remoteIp),
+                    "forwarding" => await UpdateDomainForwardingWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, value, remoteIp),
+                    _ => await UpdateDomainLockWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, action == "lock", remoteIp)
+                };
+
+                await Results.Json(new AccountActionResponse(result.Success, result.Message), statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+                return;
+            }
+
+            var actionLabel = action switch
+            {
+                "dns" => "DNS update",
+                _ => "registrar action"
+            };
+
+            var detail = string.IsNullOrWhiteSpace(value) ? "" : $" Request detail: {value}";
+            await Results.Ok(new AccountActionResponse(
+                true,
+                $"{actionLabel} is ready for {domain.DomainName}. This action will be wired in the next registrar pass.{detail}"
+            )).ExecuteAsync(context);
+        }
+
+        private async Task HandleDomainDnsPreviewAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new DomainDnsPreviewResponse(false, "Not signed in.", new List<DomainDnsRecordPreview>()),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (!TryReadRouteInt(context, "domainId", out var domainId))
+            {
+                await Results.BadRequest(new DomainDnsPreviewResponse(false, "Invalid domain id.", new List<DomainDnsRecordPreview>())).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<DomainDnsPreviewRequest>();
+            var recordsText = request?.Records ?? "";
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var domains = await LoadAccountDomainsAsync(connection, sessionUser.CustomerId);
+            var domain = domains.Find(item => item.Id == domainId);
+            if (domain == null)
+            {
+                await Results.Json(
+                    new DomainDnsPreviewResponse(false, "Domain was not found on this account.", new List<DomainDnsRecordPreview>()),
+                    statusCode: StatusCodes.Status404NotFound
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var parseResult = ParseDnsRecords(recordsText, domain.DomainName);
+            if (!parseResult.Success)
+            {
+                await Results.BadRequest(new DomainDnsPreviewResponse(false, parseResult.Message, parseResult.Records)).ExecuteAsync(context);
+                return;
+            }
+
+            await Results.Ok(new DomainDnsPreviewResponse(
+                true,
+                $"DNS records for {domain.DomainName} are valid. Live OpenSRS DNS publishing is staged until Storefront DNS API credentials are configured.",
+                parseResult.Records
+            )).ExecuteAsync(context);
+        }
+
         private async Task HandleAccountBillingAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -445,6 +687,97 @@ namespace controlpanel
             }
 
             await Results.Ok(new BillingInvoiceResponse(true, "Invoice loaded.", invoice)).ExecuteAsync(context);
+        }
+
+        private async Task HandleBillingDepositAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new CheckoutCreateResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<BillingDepositRequest>();
+            var amount = Math.Round(Math.Max(0m, request?.Amount ?? 0m), 2);
+            if (amount < 1m)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Deposit amount must be at least $1.00.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var checkoutUrl = $"/checkout/deposit_v2?amount={Uri.EscapeDataString(amount.ToString("0.00", CultureInfo.InvariantCulture))}";
+            var order = new CheckoutOrder(
+                $"DEPOSIT-{Guid.NewGuid():N}",
+                checkoutUrl,
+                "Account Balance Deposit",
+                amount,
+                "USD",
+                ConstPageTypeGeneral,
+                "Prepared a deposit checkout handoff using the active /checkout/deposit_v2 flow. No credit is added until checkout payment succeeds."
+            );
+
+            await Results.Ok(new CheckoutCreateResponse(true, "Deposit checkout ready.", order)).ExecuteAsync(context);
+        }
+
+        private async Task HandleBillingTransferPreviewAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new BillingTransferPreviewResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<BillingTransferRequest>();
+            var targetLogin = request?.TargetLogin?.Trim() ?? "";
+            var amount = Math.Round(Math.Max(0m, request?.Amount ?? 0m), 2);
+            if (string.IsNullOrWhiteSpace(targetLogin) || amount < 1m)
+            {
+                await Results.BadRequest(new BillingTransferPreviewResponse(false, "Enter a target account and at least $1.00.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+            var targetCustomerId = await LoadCustomerIdByLoginAsync(connection, targetLogin);
+            var eligible = targetCustomerId != null
+                && targetCustomerId != sessionUser.CustomerId
+                && amount <= balance;
+
+            var message = eligible
+                ? "Transfer preview ready. This rebuild validates the target and balance before the legacy transfer write is reconnected."
+                : targetCustomerId == null
+                    ? "Target account was not found."
+                    : targetCustomerId == sessionUser.CustomerId
+                        ? "You cannot transfer credit to the same account."
+                        : "Not enough account balance for this transfer.";
+
+            var preview = new BillingTransferPreview(
+                targetLogin,
+                targetCustomerId,
+                amount,
+                balance,
+                eligible,
+                message
+            );
+
+            await Results.Ok(new BillingTransferPreviewResponse(true, "Transfer checked.", preview)).ExecuteAsync(context);
         }
 
         private async Task HandleAccountRenewalsAsync(HttpContext context)
@@ -655,9 +988,214 @@ WHERE client_product_id = @clientProductId
 
             var services = await LoadVpnServicesAsync(connection, sessionUser.CustomerId);
             var quota = await LoadVpnQuotaAsync(connection, sessionUser.CustomerId);
-            var dashboard = new AccountVpnDashboard(services.Count, quota, services);
+            var catalog = await LoadVpnCatalogAsync(connection, sessionUser.CustomerType);
+            var dashboard = new AccountVpnDashboard(services.Count, quota, services, catalog);
 
             await Results.Ok(new AccountVpnResponse(true, "VPN services loaded.", dashboard)).ExecuteAsync(context);
+        }
+
+        private async Task HandleVpnCheckoutAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new CheckoutCreateResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<VpnCheckoutRequest>();
+            if (request == null || request.ProductId <= 0)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Select a VPN product.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var catalog = await LoadVpnCatalogAsync(connection, sessionUser.CustomerType);
+            var product = catalog.Find(item => item.ProductId == request.ProductId);
+            if (product == null)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Selected VPN product is not available.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var selectedPrice = product.Prices.Find(price => price.PriceId == request.PriceId);
+            if (selectedPrice == null && product.Prices.Count > 0)
+            {
+                selectedPrice = product.Prices[0];
+            }
+
+            if (selectedPrice == null)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, $"{product.Name} has no available billing terms.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var quantity = Math.Clamp(request.Quantity, 1, 99);
+            var amount = selectedPrice.Amount * quantity;
+            var guid = await CreateBuyerTempOrderAsync(
+                connection,
+                sessionUser.CustomerId,
+                product.ProductId,
+                product.Name,
+                amount,
+                selectedPrice.PaymentTerm,
+                selectedPrice.Currency,
+                quantity.ToString(CultureInfo.InvariantCulture),
+                "",
+                selectedPrice.PriceId.ToString(CultureInfo.InvariantCulture),
+                ConstPageTypeVpn
+            );
+
+            var order = new CheckoutOrder(
+                guid,
+                BuildLegacyCheckoutUrl(guid),
+                product.Name,
+                amount,
+                selectedPrice.Currency,
+                ConstPageTypeVpn,
+                "Created oms.dbo.buyer_temp VPN order using the add-on VPN checkout page type."
+            );
+
+            await Results.Ok(new CheckoutCreateResponse(true, "VPN checkout order created.", order)).ExecuteAsync(context);
+        }
+
+        private async Task HandleVpnUserCreatePreviewAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Not signed in."),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<VpnUserCreateRequest>();
+            var user = NormalizeAccountText(request?.User, 80);
+            var password = request?.Password ?? "";
+            var type = NormalizeAccountText(request?.Type, 40);
+            var area = NormalizeAccountText(request?.Area, 80);
+
+            if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(password))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Enter a VPN username and password.")).ExecuteAsync(context);
+                return;
+            }
+
+            if (password.Length < 8)
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "VPN password must be at least 8 characters.")).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var used = (await LoadVpnServicesAsync(connection, sessionUser.CustomerId)).Count;
+            var quota = await LoadVpnQuotaAsync(connection, sessionUser.CustomerId);
+            if (quota > 0 && used >= quota)
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "VPN quota is full. Buy another VPN service before creating a new user.")).ExecuteAsync(context);
+                return;
+            }
+
+            var location = string.IsNullOrWhiteSpace(area) ? "automatic location" : area;
+            var vpnType = string.IsNullOrWhiteSpace(type) ? "IKEv2" : type;
+            await Results.Ok(new AccountActionResponse(
+                true,
+                $"{user} passed account and quota checks for {vpnType} in {location}. Live VPN host provisioning is queued for the control-plane worker step."
+            )).ExecuteAsync(context);
+        }
+
+        private async Task HandleVpnUserActionAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Not signed in."),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (!TryReadRouteInt(context, "vpnClientId", out var vpnClientId))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Invalid VPN user id.")).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<VpnUserActionRequest>();
+            var action = NormalizeAccountText(request?.Action, 40).ToLowerInvariant();
+            var allowedActions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "openvpn",
+                "download-config",
+                "reset-password",
+                "delete"
+            };
+
+            if (!allowedActions.Contains(action))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Select a valid VPN action.")).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var services = await LoadVpnServicesAsync(connection, sessionUser.CustomerId);
+            var service = services.Find(item => item.VpnClientId == vpnClientId);
+            if (service == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "VPN user was not found on this account."),
+                    statusCode: StatusCodes.Status404NotFound
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var actionLabel = action switch
+            {
+                "openvpn" => "OpenVPN conversion",
+                "download-config" => "configuration download",
+                "reset-password" => "password reset",
+                "delete" => "VPN user deletion",
+                _ => "VPN action"
+            };
+
+            await Results.Ok(new AccountActionResponse(
+                true,
+                $"{actionLabel} is ready for {service.User}. Live VPN host changes are intentionally held for the worker/provisioning step."
+            )).ExecuteAsync(context);
         }
 
         private async Task HandleAccountAddonsAsync(HttpContext context)
@@ -956,6 +1494,361 @@ WHERE client_product_id = @clientProductId
             await Results.Ok(new AffiliateWithdrawResponse(true, "Affiliate withdraw checked.", preview)).ExecuteAsync(context);
         }
 
+        private async Task HandleNewOrderCatalogAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new NewOrderCatalogResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var type = NormalizeNewOrderType(context.Request.Query["type"].ToString());
+            if (string.IsNullOrWhiteSpace(type) || !IsCatalogNewOrderType(type))
+            {
+                await Results.BadRequest(new NewOrderCatalogResponse(false, "Select a valid new order type.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var catalog = await LoadNewOrderCatalogAsync(connection, sessionUser.CustomerType, type);
+            var response = new NewOrderCatalog(
+                type,
+                NewOrderTitle(type),
+                NewOrderLegacyPath(type),
+                NewOrderDescription(type),
+                catalog
+            );
+
+            await Results.Ok(new NewOrderCatalogResponse(true, "New order catalog loaded.", response)).ExecuteAsync(context);
+        }
+
+        private async Task HandleNewOrderCheckoutAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new CheckoutCreateResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<NewOrderCheckoutRequest>();
+            var type = NormalizeNewOrderType(request?.Type ?? "");
+            if (request == null || string.IsNullOrWhiteSpace(type) || !IsCatalogNewOrderType(type) || request.ProductId <= 0)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Select a valid product to order.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var catalog = await LoadNewOrderCatalogAsync(connection, sessionUser.CustomerType, type);
+            var product = catalog.Find(item => item.ProductId == request.ProductId);
+            if (product == null)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Selected product is not available in this order catalog.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var selectedPrice = product.Prices.Find(price => price.PriceId == request.PriceId);
+            if (selectedPrice == null && product.Prices.Count > 0)
+            {
+                selectedPrice = product.Prices[0];
+            }
+
+            if (selectedPrice == null)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, $"{product.Name} has no available billing terms.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var guid = await CreateBuyerTempOrderAsync(
+                connection,
+                sessionUser.CustomerId,
+                product.ProductId,
+                product.Name,
+                selectedPrice.Amount,
+                selectedPrice.PaymentTerm,
+                selectedPrice.Currency,
+                "",
+                "",
+                selectedPrice.PriceId.ToString(CultureInfo.InvariantCulture),
+                ConstPageTypeNewCp
+            );
+
+            var order = new CheckoutOrder(
+                guid,
+                BuildLegacyCheckoutUrl(guid),
+                product.Name,
+                selectedPrice.Amount,
+                selectedPrice.Currency,
+                ConstPageTypeNewCp,
+                $"Created oms.dbo.buyer_temp new-order checkout from {NewOrderLegacyPath(type)}."
+            );
+
+            await Results.Ok(new CheckoutCreateResponse(true, "New order checkout created.", order)).ExecuteAsync(context);
+        }
+
+        private async Task HandleDomainTransferCheckoutAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new CheckoutCreateResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<DomainTransferCheckoutRequest>();
+            var domainName = NormalizeDomainName(request?.DomainName ?? "");
+            if (string.IsNullOrWhiteSpace(domainName) || !domainName.Contains('.', StringComparison.Ordinal))
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Enter a valid domain name to transfer.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var tld = DomainTld(domainName);
+            if (string.IsNullOrWhiteSpace(tld))
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Unable to read the domain extension.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var quote = await LoadDomainTransferQuoteAsync(connection, tld);
+            if (quote == null)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, $"No transfer price was found for .{tld}.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var amount = quote.Amount + (request?.WhoisPrivacy == true ? 8m : 0m);
+            var productName = request?.WhoisPrivacy == true ? "Domain Transfer + Whois Privacy" : "Domain Transfer";
+            var guid = await CreateBuyerTempOrderAsync(
+                connection,
+                sessionUser.CustomerId,
+                468,
+                productName,
+                amount,
+                quote.PaymentTerm,
+                quote.Currency,
+                domainName,
+                request?.WhoisPrivacy == true ? "WhoisPrivacy" : "",
+                tld,
+                ConstPageTypeTransferDomain
+            );
+
+            var order = new CheckoutOrder(
+                guid,
+                BuildLegacyCheckoutUrl(guid),
+                $"{productName} - {domainName}",
+                amount,
+                quote.Currency,
+                ConstPageTypeTransferDomain,
+                "Created oms.dbo.buyer_temp domain transfer order. Modern registrar transfer eligibility check still needs to be rebuilt before payment processing is enabled."
+            );
+
+            await Results.Ok(new CheckoutCreateResponse(true, "Domain transfer checkout created.", order)).ExecuteAsync(context);
+        }
+
+        private async Task HandleAccountSettingsAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountSettingsResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var settings = await LoadAccountSettingsAsync(connection, sessionUser.CustomerId);
+            await Results.Ok(new AccountSettingsResponse(true, "Account settings loaded.", settings)).ExecuteAsync(context);
+        }
+
+        private async Task HandleAccountProfileUpdateAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountSettingsResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<AccountProfileUpdateRequest>();
+            var name = NormalizeAccountText(request?.Name, 120);
+            var companyName = NormalizeAccountText(request?.CompanyName, 120);
+            var mobileNumber = NormalizeAccountText(request?.MobileNumber, 40);
+            var browserLanguage = NormalizeAccountText(request?.BrowserLanguage, 120);
+            var vat = NormalizeAccountText(request?.Vat, 60);
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                await Results.BadRequest(new AccountSettingsResponse(false, "Name is required.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            const string sql = @"
+UPDATE dbo.customer_profile
+SET name_en = @name,
+    company_name_en = @companyName,
+    mobile_number = @mobileNumber,
+    browserlang = @browserLanguage,
+    vat = @vat
+WHERE customerID = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@name", string.IsNullOrWhiteSpace(name) ? "NA" : name);
+            command.Parameters.AddWithValue("@companyName", string.IsNullOrWhiteSpace(companyName) ? "NA" : companyName);
+            command.Parameters.AddWithValue("@mobileNumber", string.IsNullOrWhiteSpace(mobileNumber) ? "NA" : mobileNumber);
+            command.Parameters.AddWithValue("@browserLanguage", string.IsNullOrWhiteSpace(browserLanguage) ? "NA" : browserLanguage);
+            command.Parameters.AddWithValue("@vat", string.IsNullOrWhiteSpace(vat) ? "NA" : vat);
+            command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+            await command.ExecuteNonQueryAsync();
+
+            var settings = await LoadAccountSettingsAsync(connection, sessionUser.CustomerId);
+            await Results.Ok(new AccountSettingsResponse(true, "Profile updated.", settings)).ExecuteAsync(context);
+        }
+
+        private async Task HandleAccountPasswordChangeAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Not signed in."),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<AccountPasswordChangeRequest>();
+            var currentPassword = request?.CurrentPassword ?? "";
+            var newPassword = request?.NewPassword ?? "";
+            var confirmPassword = request?.ConfirmPassword ?? "";
+
+            if (string.IsNullOrWhiteSpace(currentPassword) || string.IsNullOrWhiteSpace(newPassword))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Enter current password and new password.")).ExecuteAsync(context);
+                return;
+            }
+
+            if (newPassword != confirmPassword)
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "New password and confirmation do not match.")).ExecuteAsync(context);
+                return;
+            }
+
+            if (!IsPasswordComplexEnough(newPassword))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Password must be at least 8 characters and include a letter and a number.")).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var storedHash = await LoadCustomerPasswordHashAsync(connection, sessionUser.CustomerId);
+            if (!PasswordMatches(currentPassword, storedHash))
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Current password is not correct."),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (PasswordMatches(newPassword, storedHash))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "New password cannot be the same as current password.")).ExecuteAsync(context);
+                return;
+            }
+
+            const string sql = @"
+UPDATE dbo.customer_profile
+SET pp1 = @passwordHash,
+    securityversion = 5,
+    customerPassHash = '5',
+    reVerify = 1
+WHERE customerID = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@passwordHash", HashHex(SHA256.HashData(Encoding.UTF8.GetBytes(newPassword))));
+            command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+            await command.ExecuteNonQueryAsync();
+
+            context.Session.SetString("customerID", sessionUser.CustomerId.ToString(CultureInfo.InvariantCulture));
+            context.Session.SetString("customerLogin", sessionUser.Login);
+            context.Session.SetString("customerType", sessionUser.CustomerType);
+
+            await Results.Ok(new AccountActionResponse(true, "Account password updated. CP, FTP, and IIS password sync will be handled in the hosting control panel workflow.")).ExecuteAsync(context);
+        }
+
         private async Task HandleHostingSitesAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -1165,12 +2058,44 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
             return candidates.Contains(storedHash.Trim());
         }
 
+        private static bool IsPasswordComplexEnough(string password)
+        {
+            if (password.Length < 8)
+            {
+                return false;
+            }
+
+            var hasLetter = false;
+            var hasNumber = false;
+            foreach (var character in password)
+            {
+                hasLetter = hasLetter || char.IsLetter(character);
+                hasNumber = hasNumber || char.IsDigit(character);
+            }
+
+            return hasLetter && hasNumber;
+        }
+
+        private static string NormalizeAccountText(string? value, int maxLength)
+        {
+            var normalized = (value ?? "").Trim();
+            return normalized.Length <= maxLength ? normalized : normalized[..maxLength];
+        }
+
         private static string HashHex(byte[] bytes) => Convert.ToHexString(bytes).ToLowerInvariant();
 
         private string GetEhbConfigConnectionString() =>
             _configuration.GetConnectionString("EhbConfig")
             ?? Environment.GetEnvironmentVariable("EHB_CONFIG_CONNECTION_STRING")
             ?? "";
+
+        private OpenSrsSettings GetOpenSrsSettings()
+        {
+            var apiUrl = _configuration["OpenSrs:ApiUrl"] ?? Environment.GetEnvironmentVariable("OPENSRS_API_URL") ?? "";
+            var username = _configuration["OpenSrs:Username"] ?? Environment.GetEnvironmentVariable("OPENSRS_USERNAME") ?? "";
+            var privateKey = _configuration["OpenSrs:PrivateKey"] ?? Environment.GetEnvironmentVariable("OPENSRS_PRIVATE_KEY") ?? "";
+            return new OpenSrsSettings(apiUrl.Trim(), username.Trim(), privateKey.Trim());
+        }
 
         private static LoginUser? GetSessionUser(HttpContext context)
         {
@@ -1275,6 +2200,98 @@ WHERE accountid = @accountId
             return result == null || result == DBNull.Value ? 0m : Convert.ToDecimal(result, CultureInfo.InvariantCulture);
         }
 
+        private static async Task<DomainCredential?> LoadDomainCredentialAsync(SqlConnection connection, long customerId, int registerInfoId)
+        {
+            if (registerInfoId <= 0)
+            {
+                return null;
+            }
+
+            const string sql = @"
+SELECT TOP 1 adminusername, adminpassword
+FROM domaincontroller.dbo.DomainRegisterInfo
+WHERE id = @registerInfoId
+  AND sponsorid = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@registerInfoId", registerInfoId);
+            command.Parameters.AddWithValue("@customerId", customerId);
+
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            var username = reader.IsDBNull(0) ? "" : reader.GetString(0).Trim();
+            var password = reader.IsDBNull(1) ? "" : reader.GetString(1).Trim();
+            return string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password)
+                ? null
+                : new DomainCredential(username, password);
+        }
+
+        private static async Task<DomainAvailabilityResult> CheckDomainAvailabilityAsync(HttpClient httpClient, string domainName, OpenSrsSettings openSrs)
+        {
+            if (openSrs.IsConfigured)
+            {
+                var openSrsResult = await CheckDomainAvailabilityWithOpenSrsAsync(httpClient, domainName, openSrs);
+                if (openSrsResult.Reason != "OpenSRS unavailable")
+                {
+                    return openSrsResult;
+                }
+            }
+
+            return await CheckDomainAvailabilityWithRdapAsync(httpClient, domainName);
+        }
+
+        private static async Task<DomainAvailabilityResult> CheckDomainAvailabilityWithOpenSrsAsync(HttpClient httpClient, string domainName, OpenSrsSettings openSrs)
+        {
+            try
+            {
+                var (searchString, tld) = SplitDomainForOpenSrs(domainName);
+                if (string.IsNullOrWhiteSpace(searchString) || string.IsNullOrWhiteSpace(tld))
+                {
+                    return new DomainAvailabilityResult(domainName, false, "Invalid domain", "opensrs");
+                }
+
+                var xml = BuildOpenSrsNameSuggestXml(searchString, tld);
+                using var request = new HttpRequestMessage(HttpMethod.Post, openSrs.ApiUrl);
+                request.Content = new StringContent(xml, Encoding.UTF8, "text/xml");
+                request.Headers.TryAddWithoutValidation("X-Username", openSrs.Username);
+                request.Headers.TryAddWithoutValidation("X-Signature", BuildOpenSrsSignature(xml, openSrs.PrivateKey));
+
+                using var response = await httpClient.SendAsync(request);
+                var responseXml = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(responseXml))
+                {
+                    return new DomainAvailabilityResult(domainName, false, "OpenSRS unavailable", "opensrs");
+                }
+
+                var status = ReadOpenSrsItemValue(responseXml, "status");
+                if (status.Equals("available", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new DomainAvailabilityResult(domainName, true, "Available", "opensrs");
+                }
+
+                if (status.Equals("taken", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new DomainAvailabilityResult(domainName, false, "Unavailable", "opensrs");
+                }
+
+                var responseText = ReadOpenSrsItemValue(responseXml, "response_text");
+                if (!string.IsNullOrWhiteSpace(responseText))
+                {
+                    return new DomainAvailabilityResult(domainName, false, responseText, "opensrs");
+                }
+
+                return new DomainAvailabilityResult(domainName, false, "Could not verify", "opensrs");
+            }
+            catch
+            {
+                return new DomainAvailabilityResult(domainName, false, "OpenSRS unavailable", "opensrs");
+            }
+        }
+
         private static async Task<DomainAvailabilityResult> CheckDomainAvailabilityWithRdapAsync(HttpClient httpClient, string domainName)
         {
             try
@@ -1282,20 +2299,925 @@ WHERE accountid = @accountId
                 using var response = await httpClient.GetAsync($"https://rdap.org/domain/{Uri.EscapeDataString(domainName)}");
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
-                    return new DomainAvailabilityResult(domainName, true, "Available", "rdap");
+                    return new DomainAvailabilityResult(domainName, true, "Available", "rdap fallback");
                 }
 
                 if (response.IsSuccessStatusCode)
                 {
-                    return new DomainAvailabilityResult(domainName, false, "Unavailable", "rdap");
+                    return new DomainAvailabilityResult(domainName, false, "Unavailable", "rdap fallback");
                 }
 
-                return new DomainAvailabilityResult(domainName, false, $"Could not verify ({(int)response.StatusCode})", "rdap");
+                return new DomainAvailabilityResult(domainName, false, $"Could not verify ({(int)response.StatusCode})", "rdap fallback");
             }
             catch
             {
-                return new DomainAvailabilityResult(domainName, false, "Could not verify", "rdap");
+                return new DomainAvailabilityResult(domainName, false, "Could not verify", "rdap fallback");
             }
+        }
+
+        private static (string SearchString, string Tld) SplitDomainForOpenSrs(string domainName)
+        {
+            var firstDot = domainName.IndexOf('.', StringComparison.Ordinal);
+            if (firstDot <= 0 || firstDot == domainName.Length - 1)
+            {
+                return ("", "");
+            }
+
+            return (domainName[..firstDot], domainName[(firstDot + 1)..]);
+        }
+
+        private static string BuildOpenSrsNameSuggestXml(string searchString, string tld) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header>
+    <version>0.9</version>
+  </header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">name_suggest</item>
+        <item key=""object"">domain</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""service_override"">
+              <dt_assoc>
+                <item key=""lookup"">
+                  <dt_assoc>
+                    <item key=""tlds"">
+                      <dt_array>
+                        <item key=""0"">{WebUtility.HtmlEncode(tld)}</item>
+                      </dt_array>
+                    </item>
+                  </dt_assoc>
+                </item>
+              </dt_assoc>
+            </item>
+            <item key=""services"">
+              <dt_array>
+                <item key=""0"">lookup</item>
+              </dt_array>
+            </item>
+            <item key=""searchstring"">{WebUtility.HtmlEncode(searchString)}</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static async Task<OpenSrsActionResult> UpdateDomainNameserversWithOpenSrsAsync(
+            HttpClient httpClient,
+            OpenSrsSettings openSrs,
+            string domainName,
+            DomainCredential credential,
+            string nameserverText,
+            string remoteIp)
+        {
+            var nameservers = ParseNameservers(nameserverText);
+            if (nameservers.Count < 2)
+            {
+                return new OpenSrsActionResult(false, "Enter at least two nameservers separated by comma or new line.");
+            }
+
+            var cookieResult = await CreateOpenSrsCookieAsync(httpClient, openSrs, domainName, credential, remoteIp);
+            if (!cookieResult.Success || string.IsNullOrWhiteSpace(cookieResult.Cookie))
+            {
+                return new OpenSrsActionResult(false, cookieResult.Message);
+            }
+
+            try
+            {
+                var xml = BuildOpenSrsNameserverXml(cookieResult.Cookie, nameservers);
+                var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+                return OpenSrsResultFromXml(response, $"Nameservers updated for {domainName}.");
+            }
+            finally
+            {
+                await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
+            }
+        }
+
+        private static async Task<OpenSrsActionResult> UpdateDomainLockWithOpenSrsAsync(
+            HttpClient httpClient,
+            OpenSrsSettings openSrs,
+            string domainName,
+            DomainCredential credential,
+            bool shouldLock,
+            string remoteIp)
+        {
+            var cookieResult = await CreateOpenSrsCookieAsync(httpClient, openSrs, domainName, credential, remoteIp);
+            if (!cookieResult.Success || string.IsNullOrWhiteSpace(cookieResult.Cookie))
+            {
+                return new OpenSrsActionResult(false, cookieResult.Message);
+            }
+
+            try
+            {
+                var xml = BuildOpenSrsLockXml(cookieResult.Cookie, domainName, shouldLock ? "1" : "0");
+                var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+                return OpenSrsResultFromXml(response, shouldLock ? $"Domain locked for {domainName}." : $"Domain unlocked for {domainName}.");
+            }
+            finally
+            {
+                await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
+            }
+        }
+
+        private static async Task<OpenSrsActionResult> UpdateDomainWhoisPrivacyWithOpenSrsAsync(
+            HttpClient httpClient,
+            OpenSrsSettings openSrs,
+            string domainName,
+            DomainCredential credential,
+            bool shouldEnable,
+            string remoteIp)
+        {
+            var cookieResult = await CreateOpenSrsCookieAsync(httpClient, openSrs, domainName, credential, remoteIp);
+            if (!cookieResult.Success || string.IsNullOrWhiteSpace(cookieResult.Cookie))
+            {
+                return new OpenSrsActionResult(false, cookieResult.Message);
+            }
+
+            try
+            {
+                var xml = BuildOpenSrsWhoisPrivacyXml(cookieResult.Cookie, shouldEnable ? "enabled" : "disabled");
+                var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+                return OpenSrsResultFromXml(response, shouldEnable ? $"WHOIS privacy enabled for {domainName}." : $"WHOIS privacy disabled for {domainName}.");
+            }
+            finally
+            {
+                await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
+            }
+        }
+
+        private static async Task<OpenSrsActionResult> GetDomainStatusWithOpenSrsAsync(
+            HttpClient httpClient,
+            OpenSrsSettings openSrs,
+            string domainName,
+            DomainCredential credential,
+            string remoteIp)
+        {
+            var cookieResult = await CreateOpenSrsCookieAsync(httpClient, openSrs, domainName, credential, remoteIp);
+            if (!cookieResult.Success || string.IsNullOrWhiteSpace(cookieResult.Cookie))
+            {
+                return new OpenSrsActionResult(false, cookieResult.Message);
+            }
+
+            try
+            {
+                var xml = BuildOpenSrsDomainStatusXml(cookieResult.Cookie, remoteIp);
+                var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+                var result = OpenSrsResultFromXml(response, $"Status loaded for {domainName}.");
+                if (!result.Success)
+                {
+                    return result;
+                }
+
+                var lockState = ReadOpenSrsItemValue(response, "lock_state");
+                var autoRenew = ReadOpenSrsItemValue(response, "auto_renew");
+                var expireDate = ReadOpenSrsItemValue(response, "expiredate");
+                var status = ReadOpenSrsItemValue(response, "status");
+                var parts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(status)) parts.Add($"Status: {status}");
+                if (!string.IsNullOrWhiteSpace(lockState)) parts.Add($"Lock: {(lockState == "1" ? "Locked" : "Unlocked")}");
+                if (!string.IsNullOrWhiteSpace(autoRenew)) parts.Add($"Auto Renew: {autoRenew}");
+                if (!string.IsNullOrWhiteSpace(expireDate)) parts.Add($"Expires: {expireDate}");
+                return new OpenSrsActionResult(true, parts.Count == 0 ? result.Message : string.Join(" | ", parts));
+            }
+            finally
+            {
+                await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
+            }
+        }
+
+        private static async Task<OpenSrsActionResult> GetDomainAuthCodeWithOpenSrsAsync(
+            HttpClient httpClient,
+            OpenSrsSettings openSrs,
+            string domainName,
+            DomainCredential credential,
+            string remoteIp)
+        {
+            var cookieResult = await CreateOpenSrsCookieAsync(httpClient, openSrs, domainName, credential, remoteIp);
+            if (!cookieResult.Success || string.IsNullOrWhiteSpace(cookieResult.Cookie))
+            {
+                return new OpenSrsActionResult(false, cookieResult.Message);
+            }
+
+            try
+            {
+                var xml = BuildOpenSrsAuthCodeXml(cookieResult.Cookie);
+                var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+                var result = OpenSrsResultFromXml(response, $"Auth code loaded for {domainName}.");
+                if (!result.Success)
+                {
+                    return result;
+                }
+
+                var authCode = ReadOpenSrsItemValue(response, "domain_auth_info");
+                return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? result.Message : $"Auth Code: {authCode}");
+            }
+            finally
+            {
+                await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
+            }
+        }
+
+        private static async Task<OpenSrsActionResult> UpdateDomainContactWithOpenSrsAsync(
+            HttpClient httpClient,
+            OpenSrsSettings openSrs,
+            string domainName,
+            DomainCredential credential,
+            string contactText,
+            string remoteIp)
+        {
+            var contact = ParseContactFields(contactText);
+            foreach (var required in new[] { "first_name", "last_name", "email", "address1", "city", "country", "postal_code", "phone" })
+            {
+                if (!contact.ContainsKey(required) || string.IsNullOrWhiteSpace(contact[required]))
+                {
+                    return new OpenSrsActionResult(false, $"Contact update needs {required.Replace('_', ' ')}.");
+                }
+            }
+
+            var cookieResult = await CreateOpenSrsCookieAsync(httpClient, openSrs, domainName, credential, remoteIp);
+            if (!cookieResult.Success || string.IsNullOrWhiteSpace(cookieResult.Cookie))
+            {
+                return new OpenSrsActionResult(false, cookieResult.Message);
+            }
+
+            try
+            {
+                var xml = BuildOpenSrsContactXml(cookieResult.Cookie, contact, remoteIp);
+                var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+                return OpenSrsResultFromXml(response, $"Contact updated for {domainName}.");
+            }
+            finally
+            {
+                await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
+            }
+        }
+
+        private static async Task<OpenSrsActionResult> UpdateDomainExpireActionWithOpenSrsAsync(
+            HttpClient httpClient,
+            OpenSrsSettings openSrs,
+            string domainName,
+            DomainCredential credential,
+            bool shouldAutoRenew,
+            string remoteIp)
+        {
+            var cookieResult = await CreateOpenSrsCookieAsync(httpClient, openSrs, domainName, credential, remoteIp);
+            if (!cookieResult.Success || string.IsNullOrWhiteSpace(cookieResult.Cookie))
+            {
+                return new OpenSrsActionResult(false, cookieResult.Message);
+            }
+
+            try
+            {
+                var xml = BuildOpenSrsExpireActionXml(cookieResult.Cookie, shouldAutoRenew ? "1" : "0", shouldAutoRenew ? "0" : "1");
+                var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+                var result = OpenSrsResultFromXml(response, shouldAutoRenew ? $"Auto renew enabled for {domainName}." : $"Auto renew disabled for {domainName}.");
+                if (!result.Success)
+                {
+                    return result;
+                }
+
+                var autoRenew = ReadOpenSrsItemValue(response, "auto_renew");
+                var expireDate = ReadOpenSrsItemValue(response, "expiredate");
+                var parts = new List<string> { shouldAutoRenew ? "Auto Renew: On" : "Auto Renew: Off" };
+                if (!string.IsNullOrWhiteSpace(autoRenew)) parts.Add($"Registrar Value: {autoRenew}");
+                if (!string.IsNullOrWhiteSpace(expireDate)) parts.Add($"Expires: {expireDate}");
+                return new OpenSrsActionResult(true, string.Join(" | ", parts));
+            }
+            finally
+            {
+                await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
+            }
+        }
+
+        private static async Task<OpenSrsActionResult> UpdateDomainForwardingWithOpenSrsAsync(
+            HttpClient httpClient,
+            OpenSrsSettings openSrs,
+            string domainName,
+            DomainCredential credential,
+            string forwardingText,
+            string remoteIp)
+        {
+            var emails = ParseForwardingEmails(forwardingText);
+            if (emails.Count == 0)
+            {
+                return new OpenSrsActionResult(false, "Enter at least one forwarding email address.");
+            }
+
+            var cookieResult = await CreateOpenSrsCookieAsync(httpClient, openSrs, domainName, credential, remoteIp);
+            if (!cookieResult.Success || string.IsNullOrWhiteSpace(cookieResult.Cookie))
+            {
+                return new OpenSrsActionResult(false, cookieResult.Message);
+            }
+
+            try
+            {
+                var xml = BuildOpenSrsForwardingXml(cookieResult.Cookie, string.Join(",", emails));
+                var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+                return OpenSrsResultFromXml(response, $"Forwarding email updated for {domainName}.");
+            }
+            finally
+            {
+                await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
+            }
+        }
+
+        private static async Task<OpenSrsCookieResult> CreateOpenSrsCookieAsync(HttpClient httpClient, OpenSrsSettings openSrs, string domainName, DomainCredential credential, string remoteIp)
+        {
+            var xml = BuildOpenSrsSetCookieXml(domainName, credential.Username, credential.Password, remoteIp);
+            var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+            var cookie = ReadOpenSrsItemValue(response, "cookie");
+            if (!string.IsNullOrWhiteSpace(cookie))
+            {
+                return new OpenSrsCookieResult(true, "OpenSRS cookie created.", cookie);
+            }
+
+            var responseText = ReadOpenSrsItemValue(response, "response_text");
+            return new OpenSrsCookieResult(false, string.IsNullOrWhiteSpace(responseText) ? "OpenSRS rejected the domain manager login." : responseText, "");
+        }
+
+        private static async Task DeleteOpenSrsCookieAsync(HttpClient httpClient, OpenSrsSettings openSrs, string cookie)
+        {
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                return;
+            }
+
+            var xml = BuildOpenSrsDeleteCookieXml(cookie);
+            await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
+        }
+
+        private static async Task<string> PostOpenSrsXmlAsync(HttpClient httpClient, OpenSrsSettings openSrs, string xml)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, openSrs.ApiUrl);
+            request.Content = new StringContent(xml, Encoding.UTF8, "text/xml");
+            request.Headers.TryAddWithoutValidation("X-Username", openSrs.Username);
+            request.Headers.TryAddWithoutValidation("X-Signature", BuildOpenSrsSignature(xml, openSrs.PrivateKey));
+
+            using var response = await httpClient.SendAsync(request);
+            var responseXml = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+            {
+                return $@"<?xml version=""1.0""?><response><item key=""response_text"">OpenSRS HTTP {(int)response.StatusCode}</item><item key=""is_success"">0</item></response>";
+            }
+
+            return responseXml;
+        }
+
+        private static OpenSrsActionResult OpenSrsResultFromXml(string xml, string successMessage)
+        {
+            var isSuccess = ReadOpenSrsItemValue(xml, "is_success");
+            var responseText = ReadOpenSrsItemValue(xml, "response_text");
+            if (isSuccess == "1")
+            {
+                return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(responseText) ? successMessage : responseText);
+            }
+
+            return new OpenSrsActionResult(false, string.IsNullOrWhiteSpace(responseText) ? "OpenSRS action failed." : responseText);
+        }
+
+        private static List<string> ParseNameservers(string nameserverText)
+        {
+            var nameservers = new List<string>();
+            var parts = nameserverText.Split(new[] { ',', '\n', '\r', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var part in parts)
+            {
+                var normalized = part.Trim().TrimEnd('.').ToLowerInvariant();
+                if (normalized.Contains('.') && !nameservers.Exists(item => item.Equals(normalized, StringComparison.OrdinalIgnoreCase)))
+                {
+                    nameservers.Add(normalized);
+                }
+            }
+
+            return nameservers;
+        }
+
+        private static DomainDnsParseResult ParseDnsRecords(string recordsText, string domainName)
+        {
+            var records = new List<DomainDnsRecordPreview>();
+            var lines = (recordsText ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length == 0)
+            {
+                return new DomainDnsParseResult(false, "Add at least one DNS record.", records);
+            }
+
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("#", StringComparison.Ordinal) || line.StartsWith("//", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length < 3)
+                {
+                    return new DomainDnsParseResult(false, $"DNS record is incomplete: {line}", records);
+                }
+
+                var type = parts[0].ToUpperInvariant();
+                var name = NormalizeDnsRecordName(parts[1], domainName);
+                var value = parts[2];
+                int? priority = null;
+                var ttl = 3600;
+
+                if (!IsValidDnsRecordName(name))
+                {
+                    return new DomainDnsParseResult(false, $"DNS record name is invalid: {parts[1]}", records);
+                }
+
+                switch (type)
+                {
+                    case "A":
+                        if (!IsIpAddress(value, AddressFamily.InterNetwork))
+                        {
+                            return new DomainDnsParseResult(false, $"A record must use an IPv4 address: {line}", records);
+                        }
+                        ttl = ParseDnsTtl(parts, 3);
+                        break;
+                    case "AAAA":
+                        if (!IsIpAddress(value, AddressFamily.InterNetworkV6))
+                        {
+                            return new DomainDnsParseResult(false, $"AAAA record must use an IPv6 address: {line}", records);
+                        }
+                        ttl = ParseDnsTtl(parts, 3);
+                        break;
+                    case "CNAME":
+                        if (!IsValidDnsTarget(value))
+                        {
+                            return new DomainDnsParseResult(false, $"CNAME target is invalid: {line}", records);
+                        }
+                        ttl = ParseDnsTtl(parts, 3);
+                        break;
+                    case "MX":
+                        if (!IsValidDnsTarget(value))
+                        {
+                            return new DomainDnsParseResult(false, $"MX target is invalid: {line}", records);
+                        }
+
+                        if (parts.Length > 3 && int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var mxPriority))
+                        {
+                            priority = mxPriority;
+                            ttl = ParseDnsTtl(parts, 4);
+                        }
+                        else
+                        {
+                            priority = 10;
+                            ttl = ParseDnsTtl(parts, 3);
+                        }
+                        break;
+                    case "TXT":
+                        value = string.Join(" ", parts, 2, parts.Length - 2).Trim().Trim('"');
+                        if (string.IsNullOrWhiteSpace(value))
+                        {
+                            return new DomainDnsParseResult(false, $"TXT value is required: {line}", records);
+                        }
+                        break;
+                    default:
+                        return new DomainDnsParseResult(false, $"Unsupported DNS record type: {type}", records);
+                }
+
+                records.Add(new DomainDnsRecordPreview(type, name, value.TrimEnd('.'), priority, ttl));
+            }
+
+            if (records.Count == 0)
+            {
+                return new DomainDnsParseResult(false, "Add at least one DNS record.", records);
+            }
+
+            return new DomainDnsParseResult(true, "DNS records are valid.", records);
+        }
+
+        private static string NormalizeDnsRecordName(string name, string domainName)
+        {
+            var normalized = (name ?? "").Trim().TrimEnd('.').ToLowerInvariant();
+            var rootDomain = (domainName ?? "").Trim().TrimEnd('.').ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(normalized) || normalized == rootDomain)
+            {
+                return "@";
+            }
+
+            if (normalized.EndsWith("." + rootDomain, StringComparison.OrdinalIgnoreCase))
+            {
+                return normalized[..^(rootDomain.Length + 1)];
+            }
+
+            return normalized;
+        }
+
+        private static bool IsValidDnsRecordName(string name)
+        {
+            if (name == "@")
+            {
+                return true;
+            }
+
+            var labels = name.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (labels.Length == 0)
+            {
+                return false;
+            }
+
+            foreach (var label in labels)
+            {
+                if (label == "*")
+                {
+                    continue;
+                }
+
+                if (label.Length is < 1 or > 63 || label.StartsWith("-", StringComparison.Ordinal) || label.EndsWith("-", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                foreach (var character in label)
+                {
+                    if (!char.IsLetterOrDigit(character) && character != '-')
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsValidDnsTarget(string target)
+        {
+            var normalized = (target ?? "").Trim().TrimEnd('.').ToLowerInvariant();
+            if (normalized == "@")
+            {
+                return true;
+            }
+
+            if (!normalized.Contains('.', StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return IsValidDnsRecordName(normalized);
+        }
+
+        private static bool IsIpAddress(string value, AddressFamily addressFamily) =>
+            IPAddress.TryParse(value, out var address) && address.AddressFamily == addressFamily;
+
+        private static int ParseDnsTtl(string[] parts, int index)
+        {
+            if (parts.Length <= index)
+            {
+                return 3600;
+            }
+
+            return int.TryParse(parts[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out var ttl) && ttl >= 60
+                ? ttl
+                : 3600;
+        }
+
+        private static Dictionary<string, string> ParseContactFields(string contactText)
+        {
+            var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in contactText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var separator = line.IndexOf('=', StringComparison.Ordinal);
+                if (separator <= 0)
+                {
+                    separator = line.IndexOf(':', StringComparison.Ordinal);
+                }
+
+                if (separator <= 0)
+                {
+                    continue;
+                }
+
+                var key = line[..separator].Trim().ToLowerInvariant().Replace(" ", "_");
+                var value = line[(separator + 1)..].Trim();
+                fields[key] = value;
+            }
+
+            return fields;
+        }
+
+        private static List<string> ParseForwardingEmails(string forwardingText)
+        {
+            var emails = new List<string>();
+            var parts = (forwardingText ?? "").Split(new[] { ',', ';', '\r', '\n', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var part in parts)
+            {
+                try
+                {
+                    var address = new MailAddress(part.Trim()).Address;
+                    if (!emails.Exists(item => item.Equals(address, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        emails.Add(address);
+                    }
+                }
+                catch
+                {
+                    return new List<string>();
+                }
+            }
+
+            return emails;
+        }
+
+        private static string BuildOpenSrsSetCookieXml(string domainName, string username, string password, string remoteIp) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">SET</item>
+        <item key=""object"">COOKIE</item>
+        <item key=""registrant_ip"">{WebUtility.HtmlEncode(remoteIp)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""reg_username"">{WebUtility.HtmlEncode(username)}</item>
+            <item key=""reg_password"">{WebUtility.HtmlEncode(password)}</item>
+            <item key=""domain"">{WebUtility.HtmlEncode(domainName)}</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static string BuildOpenSrsNameserverXml(string cookie, List<string> nameservers)
+        {
+            var addItems = new StringBuilder();
+            for (var i = 0; i < nameservers.Count; i++)
+            {
+                addItems.Append($@"<item key=""{i}"">{WebUtility.HtmlEncode(nameservers[i])}</item>");
+            }
+
+            return $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">advanced_update_nameservers</item>
+        <item key=""object"">domain</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""op_type"">assign</item>
+            <item key=""add_ns""><dt_array>{addItems}</dt_array></item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+        }
+
+        private static string BuildOpenSrsLockXml(string cookie, string domainName, string lockState) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">MODIFY</item>
+        <item key=""object"">domain</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""lock_state"">{lockState}</item>
+            <item key=""domain_name"">{WebUtility.HtmlEncode(domainName)}</item>
+            <item key=""data"">status</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static string BuildOpenSrsWhoisPrivacyXml(string cookie, string state) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">MODIFY</item>
+        <item key=""object"">domain</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""affect_domains"">0</item>
+            <item key=""report_email""/>
+            <item key=""state"">{WebUtility.HtmlEncode(state)}</item>
+            <item key=""data"">whois_privacy_state</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static string BuildOpenSrsDomainStatusXml(string cookie, string remoteIp) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">get</item>
+        <item key=""object"">domain</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""registrant_ip"">{WebUtility.HtmlEncode(remoteIp)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""type"">status</item>
+            <item key=""limit"">0</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static string BuildOpenSrsAuthCodeXml(string cookie) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">get</item>
+        <item key=""object"">domain</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""type"">domain_auth_info</item>
+            <item key=""limit"">0</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static string BuildOpenSrsContactXml(string cookie, Dictionary<string, string> contact, string remoteIp)
+        {
+            string ContactValue(string key) => WebUtility.HtmlEncode(contact.TryGetValue(key, out var value) ? value : "");
+
+            return $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">MODIFY</item>
+        <item key=""object"">domain</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""affect_domains"">0</item>
+            <item key=""contact_set"">
+              <dt_assoc>
+                <item key=""also_apply_to"">
+                  <dt_array>
+                    <item key=""0"">owner</item>
+                    <item key=""1"">billing</item>
+                    <item key=""2"">tech</item>
+                  </dt_array>
+                </item>
+                <item key=""admin"">
+                  <dt_assoc>
+                    <item key=""first_name"">{ContactValue("first_name")}</item>
+                    <item key=""last_name"">{ContactValue("last_name")}</item>
+                    <item key=""org_name"">{ContactValue("org_name")}</item>
+                    <item key=""address1"">{ContactValue("address1")}</item>
+                    <item key=""address2"">{ContactValue("address2")}</item>
+                    <item key=""address3"">{ContactValue("address3")}</item>
+                    <item key=""city"">{ContactValue("city")}</item>
+                    <item key=""state"">{ContactValue("state")}</item>
+                    <item key=""postal_code"">{ContactValue("postal_code")}</item>
+                    <item key=""country"">{ContactValue("country")}</item>
+                    <item key=""phone"">{ContactValue("phone")}</item>
+                    <item key=""fax"">{ContactValue("fax")}</item>
+                    <item key=""email"">{ContactValue("email")}</item>
+                    <item key=""url"">{ContactValue("url")}</item>
+                  </dt_assoc>
+                </item>
+              </dt_assoc>
+            </item>
+            <item key=""data"">contact_info</item>
+          </dt_assoc>
+        </item>
+        <item key=""registrant_ip"">{WebUtility.HtmlEncode(remoteIp)}</item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+        }
+
+        private static string BuildOpenSrsExpireActionXml(string cookie, string autoRenewState, string letExpireState) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">MODIFY</item>
+        <item key=""object"">domain</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""auto_renew"">{WebUtility.HtmlEncode(autoRenewState)}</item>
+            <item key=""let_expire"">{WebUtility.HtmlEncode(letExpireState)}</item>
+            <item key=""data"">expire_action</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static string BuildOpenSrsForwardingXml(string cookie, string forwardingEmail) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">modify</item>
+        <item key=""object"">domain</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""forwarding_email"">{WebUtility.HtmlEncode(forwardingEmail)}</item>
+            <item key=""data"">forwarding_email</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static string BuildOpenSrsDeleteCookieXml(string cookie) => $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
+<!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
+<OPS_envelope>
+  <header><version>9.0</version></header>
+  <body>
+    <data_block>
+      <dt_assoc>
+        <item key=""protocol"">XCP</item>
+        <item key=""action"">delete</item>
+        <item key=""object"">cookie</item>
+        <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+        <item key=""attributes"">
+          <dt_assoc>
+            <item key=""cookie"">{WebUtility.HtmlEncode(cookie)}</item>
+          </dt_assoc>
+        </item>
+      </dt_assoc>
+    </data_block>
+  </body>
+</OPS_envelope>";
+
+        private static string BuildOpenSrsSignature(string xml, string privateKey)
+        {
+            var inner = HashHex(MD5.HashData(Encoding.UTF8.GetBytes(xml + privateKey)));
+            return HashHex(MD5.HashData(Encoding.UTF8.GetBytes(inner + privateKey)));
+        }
+
+        private static string ReadOpenSrsItemValue(string xml, string key)
+        {
+            try
+            {
+                var document = XDocument.Parse(xml);
+                foreach (var item in document.Descendants("item"))
+                {
+                    var itemKey = item.Attribute("key")?.Value;
+                    if (itemKey != null && itemKey.Equals(key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return item.Value.Trim();
+                    }
+                }
+            }
+            catch
+            {
+                return "";
+            }
+
+            return "";
         }
 
         private static string BuildLegacyCheckoutUrl(string guid) => $"/checkout/account_screen?guid={Uri.EscapeDataString(guid)}";
@@ -1470,6 +3392,49 @@ ORDER BY status";
             return rows;
         }
 
+        private static async Task<List<UrgentLogSummary>> LoadUrgentLogsAsync(SqlConnection connection, long customerId)
+        {
+            const string sql = @"
+SELECT TOP 10 l.customer_urgent_log_id,
+       l.customer_profile_id,
+       COALESCE(c.customerLogin, '') AS customerLogin,
+       CAST(l.log_message_for_customer AS nvarchar(max)) AS log_message_for_customer,
+       l.create_date
+FROM dbo.customer_urgent_log l
+LEFT JOIN dbo.customer_profile c ON c.customerID = l.customer_profile_id
+WHERE l.customer_profile_id = @customerId
+  AND l.create_date < GETDATE()
+  AND l.create_date > DATEADD(day, -7, GETDATE())
+  AND ISNULL(l.hide, 0) <> 1
+  AND ISNULL(CAST(l.log_message_for_customer AS nvarchar(max)), '') <> ''
+ORDER BY l.create_date DESC";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+
+            var logs = new List<UrgentLogSummary>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var message = reader.IsDBNull(3) ? "" : reader.GetString(3).Trim();
+                message = message.Replace("DO NOT REPLY TO THIS EMAIL", "", StringComparison.OrdinalIgnoreCase).Trim();
+                if (string.IsNullOrWhiteSpace(message))
+                {
+                    continue;
+                }
+
+                logs.Add(new UrgentLogSummary(
+                    ReadInt32(reader, 0),
+                    Convert.ToInt64(reader.GetValue(1), CultureInfo.InvariantCulture),
+                    reader.IsDBNull(2) ? "" : reader.GetString(2).Trim(),
+                    message,
+                    reader.GetDateTime(4)
+                ));
+            }
+
+            return logs;
+        }
+
         private static async Task<List<AccountProductSummary>> LoadActiveProductsAsync(SqlConnection connection, long customerId)
         {
             const string sql = @"
@@ -1605,6 +3570,20 @@ WHERE cp.client_id = @customerId
             return result == null || result == DBNull.Value ? 0m : Convert.ToDecimal(result, CultureInfo.InvariantCulture);
         }
 
+        private static async Task<long?> LoadCustomerIdByLoginAsync(SqlConnection connection, string login)
+        {
+            const string sql = @"
+SELECT TOP 1 customerID
+FROM dbo.customer_profile
+WHERE LOWER(customerLogin) = LOWER(@login)
+  AND status = 1";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@login", login);
+            var result = await command.ExecuteScalarAsync();
+            return result == null || result == DBNull.Value ? null : Convert.ToInt64(result, CultureInfo.InvariantCulture);
+        }
+
         private static string NormalizeDomainName(string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -1626,6 +3605,42 @@ WHERE cp.client_id = @customerId
             }
 
             return cleaned.Contains('.', StringComparison.Ordinal) ? cleaned : "";
+        }
+
+        private static string DomainTld(string domainName)
+        {
+            var dot = domainName.IndexOf('.', StringComparison.Ordinal);
+            return dot < 0 || dot == domainName.Length - 1 ? "" : domainName[(dot + 1)..].Trim().ToUpperInvariant();
+        }
+
+        private static async Task<DomainTransferQuote?> LoadDomainTransferQuoteAsync(SqlConnection connection, string tld)
+        {
+            const string sql = @"
+SELECT TOP 1 pt.product_id, pt.name, pe.currency, pe.payment_term, pe.price_amount
+FROM oms.dbo.product pt
+JOIN oms.dbo.price pe ON pt.product_id = pe.product_id
+WHERE pt.name = @tld
+  AND pt.active = 1
+ORDER BY
+  CASE WHEN pe.payment_term = 'annually' THEN 0 ELSE 1 END,
+  pe.price_amount";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@tld", tld.ToUpperInvariant());
+
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new DomainTransferQuote(
+                reader.GetInt32(0),
+                reader.GetString(1).Trim(),
+                reader.GetString(2).Trim(),
+                reader.GetString(3).Trim(),
+                reader.GetDecimal(4)
+            );
         }
 
         private static string FormatPaymentTerm(string term) => term switch
@@ -1994,6 +4009,107 @@ ORDER BY create_date DESC, client_commission_cashout_id DESC";
             return rows;
         }
 
+        private static async Task<AccountSettingsDashboard> LoadAccountSettingsAsync(SqlConnection connection, long customerId)
+        {
+            const string sql = @"
+SELECT TOP 1 customerID, customerLogin, customer_type, status, name_en, company_name_en,
+       account_start_date, reVerify, reVerifySkip, securityversion, email, mobile_number,
+       browserlang, vat
+FROM dbo.customer_profile
+WHERE customerID = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+
+            AccountSettingsProfile profile;
+            await using (var reader = await command.ExecuteReaderAsync())
+            {
+                if (!await reader.ReadAsync())
+                {
+                    profile = new AccountSettingsProfile(customerId, "", "", "Unknown", "", "", null, false, false, 0, "", "", "", "");
+                }
+                else
+                {
+                    profile = new AccountSettingsProfile(
+                        reader.GetInt64(0),
+                        reader.GetString(1),
+                        reader.GetString(2),
+                        StatusLabel(ReadInt32(reader, 3, -1)),
+                        reader.IsDBNull(4) ? "" : reader.GetString(4).Trim(),
+                        reader.IsDBNull(5) ? "" : reader.GetString(5).Trim(),
+                        reader.IsDBNull(6) ? null : DateOnly.FromDateTime(reader.GetDateTime(6)),
+                        ReadBoolean(reader, 7),
+                        ReadBoolean(reader, 8),
+                        ReadInt32(reader, 9, 0),
+                        MaskStoredSecret(reader.IsDBNull(10) ? "" : reader.GetString(10)),
+                        reader.IsDBNull(11) ? "" : reader.GetString(11).Trim(),
+                        reader.IsDBNull(12) ? "" : reader.GetString(12).Trim(),
+                        reader.IsDBNull(13) ? "" : reader.GetString(13).Trim()
+                    );
+                }
+            }
+
+            var twoFactor = await LoadTwoFactorStatusAsync(connection, customerId);
+            return new AccountSettingsDashboard(profile, twoFactor);
+        }
+
+        private static async Task<AccountTwoFactorSummary> LoadTwoFactorStatusAsync(SqlConnection connection, long customerId)
+        {
+            const string sql = @"
+SELECT TOP 1 IsEnabled, enterdate
+FROM dbo.[2fa]
+WHERE customerID = @customerId
+ORDER BY enterdate DESC";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return new AccountTwoFactorSummary(false, false, null);
+            }
+
+            return new AccountTwoFactorSummary(
+                true,
+                ReadBoolean(reader, 0),
+                reader.IsDBNull(1) ? null : DateOnly.FromDateTime(reader.GetDateTime(1))
+            );
+        }
+
+        private static async Task<string> LoadCustomerPasswordHashAsync(SqlConnection connection, long customerId)
+        {
+            const string sql = @"
+SELECT TOP 1 pp1
+FROM dbo.customer_profile
+WHERE customerID = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? "" : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
+        }
+
+        private static string MaskStoredSecret(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "";
+            }
+
+            var trimmed = value.Trim();
+            if (trimmed.Contains('@', StringComparison.Ordinal) && trimmed.Length <= 120)
+            {
+                var parts = trimmed.Split('@', 2);
+                var local = parts[0];
+                var domain = parts[1];
+                var visibleLocal = local.Length <= 2 ? local[..1] : local[..2];
+                return $"{visibleLocal}***@{domain}";
+            }
+
+            return "Stored securely";
+        }
+
         private static AffiliateSummary BuildAffiliateSummary(List<AffiliateReferralSummary> referrals, List<AffiliateCommissionSummary> commissions, List<AffiliatePayoutSummary> payouts)
         {
             var pending = 0m;
@@ -2043,6 +4159,34 @@ ORDER BY vpnquota_id DESC";
             return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
         }
 
+        private static int ReadInt32(SqlDataReader reader, int ordinal, int fallback = 0)
+        {
+            return reader.IsDBNull(ordinal) ? fallback : Convert.ToInt32(reader.GetValue(ordinal), CultureInfo.InvariantCulture);
+        }
+
+        private static bool ReadBoolean(SqlDataReader reader, int ordinal)
+        {
+            if (reader.IsDBNull(ordinal))
+            {
+                return false;
+            }
+
+            var value = reader.GetValue(ordinal);
+            return value switch
+            {
+                bool boolValue => boolValue,
+                byte byteValue => byteValue != 0,
+                short shortValue => shortValue != 0,
+                int intValue => intValue != 0,
+                long longValue => longValue != 0,
+                decimal decimalValue => decimalValue != 0,
+                string stringValue => stringValue.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    || stringValue.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                    || stringValue == "1",
+                _ => Convert.ToBoolean(value, CultureInfo.InvariantCulture)
+            };
+        }
+
         private static async Task<List<AccountVpnServiceSummary>> LoadVpnServicesAsync(SqlConnection connection, long customerId)
         {
             const string sql = @"
@@ -2075,6 +4219,199 @@ ORDER BY vc.vpnclient_user";
             }
 
             return rows;
+        }
+
+        private static async Task<List<AddonCatalogProduct>> LoadVpnCatalogAsync(SqlConnection connection, string customerType)
+        {
+            const string sql = @"
+SELECT p.product_id, p.name, p.description, p.product_type,
+       pr.price_id, pr.currency, pr.payment_term, pr.setup_fee, pr.price_amount, pr.original_price_amount
+FROM oms.dbo.product p
+LEFT JOIN oms.dbo.price pr ON pr.product_id = p.product_id
+WHERE p.active = 1
+  AND (p.product_type = @customerType OR p.product_type = 'individual')
+  AND (p.name LIKE '%VPN%' OR p.description LIKE '%VPN%')
+ORDER BY p.name, pr.price_amount";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerType", string.IsNullOrWhiteSpace(customerType) ? "individual" : customerType);
+
+            var products = new Dictionary<int, AddonCatalogProduct>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var productId = reader.GetInt32(0);
+                if (!products.TryGetValue(productId, out var product))
+                {
+                    product = new AddonCatalogProduct(
+                        productId,
+                        reader.GetString(1).Trim(),
+                        reader.GetString(2).Trim(),
+                        reader.GetString(3),
+                        "VPN",
+                        new List<AddonPriceOption>()
+                    );
+                    products.Add(productId, product);
+                }
+
+                if (!reader.IsDBNull(4))
+                {
+                    product.Prices.Add(new AddonPriceOption(
+                        reader.GetInt32(4),
+                        reader.GetString(5),
+                        reader.GetString(6),
+                        reader.GetDecimal(7),
+                        reader.GetDecimal(8),
+                        reader.GetDecimal(9)
+                    ));
+                }
+            }
+
+            return new List<AddonCatalogProduct>(products.Values);
+        }
+
+        private static async Task<List<AddonCatalogProduct>> LoadNewOrderCatalogAsync(SqlConnection connection, string customerType, string type)
+        {
+            var normalizedType = NormalizeNewOrderType(type);
+            var productFilter = NewOrderProductFilter(normalizedType);
+            if (string.IsNullOrWhiteSpace(productFilter))
+            {
+                return new List<AddonCatalogProduct>();
+            }
+
+            var sql = $@"
+SELECT p.product_id, p.name, CAST(p.description AS nvarchar(max)) AS description, p.product_type,
+       pr.price_id, pr.currency, pr.payment_term, pr.setup_fee, pr.price_amount, pr.original_price_amount
+FROM oms.dbo.product p
+LEFT JOIN oms.dbo.price pr ON pr.product_id = p.product_id
+WHERE p.active = 1
+  AND {productFilter}
+ORDER BY
+  CASE WHEN pr.price_amount IS NULL THEN 1 ELSE 0 END,
+  p.name,
+  pr.price_amount";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerType", string.IsNullOrWhiteSpace(customerType) ? "individual" : customerType);
+
+            var products = new Dictionary<int, AddonCatalogProduct>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var productId = reader.GetInt32(0);
+                if (!products.TryGetValue(productId, out var product))
+                {
+                    product = new AddonCatalogProduct(
+                        productId,
+                        reader.GetString(1).Trim(),
+                        reader.IsDBNull(2) ? "" : reader.GetString(2).Trim(),
+                        reader.IsDBNull(3) ? "" : reader.GetString(3).Trim(),
+                        NewOrderTitle(normalizedType),
+                        new List<AddonPriceOption>()
+                    );
+                    products.Add(productId, product);
+                }
+
+                if (!reader.IsDBNull(4))
+                {
+                    product.Prices.Add(new AddonPriceOption(
+                        reader.GetInt32(4),
+                        reader.GetString(5),
+                        reader.GetString(6),
+                        reader.GetDecimal(7),
+                        reader.GetDecimal(8),
+                        reader.GetDecimal(9)
+                    ));
+                }
+            }
+
+            return new List<AddonCatalogProduct>(products.Values);
+        }
+
+        private static string NormalizeNewOrderType(string type)
+        {
+            return (type ?? "").Trim().ToLowerInvariant().Replace("_", "-", StringComparison.Ordinal);
+        }
+
+        private static bool IsCatalogNewOrderType(string type)
+        {
+            return NormalizeNewOrderType(type) switch
+            {
+                "hosting" => true,
+                "managed-hosting" => true,
+                "windows-vps" => true,
+                "linux-vps" => true,
+                "cloud" => true,
+                "dedicated" => true,
+                "reseller" => true,
+                _ => false
+            };
+        }
+
+        private static string NewOrderProductFilter(string type)
+        {
+            return NormalizeNewOrderType(type) switch
+            {
+                "hosting" => "(p.product_type = @customerType OR p.product_type = 'individual') AND p.name LIKE 'W%US' AND p.name NOT LIKE 'W%LX-US' AND CAST(p.description AS nvarchar(max)) NOT LIKE '%Fully-Managed%'",
+                "managed-hosting" => "(p.product_type = @customerType OR p.product_type = 'individual') AND p.name LIKE 'W%US' AND p.name NOT LIKE 'W%LX-US' AND CAST(p.description AS nvarchar(max)) LIKE '%Fully-Managed%'",
+                "windows-vps" => "(p.product_type = @customerType OR p.product_type = 'individual') AND p.name LIKE 'V%US' AND CAST(p.description AS nvarchar(max)) LIKE '%VPS%' AND CAST(p.description AS nvarchar(max)) NOT LIKE '%Linux%'",
+                "linux-vps" => "(p.product_type = @customerType OR p.product_type = 'individual') AND (p.name LIKE 'V%US' OR p.name LIKE 'LinuxVPS%') AND CAST(p.description AS nvarchar(max)) LIKE '%Linux%'",
+                "cloud" => "(p.product_type = @customerType OR p.product_type = 'individual') AND (p.name LIKE 'LinuxCloud%US' OR CAST(p.description AS nvarchar(max)) LIKE '%Cloud%')",
+                "dedicated" => "(p.product_type = @customerType OR p.product_type = 'individual') AND CAST(p.description AS nvarchar(max)) LIKE '%Xeon%'",
+                "reseller" => "p.product_type = 'reseller' AND p.name LIKE 'Reseller%'",
+                _ => ""
+            };
+        }
+
+        private static string NewOrderTitle(string type)
+        {
+            return NormalizeNewOrderType(type) switch
+            {
+                "hosting" => "Buy Hosting Account",
+                "managed-hosting" => "Buy Managed Hosting",
+                "windows-vps" => "Buy Windows VPS",
+                "linux-vps" => "Buy Linux VPS",
+                "cloud" => "Buy Cloud Server",
+                "dedicated" => "Buy Dedicated Server",
+                "reseller" => "Buy Reseller Account",
+                "domain-purchase" => "Purchase New Domain",
+                "domain-transfer" => "Transfer an Existing Domain",
+                _ => "New Order"
+            };
+        }
+
+        private static string NewOrderDescription(string type)
+        {
+            return NormalizeNewOrderType(type) switch
+            {
+                "hosting" => "Start a new ASP.NET hosting plan with current plans and billing terms.",
+                "managed-hosting" => "Get a managed hosting plan with hands-on server and application support.",
+                "windows-vps" => "Order a Windows VPS for dedicated resources and full server control.",
+                "linux-vps" => "Order a Linux VPS for flexible workloads and server-level access.",
+                "cloud" => "Launch a cloud server with scalable compute capacity.",
+                "dedicated" => "Reserve dedicated server hardware for high-performance workloads.",
+                "reseller" => "Start a reseller account to sell hosting under your own customer base.",
+                "domain-purchase" => "Search, register, and add a new domain name to your account.",
+                "domain-transfer" => "Transfer an existing domain and renew it through your account.",
+                _ => "Modern account panel order flow."
+            };
+        }
+
+        private static string NewOrderLegacyPath(string type)
+        {
+            return NormalizeNewOrderType(type) switch
+            {
+                "hosting" => "/account/cp_purchase_list",
+                "managed-hosting" => "/account/cp_purchase_list_managed_hosting",
+                "windows-vps" => "/account/cp_purchase_list_vps",
+                "linux-vps" => "/account/cp_purchase_list_vps_linux",
+                "cloud" => "/account/cp_purchase_list_cloud",
+                "dedicated" => "/account/cp_purchase_list_dedi",
+                "reseller" => "/account/cp_purchase_list_reseller",
+                "domain-purchase" => "/account/domain_purchase",
+                "domain-transfer" => "/account/domain_transfer",
+                _ => ""
+            };
         }
 
         private static async Task<List<AccountDomainSummary>> LoadAccountDomainsAsync(SqlConnection connection, long customerId)
@@ -2251,6 +4588,13 @@ ORDER BY s.site_Uid, ISNULL(d.isDefault, 0) DESC, d.create_date, d.domain_Uid";
         };
 
         private sealed record LoginRequest(string Login, string Password);
+        private sealed record OpenSrsSettings(string ApiUrl, string Username, string PrivateKey)
+        {
+            public bool IsConfigured =>
+                !string.IsNullOrWhiteSpace(ApiUrl)
+                && !string.IsNullOrWhiteSpace(Username)
+                && !string.IsNullOrWhiteSpace(PrivateKey);
+        }
         private sealed record LoginUser(long CustomerId, string Login, string CustomerType);
         private sealed record LoginResponse(bool Success, string Message, LoginUser? User);
         private sealed record DashboardResponse(bool Success, string Message, AccountDashboard? Dashboard);
@@ -2258,6 +4602,14 @@ ORDER BY s.site_Uid, ISNULL(d.isDefault, 0) DESC, d.create_date, d.domain_Uid";
         private sealed record DomainAvailabilityRequest(List<string> Domains);
         private sealed record DomainAvailabilityResponse(bool Success, string Message, List<DomainAvailabilityResult> Results);
         private sealed record DomainAvailabilityResult(string DomainName, bool Available, string Reason, string Source);
+        private sealed record DomainRegistrarActionRequest(string Action, string Value);
+        private sealed record DomainDnsPreviewRequest(string Records);
+        private sealed record DomainDnsPreviewResponse(bool Success, string Message, List<DomainDnsRecordPreview> Records);
+        private sealed record DomainDnsRecordPreview(string Type, string Name, string Value, int? Priority, int Ttl);
+        private sealed record DomainDnsParseResult(bool Success, string Message, List<DomainDnsRecordPreview> Records);
+        private sealed record DomainCredential(string Username, string Password);
+        private sealed record OpenSrsActionResult(bool Success, string Message);
+        private sealed record OpenSrsCookieResult(bool Success, string Message, string Cookie);
         private sealed record AccountBillingResponse(bool Success, string Message, AccountBillingDashboard? Dashboard);
         private sealed record AccountRenewalsResponse(bool Success, string Message, List<AccountProductSummary> Renewals);
         private sealed record AccountActionResponse(bool Success, string Message);
@@ -2270,12 +4622,15 @@ ORDER BY s.site_Uid, ISNULL(d.isDefault, 0) DESC, d.create_date, d.domain_Uid";
         private sealed record AccountVpnResponse(bool Success, string Message, AccountVpnDashboard? Dashboard);
         private sealed record AccountAddonsResponse(bool Success, string Message, AccountAddonsDashboard? Dashboard);
         private sealed record AccountAffiliateResponse(bool Success, string Message, AccountAffiliateDashboard? Dashboard);
+        private sealed record AccountSettingsResponse(bool Success, string Message, AccountSettingsDashboard? Dashboard);
+        private sealed record NewOrderCatalogResponse(bool Success, string Message, NewOrderCatalog? Catalog);
         private sealed record HostingSitesResponse(bool Success, string Message, HostingSitesDashboard? Dashboard);
-        private sealed record AccountDashboard(CustomerSummary Customer, List<HostingAccountSummary> HostingAccounts, List<HostingStatusCount> HostingStatusSummary, List<RenewalNoticeSummary> RenewalNotices);
+        private sealed record AccountDashboard(CustomerSummary Customer, List<HostingAccountSummary> HostingAccounts, List<HostingStatusCount> HostingStatusSummary, List<RenewalNoticeSummary> RenewalNotices, List<UrgentLogSummary> UrgentLogs);
         private sealed record CustomerSummary(long CustomerId, string Login, string CustomerType, string Status, string Name, string CompanyName, DateOnly? AccountStartDate);
         private sealed record HostingAccountSummary(long CpId, string CpLogin, string PrimaryDomain, string WebHostType, string ServerId, string Status, long ClientProductId, int ProductId, DateOnly? RenewalDate, int TotalSites, int AdditionalRam);
         private sealed record HostingStatusCount(string Status, int Count);
         private sealed record RenewalNoticeSummary(string Name, long ClientProductId, DateOnly RenewalDate, int DaysLeft, string Status);
+        private sealed record UrgentLogSummary(int Id, long CustomerId, string CustomerLogin, string Message, DateTime CreatedAt);
         private sealed record AccountBillingDashboard(AccountBalanceSummary Balance, List<AccountProductSummary> ActiveProducts, List<AccountPurchaseSummary> Purchases, List<AccountProductSummary> RenewalNotices);
         private sealed record AccountBalanceSummary(decimal Amount, string Currency, string Source);
         private sealed record AccountProductSummary(int ClientProductId, int ProductId, string Name, string Description, string ProductType, DateOnly? NextDueDate, int? DaysLeft, string Status, DateOnly CreateDate, DateOnly LastUpdate, string PaymentTerm, decimal? Amount);
@@ -2289,19 +4644,35 @@ ORDER BY s.site_Uid, ISNULL(d.isDefault, 0) DESC, d.create_date, d.domain_Uid";
         private sealed record DomainCheckoutItem(string DomainName, decimal Price);
         private sealed record AddonCheckoutRequest(List<AddonCheckoutItem> Items);
         private sealed record AddonCheckoutItem(int ProductId, int PriceId, int Quantity);
+        private sealed record VpnCheckoutRequest(int ProductId, int PriceId, int Quantity);
+        private sealed record VpnUserCreateRequest(string User, string Password, string Type, string Area);
+        private sealed record VpnUserActionRequest(string Action);
+        private sealed record NewOrderCheckoutRequest(string Type, int ProductId, int PriceId);
+        private sealed record DomainTransferCheckoutRequest(string DomainName, bool WhoisPrivacy);
+        private sealed record BillingDepositRequest(decimal Amount);
+        private sealed record BillingTransferRequest(decimal Amount, string TargetLogin);
+        private sealed record BillingTransferPreviewResponse(bool Success, string Message, BillingTransferPreview? Preview);
+        private sealed record BillingTransferPreview(string TargetLogin, long? TargetCustomerId, decimal Amount, decimal AvailableBalance, bool Eligible, string Note);
         private sealed record CheckoutLineItem(int ProductId, string Name, string Term, int Quantity, decimal UnitAmount, string Currency);
         private sealed record AffiliateWithdrawRequest(decimal Amount, string Method);
         private sealed record AffiliateWithdrawPreview(decimal Amount, string Method, decimal AvailableCommission, int PaidReferralsThisYear, decimal MinimumAmount, bool Eligible, string Note);
-        private sealed record AccountVpnDashboard(int Used, int Quota, List<AccountVpnServiceSummary> Services);
+        private sealed record AccountVpnDashboard(int Used, int Quota, List<AccountVpnServiceSummary> Services, List<AddonCatalogProduct> Catalog);
         private sealed record AccountVpnServiceSummary(long VpnClientId, string User, string Type, string Host, string Area, string DataCenter, string Status);
         private sealed record AccountAddonsDashboard(List<AddonCatalogProduct> Catalog, List<AccountProductSummary> ActiveAddons);
         private sealed record AddonCatalogProduct(int ProductId, string Name, string Description, string ProductType, string Category, List<AddonPriceOption> Prices);
         private sealed record AddonPriceOption(int PriceId, string Currency, string PaymentTerm, decimal SetupFee, decimal Amount, decimal OriginalAmount);
+        private sealed record NewOrderCatalog(string Type, string Title, string LegacyPath, string Description, List<AddonCatalogProduct> Products);
+        private sealed record DomainTransferQuote(int ProductId, string ProductName, string Currency, string PaymentTerm, decimal Amount);
         private sealed record AccountAffiliateDashboard(AffiliateSummary Summary, List<AffiliateReferralSummary> Referrals, List<AffiliateCommissionSummary> Commissions, List<AffiliatePayoutSummary> Payouts);
         private sealed record AffiliateSummary(int TotalReferrals, int PaidReferrals, int QualifiedFreeTrials, decimal PendingCommission, decimal CurrentCommission, decimal PaidOut, decimal AvailableCommission);
         private sealed record AffiliateReferralSummary(long CustomerId, string Login, DateOnly? AccountStartDate, string Status, bool IsPaid);
         private sealed record AffiliateCommissionSummary(int Id, int ClientProductId, string CustomerLogin, string ProductName, string Description, decimal Amount, DateOnly CreateDate, DateOnly ReleaseDate, bool IsReleased);
         private sealed record AffiliatePayoutSummary(int Id, string Method, string Description, decimal Amount, DateOnly CreateDate, string Paypal, string Status);
+        private sealed record AccountSettingsDashboard(AccountSettingsProfile Profile, AccountTwoFactorSummary TwoFactor);
+        private sealed record AccountSettingsProfile(long CustomerId, string Login, string CustomerType, string Status, string Name, string CompanyName, DateOnly? AccountStartDate, bool ReVerify, bool ReVerifySkip, int SecurityVersion, string EmailDisplay, string MobileNumber, string BrowserLanguage, string Vat);
+        private sealed record AccountTwoFactorSummary(bool HasSecret, bool IsEnabled, DateOnly? EnterDate);
+        private sealed record AccountPasswordChangeRequest(string CurrentPassword, string NewPassword, string ConfirmPassword);
+        private sealed record AccountProfileUpdateRequest(string Name, string CompanyName, string MobileNumber, string BrowserLanguage, string Vat);
         private sealed record AccountDomainSummary(int Id, string DomainName, int ClientProductId, string Status, DateOnly? StartDate, DateOnly? ExpirationDate, int? DaysLeft, string RegisterStatus, int RegisterInfoId, DateOnly? AddDate, DateOnly? ProductNextDueDate, string ProductStatus);
         private sealed record HostingSitesDashboard(long CpId, string CpLogin, List<HostingSiteSummary> Sites);
         private sealed record HostingSiteSummary(int SiteUid, string SiteName, string RootName, string SitePath, string Status, string RunningStatus, string Version, string PhpVersion, bool IsSecure, bool IsSubdomain, DateOnly? CreateDate, List<HostingSiteDomainSummary> MappedDomains);
