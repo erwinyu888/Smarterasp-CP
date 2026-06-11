@@ -122,6 +122,8 @@ const websiteActions = [
   { label: "SSL", icon: "ssl" },
   { label: "CDN", icon: "cdn" },
   { label: "File Manager", icon: "folder" },
+  { label: "App Pool", icon: "server" },
+  { label: "Runtime Settings", icon: "advance" },
   { label: "More Functions", icon: "more" }
 ];
 
@@ -188,16 +190,6 @@ const websites = [
   }
 ];
 
-const affiliateTabs = [
-  ["getting-started", "Getting Started", "affiliate-getting-started"],
-  ["referrals", "My Referrals", "18 referred accounts, 4 converted hosting purchases."],
-  ["pending", "Pending Commission", "$124.00 pending commission awaiting validation."],
-  ["current", "Current Commission", "$342.00 current approved commission."],
-  ["withdraw", "Withdraw", "Mock withdraw request form placeholder."],
-  ["pay-log", "Pay Log", "Last mock payout: $88.00 on May 30, 2026."],
-  ["promo-assets", "Promo Assets", "Banner, email copy, and landing page link placeholders."]
-];
-
 const affiliateBanners = [
   { size: "728X90", file: "728X90.gif" },
   { size: "468x60", file: "468X60.gif" },
@@ -208,13 +200,6 @@ const affiliateBanners = [
   url: `https://www.SmarterASP.NET/affiliate/${banner.file}`,
   code: `<a href="https://www.SmarterASP.NET/index?r=openreward"><img src="https://www.SmarterASP.NET/affiliate/${banner.file}" border="0"></a>`
 }));
-
-const billingTabs = [
-  ["purchases", "My Purchases", "Recent mock purchases: Business Hosting, SSL-S, VPN Dedicated IP."],
-  ["active", "Current Active Products", "8 active products across hosting, domains, VPN, and SSL add-ons."],
-  ["balance", "Account Balance", "Account balance: $42.00 credit."],
-  ["renewal", "Renewal Notice", "Next renewal notice: sample-client.org on July 15, 2026."]
-];
 
 const vpnKbArticles = [
   ["How to set up VPN with your Windows 10 PC?", "http://www.smarterasp.net/support/kb/a2180/how-to-set-up-vpn-with-your-windows-10-pc.aspx"],
@@ -234,6 +219,12 @@ const hostingKbArticles = [
 const domainKbArticles = [
   ["Registrant verification FAQs", "http://www.smarterasp.net/support/KB/a1555/registrant-verification-faqs.aspx"],
   ["What is transfer verification email address?", "http://www.smarterasp.net/support/KB/a1453/what-is-transfer-verification-email-address.aspx"],
+  ["How to setup MX records for Google Mail/Gmail?", "http://www.smarterasp.net/support/KB/a303/how-to-setup-mx-records-for-google-mail-gmail.aspx"]
+];
+
+const emailKbArticles = [
+  ["Move your email from your old web host using IMAP", "http://www.smarterasp.net/support/kb/a1451/move-your-email-from-your-old-web-host-to-smarterasp_net-using-imap.aspx"],
+  ["Set up DKIM and Domain Key", "http://www.smarterasp.net/support/kb/a1781/set-up-dkim-and-domain-key.aspx"],
   ["How to setup MX records for Google Mail/Gmail?", "http://www.smarterasp.net/support/KB/a303/how-to-setup-mx-records-for-google-mail-gmail.aspx"]
 ];
 
@@ -302,6 +293,9 @@ function App() {
     if (window.location.pathname === "/panel") return "panel";
     if (window.location.pathname === "/panel_cp") return "panel_cp";
     if (window.location.pathname.startsWith("/checkout")) return "checkout";
+    if (window.location.pathname === "/account/emailchangeverify") return "email-verify";
+    if (window.location.pathname === "/account/retrieve_password") return "password-reset-request";
+    if (window.location.pathname === "/account/retrieve_password_reset") return "password-reset-confirm";
     return "login";
   });
   const [theme, setTheme] = useState(() => localStorage.getItem("controlpanel-theme") ?? "dark");
@@ -324,12 +318,12 @@ function App() {
 
         if (response.ok && result?.success) {
           setCurrentUser(result.user);
-        } else if (route !== "login" && route !== "checkout") {
+        } else if (!isPublicRoute(route)) {
           window.history.replaceState({}, "", "/");
           setRoute("login");
         }
       } catch {
-        if (isMounted && route !== "login" && route !== "checkout") {
+        if (isMounted && !isPublicRoute(route)) {
           window.history.replaceState({}, "", "/");
           setRoute("login");
         }
@@ -346,7 +340,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!isAuthReady || currentUser || route === "login" || route === "checkout") return;
+    if (!isAuthReady || currentUser || isPublicRoute(route)) return;
 
     window.history.replaceState({}, "", "/");
     setRoute("login");
@@ -365,6 +359,12 @@ function App() {
   };
 
   const toggleTheme = () => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
+
+  const goToPasswordResetRequest = (event) => {
+    event?.preventDefault();
+    window.history.pushState({}, "", "/account/retrieve_password");
+    setRoute("password-reset-request");
+  };
 
   const handleLogin = (user, event) => {
     event?.preventDefault();
@@ -401,18 +401,42 @@ function App() {
     return <CheckoutHandoff theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} />;
   }
 
+  if (route === "email-verify") {
+    return <EmailChangeVerify theme={theme} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} />;
+  }
+
+  if (route === "password-reset-request") {
+    return <PasswordResetRequest theme={theme} onBackToLogin={() => {
+      window.history.pushState({}, "", "/");
+      setRoute("login");
+    }} onToggleTheme={toggleTheme} />;
+  }
+
+  if (route === "password-reset-confirm") {
+    return <PasswordResetConfirm theme={theme} onBackToLogin={() => {
+      window.history.pushState({}, "", "/");
+      setRoute("login");
+    }} onToggleTheme={toggleTheme} />;
+  }
+
   return route === "panel"
     ? <Panel theme={theme} currentUser={currentUser} onLogout={handleLogout} onManageHosting={goToControlPanel} onToggleTheme={toggleTheme} />
-    : <Login onLogin={handleLogin} theme={theme} onToggleTheme={toggleTheme} />;
+    : <Login onLogin={handleLogin} theme={theme} onToggleTheme={toggleTheme} onForgotPassword={goToPasswordResetRequest} />;
+}
+
+function isPublicRoute(route) {
+  return ["login", "checkout", "email-verify", "password-reset-request", "password-reset-confirm"].includes(route);
 }
 
 function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
   const [order, setOrder] = useState(null);
   const [orderMessage, setOrderMessage] = useState("");
+  const [isPayingWithBalance, setIsPayingWithBalance] = useState(false);
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const guid = query.get("guid") ?? "";
   const amount = query.get("amount") ?? "";
   const isDeposit = window.location.pathname.includes("deposit");
+  const isRenewTemp = window.location.pathname.includes("/checkout/renew") || query.get("kind") === "renew";
 
   useEffect(() => {
     let isMounted = true;
@@ -420,7 +444,9 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
       if (!guid) return;
       setOrderMessage("Loading checkout order...");
       try {
-        const response = await fetch(`/api/account/checkout-temp/${encodeURIComponent(guid)}`);
+        const response = await fetch(isRenewTemp
+          ? `/api/account/renew-temp/${encodeURIComponent(guid)}`
+          : `/api/account/checkout-temp/${encodeURIComponent(guid)}`);
         const result = await response.json().catch(() => null);
         if (!isMounted) return;
         if (!response.ok || !result?.success) {
@@ -439,10 +465,34 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
     return () => {
       isMounted = false;
     };
-  }, [guid]);
+  }, [guid, isRenewTemp]);
 
-  const title = isDeposit ? "Account Balance Deposit" : order?.productName ?? "Checkout Handoff";
+  async function payWithBalance() {
+    if (!guid) return;
+    setIsPayingWithBalance(true);
+    setOrderMessage("");
+
+    try {
+      const response = await fetch(isRenewTemp
+        ? `/api/account/renew-temp/${encodeURIComponent(guid)}/pay-with-balance`
+        : `/api/account/checkout-temp/${encodeURIComponent(guid)}/pay-with-balance`, { method: "POST" });
+      const result = await response.json().catch(() => null);
+      setOrderMessage(result?.message ?? "Unable to mark checkout paid.");
+      if (response.ok && result?.success) {
+        setOrder(result.order);
+      }
+    } catch {
+      setOrderMessage("Unable to reach checkout balance service.");
+    } finally {
+      setIsPayingWithBalance(false);
+    }
+  }
+
+  const title = isDeposit ? "Account Balance Deposit" : isRenewTemp ? "Renewal Checkout" : order?.productName ?? "Checkout Handoff";
   const total = isDeposit ? Number(amount || 0) : order?.amount;
+  const orderPaid = !!order?.isPaid;
+  const orderProcessed = !!(order?.processed ?? order?.isProcessed);
+  const canUseBalance = !!order && !orderPaid && !orderProcessed && !isDeposit;
 
   return (
     <main className="checkout-page">
@@ -459,7 +509,23 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
       <section className="checkout-handoff-card">
         <span className="status-pill blue">Checkout Handoff</span>
         <h1>{title}</h1>
-        <p>This page confirms the order handoff created by the Account Panel rebuild.</p>
+        <p>This page confirms the order handoff created by the Account Panel rebuild and mirrors the legacy checkout temp-order state.</p>
+        {order && (
+          <div className="checkout-status-grid">
+            <div>
+              <span>Payment</span>
+              <strong>{orderPaid ? "Paid" : "Unpaid"}</strong>
+            </div>
+            <div>
+              <span>Fulfillment</span>
+              <strong>{orderProcessed ? "Processed" : "Waiting"}</strong>
+            </div>
+            <div>
+              <span>Trackable</span>
+              <strong>{order.trackable ? "Yes" : isRenewTemp ? "Renewal" : "No"}</strong>
+            </div>
+          </div>
+        )}
         <dl className="card-meta single">
           {guid && <div><dt>GUID</dt><dd>{guid}</dd></div>}
           {order?.productId !== undefined && <div><dt>Product ID</dt><dd>{order.productId}</dd></div>}
@@ -467,8 +533,20 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
           <div><dt>Total</dt><dd>{formatMoney(total || 0)}</dd></div>
           {order?.info1 && <div><dt>Info 1</dt><dd>{order.info1}</dd></div>}
           {order?.info2 && <div><dt>Info 2</dt><dd>{order.info2}</dd></div>}
+          {order?.renewInfo && <div><dt>Renew Info</dt><dd>{order.renewInfo}</dd></div>}
+          {order?.fulfillmentPath && <div><dt>Legacy Fulfillment</dt><dd>{order.fulfillmentPath}</dd></div>}
         </dl>
         {orderMessage && <p className="renewal-action-message">{orderMessage}</p>}
+        <div className="checkout-action-row">
+          {canUseBalance && (
+            <button className="primary-button" type="button" disabled={isPayingWithBalance} onClick={payWithBalance}>
+              {isPayingWithBalance ? "Checking..." : "Pay with Account Balance"}
+            </button>
+          )}
+          {orderPaid && !orderProcessed && order.fulfillmentPath && (
+            <a className="secondary-button as-link" href={order.fulfillmentPath}>Continue Fulfillment</a>
+          )}
+        </div>
         <button className="primary-button" type="button" onClick={onBackToPanel}>
           Back to Account Panel
         </button>
@@ -477,7 +555,258 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
   );
 }
 
-function Login({ onLogin, theme, onToggleTheme }) {
+function EmailChangeVerify({ theme, onBackToPanel, onToggleTheme }) {
+  const [status, setStatus] = useState({ loading: true, success: false, message: "", newEmail: "", createdAt: null });
+  const query = useMemo(() => new URLSearchParams(window.location.search), []);
+  const resetHash = query.get("ac") ?? "";
+  const customerLogin = query.get("customerlogin") ?? "";
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function verifyEmailChange() {
+      if (!resetHash || !customerLogin) {
+        setStatus({
+          loading: false,
+          success: false,
+          message: "This email verification link is missing required information.",
+          newEmail: "",
+          createdAt: null
+        });
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/account/settings/email-change/verify?ac=${encodeURIComponent(resetHash)}&customerlogin=${encodeURIComponent(customerLogin)}`);
+        const result = await response.json().catch(() => null);
+        if (!isMounted) return;
+
+        setStatus({
+          loading: false,
+          success: response.ok && !!result?.success,
+          message: result?.message ?? "Unable to verify email change link.",
+          newEmail: result?.newEmail ?? "",
+          createdAt: result?.createdAt ?? null
+        });
+      } catch {
+        if (isMounted) {
+          setStatus({
+            loading: false,
+            success: false,
+            message: "Unable to reach email verification service.",
+            newEmail: "",
+            createdAt: null
+          });
+        }
+      }
+    }
+
+    verifyEmailChange();
+    return () => {
+      isMounted = false;
+    };
+  }, [resetHash, customerLogin]);
+
+  return (
+    <main className="handoff-page">
+      <header className="handoff-header">
+        <a href="/panel" onClick={onBackToPanel}>ControlPanel</a>
+        <button className="theme-toggle" type="button" onClick={onToggleTheme}>
+          {theme === "dark" ? "Light" : "Dark"}
+        </button>
+      </header>
+      <section className="handoff-card">
+        <span className={status.success ? "status-pill" : "status-pill muted"}>
+          {status.loading ? "Checking" : status.success ? "Verified" : "Needs attention"}
+        </span>
+        <h1>Email Verification</h1>
+        {status.loading ? (
+          <p>Checking email verification link...</p>
+        ) : (
+          <>
+            <p>{status.message}</p>
+            <dl className="card-meta single">
+              <div><dt>Account</dt><dd>{customerLogin || "N/A"}</dd></div>
+              <div><dt>Pending Email</dt><dd>{status.newEmail || "N/A"}</dd></div>
+              <div><dt>Created</dt><dd>{formatDate(status.createdAt)}</dd></div>
+            </dl>
+          </>
+        )}
+        <div className="checkout-actions">
+          <a className="primary-button as-link" href="/panel" onClick={onBackToPanel}>Back to Account Panel</a>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function PasswordResetRequest({ theme, onBackToLogin, onToggleTheme }) {
+  const [login, setLogin] = useState("openreward");
+  const [message, setMessage] = useState("");
+  const [resetUrl, setResetUrl] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function requestReset(event) {
+    event.preventDefault();
+    setMessage("");
+    setResetUrl("");
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/auth/password-reset/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login })
+      });
+      const result = await response.json().catch(() => null);
+      setMessage(result?.message ?? "Unable to create password reset link.");
+      if (response.ok && result?.success) {
+        setResetUrl(result.resetUrl ?? "");
+      }
+    } catch {
+      setMessage("Unable to reach password reset service.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-page">
+      <header className="login-header">
+        <a className="brand" href="/" onClick={onBackToLogin} aria-label="ControlPanel login">
+          <span className="brand-mark">CP</span>
+          <span>ControlPanel</span>
+        </a>
+        <nav className="login-links" aria-label="Top navigation">
+          <button className="link-button" type="button" onClick={onBackToLogin}>Login</button>
+          <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+        </nav>
+      </header>
+
+      <section className="login-card" aria-label="Password reset request">
+        <div className="login-card-header">
+          <div className="product-mark" aria-hidden="true">CP</div>
+          <h1>Reset Password</h1>
+          <p>Create a password reset link for your account username.</p>
+        </div>
+        <form className="login-form" onSubmit={requestReset}>
+          <label>
+            Username
+            <input
+              type="text"
+              autoComplete="username"
+              value={login}
+              onChange={(event) => setLogin(event.target.value)}
+            />
+          </label>
+          {message && <p className={resetUrl ? "login-success" : "login-error"}>{message}</p>}
+          {resetUrl && (
+            <a className="primary-button as-link full" href={resetUrl}>
+              Open Reset Link
+            </a>
+          )}
+          <button className="primary-button full" type="submit" disabled={isSubmitting || !login.trim()}>
+            {isSubmitting ? "Creating..." : "Create Reset Link"}
+          </button>
+          <button className="secondary-button full" type="button" onClick={onBackToLogin}>
+            Back to Login
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function PasswordResetConfirm({ theme, onBackToLogin, onToggleTheme }) {
+  const query = useMemo(() => new URLSearchParams(window.location.search), []);
+  const token = query.get("guid") ?? "";
+  const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
+  const [message, setMessage] = useState("");
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function confirmReset(event) {
+    event.preventDefault();
+    setMessage("");
+    setIsSuccess(false);
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/auth/password-reset/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          newPassword: passwordForm.newPassword,
+          confirmPassword: passwordForm.confirmPassword
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setMessage(result?.message ?? "Unable to reset password.");
+      setIsSuccess(response.ok && !!result?.success);
+      if (response.ok && result?.success) {
+        setPasswordForm({ newPassword: "", confirmPassword: "" });
+      }
+    } catch {
+      setMessage("Unable to reach password reset service.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-page">
+      <header className="login-header">
+        <a className="brand" href="/" onClick={onBackToLogin} aria-label="ControlPanel login">
+          <span className="brand-mark">CP</span>
+          <span>ControlPanel</span>
+        </a>
+        <nav className="login-links" aria-label="Top navigation">
+          <button className="link-button" type="button" onClick={onBackToLogin}>Login</button>
+          <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+        </nav>
+      </header>
+
+      <section className="login-card" aria-label="Password reset">
+        <div className="login-card-header">
+          <div className="product-mark" aria-hidden="true">CP</div>
+          <h1>Choose New Password</h1>
+          <p>Enter a new password with at least eight characters, one letter, and one number.</p>
+        </div>
+        <form className="login-form" onSubmit={confirmReset}>
+          {!token && <p className="login-error">This reset link is missing its token.</p>}
+          <label>
+            New Password
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={passwordForm.newPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))}
+            />
+          </label>
+          <label>
+            Confirm New Password
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={passwordForm.confirmPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+            />
+          </label>
+          {message && <p className={isSuccess ? "login-success" : "login-error"}>{message}</p>}
+          <button className="primary-button full" type="submit" disabled={isSubmitting || !token}>
+            {isSubmitting ? "Saving..." : "Reset Password"}
+          </button>
+          <button className="secondary-button full" type="button" onClick={onBackToLogin}>
+            Back to Login
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
   const [login, setLogin] = useState("openreward");
   const [password, setPassword] = useState("abcd1234");
   const [loginError, setLoginError] = useState("");
@@ -526,7 +855,7 @@ function Login({ onLogin, theme, onToggleTheme }) {
         </nav>
       </header>
 
-      <section className="login-card" aria-label="Login mockup">
+      <section className="login-card" aria-label="Account login">
         <div className="login-card-header">
           <div className="product-mark" aria-hidden="true">CP</div>
           <h1>Log in to ControlPanel</h1>
@@ -557,6 +886,9 @@ function Login({ onLogin, theme, onToggleTheme }) {
           {loginError && <p className="login-error">{loginError}</p>}
           <button className="primary-button full" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "Logging in..." : "Login"}
+          </button>
+          <button className="link-button login-form-link" type="button" onClick={onForgotPassword}>
+            Forgot password?
           </button>
         </form>
       </section>
@@ -802,13 +1134,40 @@ async function writeTextToClipboard(text) {
 
 function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onToggleTheme }) {
   const [activeSection, setActiveSection] = useState("dashboard");
-  const [selectedHostingPlan, setSelectedHostingPlan] = useState("Hosting Plan 1");
+  const [hostingPlanOptions, setHostingPlanOptions] = useState([]);
+  const [selectedCpId, setSelectedCpId] = useState(0);
   const [isHostingPlanMenuOpen, setIsHostingPlanMenuOpen] = useState(false);
   const activeTitle = useMemo(
     () => controlPanelSections.find((section) => section.id === activeSection)?.label ?? "Dashboard",
     [activeSection]
   );
-  const hostingPlanOptions = ["Hosting Plan 1", "Hosting Plan 2", "Hosting Plan 3"];
+  const selectedHostingPlan = hostingPlanOptions.find((plan) => plan.cpId === selectedCpId) ?? hostingPlanOptions[0];
+  const selectedPlanLabel = selectedHostingPlan?.cpLogin || selectedHostingPlan?.primaryDomain || "Select Hosting Plan";
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadHostingPlans() {
+      try {
+        const response = await fetch("/api/account/dashboard");
+        const result = await response.json().catch(() => null);
+        if (!isMounted || !response.ok || !result?.success) return;
+
+        const plans = result.dashboard?.hostingAccounts ?? [];
+        setHostingPlanOptions(plans);
+        if (plans.length) {
+          setSelectedCpId((currentCpId) => currentCpId || plans[0].cpId);
+        }
+      } catch {
+        if (isMounted) setHostingPlanOptions([]);
+      }
+    }
+
+    loadHostingPlans();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <div className="app-shell">
@@ -824,30 +1183,38 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
             >
               <span className="mock-plan-trigger-label">
                 <MenuIcon name="server" />
-                <span>{selectedHostingPlan}</span>
+                <span>{selectedPlanLabel}</span>
               </span>
               <MenuIcon name="chevron-down" />
             </button>
             {isHostingPlanMenuOpen && (
-              <div className="mock-plan-menu" role="listbox" aria-label="Mock hosting plans">
+              <div className="mock-plan-menu" role="listbox" aria-label="Hosting plans">
                 {hostingPlanOptions.map((plan) => (
                   <button
-                    aria-selected={selectedHostingPlan === plan}
-                    className={selectedHostingPlan === plan ? "mock-plan-option active" : "mock-plan-option"}
-                    key={plan}
+                    aria-selected={selectedCpId === plan.cpId}
+                    className={selectedCpId === plan.cpId ? "mock-plan-option active" : "mock-plan-option"}
+                    key={plan.cpId}
                     role="option"
                     type="button"
                     onClick={() => {
-                      setSelectedHostingPlan(plan);
+                      setSelectedCpId(plan.cpId);
                       setIsHostingPlanMenuOpen(false);
                     }}
                   >
                     <span className="mock-plan-option-label">
                       <MenuIcon name="server" />
-                      <span>{plan}</span>
+                      <span>{plan.cpLogin || plan.primaryDomain}</span>
                     </span>
                   </button>
                 ))}
+                {!hostingPlanOptions.length && (
+                  <button className="mock-plan-option" type="button">
+                    <span className="mock-plan-option-label">
+                      <MenuIcon name="server" />
+                      <span>Loading plans...</span>
+                    </span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -895,21 +1262,46 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
             <button className="secondary-button compact" type="button" onClick={onLogout}>Logout</button>
           </div>
         </div>
-        {activeSection === "dashboard" && <HostingDashboard />}
-        {activeSection === "websites" && <WebsitesSection />}
-        {!["dashboard", "websites"].includes(activeSection) && <HostingCpPlaceholder title={activeTitle} />}
+        {activeSection === "dashboard" && <HostingDashboard cpId={selectedCpId} />}
+        {activeSection === "websites" && <WebsitesSection cpId={selectedCpId} />}
+        {activeSection === "databases" && <DatabasesSection cpId={selectedCpId} />}
+        {activeSection === "emails" && <EmailsSection cpId={selectedCpId} />}
+        {activeSection === "files" && <FilesSection cpId={selectedCpId} />}
+        {activeSection === "apps" && <AppsSection cpId={selectedCpId} />}
+        {activeSection === "ftp" && <FtpSection cpId={selectedCpId} />}
+        {activeSection === "dns" && <DomainServicesSection mode="dns" cpId={selectedCpId} />}
+        {activeSection === "cdn" && <DomainServicesSection mode="cdn" cpId={selectedCpId} />}
+        {activeSection === "ssl" && <DomainServicesSection mode="ssl" cpId={selectedCpId} />}
+        {activeSection === "advance" && <AdvanceSection cpId={selectedCpId} />}
+        {!["dashboard", "websites", "databases", "emails", "files", "apps", "ftp", "dns", "cdn", "ssl", "advance"].includes(activeSection) && <HostingCpPlaceholder title={activeTitle} />}
       </main>
     </div>
   );
 }
 
-function HostingDashboard() {
-  const usageStats = [
-    ["3072 MB", "Ram Quota"],
-    ["107 GB", "Bandwidth Usage"],
-    ["85.85 GB", "Disk Usage"],
-    ["248K", "File Usage"]
-  ];
+function hostingApiUrl(path, cpId) {
+  return cpId ? `${path}?cpId=${encodeURIComponent(cpId)}` : path;
+}
+
+async function createPanelTestActivity(cpId, payload) {
+  const response = await fetch("/api/hosting/activity/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cpId, ...payload })
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.message ?? "Unable to create panel test activity.");
+  }
+
+  return result;
+}
+
+function HostingDashboard({ cpId }) {
+  const [dashboard, setDashboard] = useState(null);
+  const [securityDashboard, setSecurityDashboard] = useState(null);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
+  const [dashboardError, setDashboardError] = useState("");
   const serverLogs = [
     {
       timeCreated: "6/10/2026 6:16:49 PM",
@@ -920,13 +1312,103 @@ function HostingDashboard() {
       message: "A process serving application pool 'openreward-001' suffered a fatal communication error with the Windows Process Activation Service. The process id was '84032'. The data field contains the error number."
     }
   ];
+  const usageStats = dashboard?.metrics?.length
+    ? dashboard.metrics.map((metric) => [metric.value, metric.label])
+    : [
+      ["3072 MB", "Ram Quota"],
+      ["107 GB", "Bandwidth Usage"],
+      ["85.85 GB", "Disk Usage"],
+      ["248K", "File Usage"]
+    ];
+  const ramQuota = dashboard?.ramQuotaMb ?? 3072;
+  const ramUsed = dashboard?.ramUsedMb ?? 333;
+  const ramPercentage = Math.max(0, Math.min(100, Math.round((ramUsed / Math.max(ramQuota, 1)) * 100)));
+  const dnsServers = dashboard?.dnsServers?.length ? dashboard.dnsServers : ["NS1.SITE4NOW.NET", "NS2.SITE4NOW.NET", "NS3.SITE4NOW.NET"];
+  const migrations = securityDashboard?.migrations ?? [];
+  const visibleMigrations = migrations.slice(0, 3);
+
+  async function loadHostingDashboard() {
+    setIsLoadingDashboard(true);
+    setDashboardError("");
+    try {
+      const dashboardResponse = await fetch(hostingApiUrl("/api/hosting/dashboard", cpId));
+      const result = await dashboardResponse.json().catch(() => null);
+      if (!dashboardResponse.ok || !result?.success) {
+        setDashboardError(result?.message ?? "Unable to load hosting dashboard.");
+        return;
+      }
+
+      setDashboard(result.dashboard);
+      fetch(hostingApiUrl("/api/hosting/security", cpId))
+        .then((response) => response.json().then((securityResult) => ({ response, securityResult })))
+        .then(({ response, securityResult }) => {
+          if (response.ok && securityResult?.success) {
+            setSecurityDashboard(securityResult.dashboard);
+          }
+        })
+        .catch(() => {});
+    } catch {
+      setDashboardError("Unable to reach hosting dashboard service.");
+    } finally {
+      setIsLoadingDashboard(false);
+    }
+  }
+
+  useEffect(() => {
+    loadHostingDashboard();
+  }, [cpId]);
 
   return (
     <section className="cp-dashboard">
+      <article className="panel-card cp-context-card">
+        <div>
+          <span className="status-pill blue">{isLoadingDashboard ? "Loading" : dashboard?.status ?? "Live CP"}</span>
+          <h2>{dashboard?.cpLogin || "Mock Up Hosting"}</h2>
+          <p>{dashboard?.primaryDomain || "Primary hosting context"}</p>
+        </div>
+        <dl className="cp-context-meta">
+          <div><dt>Plan Type</dt><dd>{dashboard?.webHostType || "ASP.NET hosting"}</dd></div>
+          <div><dt>Server</dt><dd>{dashboard?.serverId || "winhost"}</dd></div>
+          <div><dt>Websites</dt><dd>{dashboard?.siteCount ?? 0}</dd></div>
+          <div><dt>Domains</dt><dd>{dashboard?.domainCount ?? 0}</dd></div>
+        </dl>
+        <button className="secondary-button compact" type="button" onClick={loadHostingDashboard}>Refresh</button>
+      </article>
+      {dashboardError && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{dashboardError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadHostingDashboard}>Retry</button>
+        </div>
+      )}
+      {!!visibleMigrations.length && (
+        <article className="panel-card migration-notice-card">
+          <div>
+            <span className="status-pill warning">Migration Notice</span>
+            <h2>Recent Server Migration</h2>
+            <p>Your hosting account has recent migration activity. Repair actions are staged from the Files page before real migration queue writes are enabled.</p>
+          </div>
+          <div className="runtime-row-grid">
+            {visibleMigrations.map((migration) => (
+              <article className="runtime-row-card" key={migration.id}>
+                <div>
+                  <span className="status-pill muted">{migration.status || "Migration"}</span>
+                  <strong>Migration #{migration.id}</strong>
+                  <p>{migration.sourceServer || "source"} to {migration.destinationServer || "destination"}</p>
+                </div>
+                <dl>
+                  <div><dt>Created</dt><dd>{migration.createDate ? formatDateTime(migration.createDate) : "-"}</dd></div>
+                  <div><dt>Cleaned</dt><dd>{migration.cleaned ? "Yes" : "No"}</dd></div>
+                  <div><dt>Cancelled</dt><dd>{migration.cancelled ? "Yes" : "No"}</dd></div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        </article>
+      )}
       <article className="panel-card ram-card">
-        <div className="ram-meter" aria-label="RAM usage 68 percent">
-          <span>68%</span>
-          <small>333 MB used</small>
+        <div className="ram-meter" style={{ "--ram-percent": `${ramPercentage}%` }} aria-label={`RAM usage ${ramPercentage} percent`}>
+          <span>{ramPercentage}%</span>
+          <small>{ramUsed} MB used</small>
         </div>
         <div className="ram-copy">
           <span className="status-pill blue">RAM Usage</span>
@@ -945,13 +1427,11 @@ function HostingDashboard() {
         <dl>
           <div>
             <dt>DNS Servers</dt>
-            <dd>NS1.SITE4NOW.NET</dd>
-            <dd>NS2.SITE4NOW.NET</dd>
-            <dd>NS3.SITE4NOW.NET</dd>
+            {dnsServers.map((server) => <dd key={server}>{server}</dd>)}
           </div>
           <div>
             <dt>IP Address</dt>
-            <dd>208.98.35.146</dd>
+            <dd>{dashboard?.ipAddress || "208.98.35.146"}</dd>
           </div>
         </dl>
       </article>
@@ -994,18 +1474,20 @@ function HostingCpPlaceholder({ title }) {
   );
 }
 
-function WebsitesSection() {
+function WebsitesSection({ cpId }) {
+  const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
   const [viewMode, setViewMode] = useState("cards");
   const [siteRecords, setSiteRecords] = useState(websites);
   const [sitesDashboard, setSitesDashboard] = useState(null);
   const [isLoadingSites, setIsLoadingSites] = useState(true);
   const [sitesError, setSitesError] = useState("");
+  const [websiteMessage, setWebsiteMessage] = useState("");
 
   async function loadHostingSites() {
     setIsLoadingSites(true);
     setSitesError("");
     try {
-      const response = await fetch("/api/hosting/sites");
+      const response = await fetch(hostingApiUrl("/api/hosting/sites", cpId));
       const result = await response.json();
       if (!response.ok || !result.success) {
         setSitesError(result?.message ?? "Unable to load websites.");
@@ -1028,7 +1510,13 @@ function WebsitesSection() {
 
   useEffect(() => {
     loadHostingSites();
-  }, []);
+  }, [cpId]);
+
+  const websiteJobs = (activity?.jobs ?? []).filter((job) =>
+    job.server === "website-manager" ||
+    String(job.from ?? "").toLowerCase().startsWith("site:") ||
+    String(job.from ?? "").toLowerCase().startsWith("website:")
+  );
 
   function updateSiteName(index, siteName) {
     setSiteRecords((currentSites) =>
@@ -1036,13 +1524,34 @@ function WebsitesSection() {
     );
   }
 
+  async function queueWebsiteTest(action, site = null, target = "") {
+    setWebsiteMessage("");
+    try {
+      await createPanelTestActivity(cpId, {
+        from: site ? `site:${site.siteName}` : `website:${action}`,
+        to: target || (site ? site.mappedDomains?.[0]?.label || site.siteName : "/panel-test/websites"),
+        server: "website-manager",
+        note: `Safe website planning row for ${action}`
+      });
+      setWebsiteMessage(`${action} test activity created.`);
+      await reloadActivity();
+    } catch (error) {
+      setWebsiteMessage(error.message);
+    }
+  }
+
+  function refreshWebsitesSection() {
+    loadHostingSites();
+    reloadActivity();
+  }
+
   return (
     <section className="websites-section">
       <div className="website-toolbar panel-card">
         <div className="website-actions">
-          <button className="primary-button compact" type="button">+ New Site</button>
-          <button className="secondary-button compact" type="button">+ Sub Domain</button>
-          <button className="secondary-button compact" type="button">+ Automated Backups</button>
+          <button className="primary-button compact" type="button" onClick={() => queueWebsiteTest("+ New Site")}>+ New Site</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueWebsiteTest("+ Sub Domain")}>+ Sub Domain</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueWebsiteTest("+ Automated Backups")}>+ Automated Backups</button>
         </div>
         <div className="view-toggle" aria-label="Website view mode">
           <button
@@ -1071,10 +1580,11 @@ function WebsitesSection() {
           <span className="status-pill blue">Live websites</span>
           <p>{sitesDashboard?.cpLogin ? `${sitesDashboard.cpLogin} · ${siteRecords.length} sites` : "Loading hosting websites"}</p>
         </div>
-        <button className="secondary-button compact" type="button" onClick={loadHostingSites}>Refresh</button>
+        <button className="secondary-button compact" type="button" onClick={refreshWebsitesSection}>Refresh</button>
       </div>
 
       {isLoadingSites && <p className="empty-state">Loading websites from cp_config_Sites...</p>}
+      {websiteMessage && <p className="sandbox-message">{websiteMessage}</p>}
       {sitesError && (
         <div className="panel-card dashboard-error-panel">
           <p>{sitesError}</p>
@@ -1090,10 +1600,12 @@ function WebsitesSection() {
       )}
 
       {!!siteRecords.length && (viewMode === "cards" ? (
-        <WebsiteCards sites={siteRecords} onUpdateSiteName={updateSiteName} />
+        <WebsiteCards sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} />
       ) : (
-        <WebsiteTable sites={siteRecords} onUpdateSiteName={updateSiteName} />
+        <WebsiteTable sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} />
       ))}
+
+      <ActivityList jobs={websiteJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent website jobs" onRetry={reloadActivity} />
     </section>
   );
 }
@@ -1117,7 +1629,7 @@ function mapHostingSiteToUi(site) {
   };
 }
 
-function WebsiteCards({ sites, onUpdateSiteName }) {
+function WebsiteCards({ sites, onUpdateSiteName, onQueueAction }) {
   return (
     <div className="website-card-grid">
       {sites.map((site, siteIndex) => (
@@ -1127,7 +1639,7 @@ function WebsiteCards({ sites, onUpdateSiteName }) {
               <span className="status-pill">{site.status}</span>
               <div className="website-title-row">
                 <SiteNameEditor siteName={site.siteName} onChange={(siteName) => onUpdateSiteName(siteIndex, siteName)} />
-                <DeployButtons />
+                <DeployButtons onAction={(action) => onQueueAction(action, site)} />
               </div>
             </div>
             <span className="runtime-pill">{site.runtime}</span>
@@ -1141,19 +1653,19 @@ function WebsiteCards({ sites, onUpdateSiteName }) {
                   <span className="ssl-domain-badge">SSL</span>
                 </a>
               ))}
-              <button className="add-domain-chip" type="button" title="+ Add Domain" aria-label="+ Add Domain">
+              <button className="add-domain-chip" type="button" title="+ Add Domain" aria-label="+ Add Domain" onClick={() => onQueueAction("+ Add Domain", site)}>
                 <MenuIcon name="add-domain" />
               </button>
             </div>
           </div>
-          <WebsiteActionButtons />
+          <WebsiteActionButtons onAction={(action) => onQueueAction(action, site)} />
         </article>
       ))}
     </div>
   );
 }
 
-function WebsiteTable({ sites, onUpdateSiteName }) {
+function WebsiteTable({ sites, onUpdateSiteName, onQueueAction }) {
   return (
     <div className="table-wrap website-table">
       <table>
@@ -1172,7 +1684,7 @@ function WebsiteTable({ sites, onUpdateSiteName }) {
               <td>
                 <div className="website-table-name">
                   <SiteNameEditor siteName={site.siteName} onChange={(siteName) => onUpdateSiteName(siteIndex, siteName)} />
-                  <DeployButtons />
+                  <DeployButtons onAction={(action) => onQueueAction(action, site)} />
                 </div>
               </td>
               <td>
@@ -1183,14 +1695,14 @@ function WebsiteTable({ sites, onUpdateSiteName }) {
                       <span className="ssl-domain-badge">SSL</span>
                     </a>
                   ))}
-                  <button className="add-domain-chip" type="button" title="+ Add Domain" aria-label="+ Add Domain">
+                  <button className="add-domain-chip" type="button" title="+ Add Domain" aria-label="+ Add Domain" onClick={() => onQueueAction("+ Add Domain", site)}>
                     <MenuIcon name="add-domain" />
                   </button>
                 </div>
               </td>
               <td>{site.runtime}</td>
               <td>{site.status}</td>
-              <td><WebsiteActionButtons compact /></td>
+              <td><WebsiteActionButtons compact onAction={(action) => onQueueAction(action, site)} /></td>
             </tr>
           ))}
         </tbody>
@@ -1236,11 +1748,11 @@ function SiteNameEditor({ siteName, onChange }) {
   );
 }
 
-function DeployButtons() {
+function DeployButtons({ onAction }) {
   return (
     <div className="deploy-buttons" aria-label="Deploy options">
       {deployActions.map((action) => (
-        <button className="deploy-button" type="button" key={action.label}>
+        <button className="deploy-button" type="button" key={action.label} onClick={() => onAction(action.label)}>
           <MenuIcon name={action.icon} />
           <span>{action.label}</span>
         </button>
@@ -1249,7 +1761,7 @@ function DeployButtons() {
   );
 }
 
-function WebsiteActionButtons({ compact = false }) {
+function WebsiteActionButtons({ compact = false, onAction }) {
   return (
     <div className={compact ? "website-action-buttons compact-actions" : "website-action-buttons"}>
       {websiteActions.map((action) => (
@@ -1259,11 +1771,226 @@ function WebsiteActionButtons({ compact = false }) {
           title={action.label}
           type="button"
           key={action.label}
+          onClick={() => onAction(action.label)}
         >
           <MenuIcon name={action.icon} />
         </button>
       ))}
     </div>
+  );
+}
+
+function DatabasesSection({ cpId }) {
+  const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
+  const [databaseDashboard, setDatabaseDashboard] = useState(null);
+  const [activeEngine, setActiveEngine] = useState("All");
+  const [isLoadingDatabases, setIsLoadingDatabases] = useState(true);
+  const [databaseError, setDatabaseError] = useState("");
+  const [databaseMessage, setDatabaseMessage] = useState("");
+  const [connectionPreview, setConnectionPreview] = useState(null);
+  const [backupDraft, setBackupDraft] = useState({ databaseKey: "", hour: "2" });
+
+  async function loadDatabases() {
+    setIsLoadingDatabases(true);
+    setDatabaseError("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/databases", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setDatabaseError(result?.message ?? "Unable to load databases.");
+        return;
+      }
+
+      setDatabaseDashboard(result.dashboard);
+    } catch {
+      setDatabaseError("Unable to reach database service.");
+    } finally {
+      setIsLoadingDatabases(false);
+    }
+  }
+
+  useEffect(() => {
+    loadDatabases();
+  }, [cpId]);
+
+  const databases = databaseDashboard?.databases ?? [];
+  const visibleDatabases = activeEngine === "All"
+    ? databases
+    : databases.filter((database) => database.engine === activeEngine);
+  const totals = databaseDashboard?.totals ?? { total: 0, mssql: 0, mysql: 0 };
+  const databaseJobs = (activity?.jobs ?? []).filter((job) =>
+    ["Queue MSSQL Backup", "Queue MSSQL Restore", "Queue MySQL Backup", "Queue MySQL Restore", "Run MSSQL File", "panel-test"].includes(job.type)
+      && (job.server === "database-manager" || job.type !== "panel-test")
+  );
+
+  async function queueDatabaseTest(action, database = null, details = "") {
+    setDatabaseMessage("");
+    try {
+      await createPanelTestActivity(cpId, {
+        from: database ? `${database.engine}:${database.name}` : `database:${action}`,
+        to: database ? database.host || "database-server" : "/panel-test/database",
+        server: "database-manager",
+        note: details || `Safe database planning row for ${action}`
+      });
+      setDatabaseMessage(`${action} test activity created.`);
+      await reloadActivity();
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
+  }
+
+  function showConnectionString(database) {
+    setConnectionPreview({
+      name: database.name,
+      engine: database.engine,
+      host: database.host || (database.engine === "MSSQL" ? "mssql.site4now.net" : "mysql.site4now.net"),
+      login: database.login,
+      text: database.engine === "MSSQL"
+        ? `Server=${database.host || "mssql.site4now.net"};Database=${database.name};User ID=${database.login};Password=YOUR_DB_PASSWORD;TrustServerCertificate=True;`
+        : `Driver={MySQL ODBC 8.0 UNICODE Driver};Server=${database.host || "mysql.site4now.net"};Database=${database.name};Uid=${database.login};Password=YOUR_DB_PASSWORD;`
+    });
+  }
+
+  function submitBackupDraft(event) {
+    event.preventDefault();
+    const database = visibleDatabases.find((item) => `${item.engine}:${item.databaseId}` === backupDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
+    if (!database) {
+      setDatabaseMessage("Choose a database before staging a scheduled backup.");
+      return;
+    }
+
+    const hour = Math.max(0, Math.min(23, Number(backupDraft.hour) || 0));
+    queueDatabaseTest(
+      "Scheduled Backup",
+      database,
+      `Safe customDBBackup draft: ${database.engine}|${database.name}|${database.databaseId}; certaintime ${hour}; cpid ${cpId}; enabled true`
+    );
+  }
+
+  return (
+    <section className="databases-section">
+      <article className="panel-card database-summary-card">
+        <div>
+          <span className="status-pill blue">Live databases</span>
+          <h2>{databaseDashboard?.cpLogin || "Database Manager"}</h2>
+          <p>Unified MSSQL and MySQL inventory from the hosting control panel.</p>
+        </div>
+        <div className="database-total-grid">
+          <div><span>Total</span><strong>{totals.total}</strong></div>
+          <div><span>MSSQL</span><strong>{totals.mssql}</strong></div>
+          <div><span>MySQL</span><strong>{totals.mysql}</strong></div>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={loadDatabases}>Refresh</button>
+      </article>
+
+      <div className="database-toolbar panel-card">
+        <div className="database-actions">
+          <button className="primary-button compact" type="button" onClick={() => queueDatabaseTest("+ Database")}>+ Database</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("+ Quota")}>+ Quota</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("+ Advanced Backup")}>+ Advanced Backup</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("Run SQL File")}>Run SQL File</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("Deleted DBs")}>Deleted DBs</button>
+        </div>
+        <div className="engine-tabs" aria-label="Database engine filter">
+          {["All", "MSSQL", "MySQL"].map((engine) => (
+            <button
+              className={activeEngine === engine ? "active" : ""}
+              type="button"
+              key={engine}
+              onClick={() => setActiveEngine(engine)}
+            >
+              {engine}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {!!visibleDatabases.length && (
+        <article className="panel-card database-schedule-card">
+          <div>
+            <span className="status-pill blue">Scheduled database backups</span>
+            <h3>Custom Backup Draft</h3>
+            <p>Stages the legacy `customDBBackup` values without writing a real backup schedule.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitBackupDraft}>
+            <label>
+              Database
+              <select value={backupDraft.databaseKey || `${visibleDatabases[0].engine}:${visibleDatabases[0].databaseId}`} onChange={(event) => setBackupDraft((draft) => ({ ...draft, databaseKey: event.target.value }))}>
+                {visibleDatabases.map((database) => (
+                  <option value={`${database.engine}:${database.databaseId}`} key={`${database.engine}:${database.databaseId}`}>
+                    {database.engine} · {database.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Backup Hour
+              <input type="number" min="0" max="23" value={backupDraft.hour} onChange={(event) => setBackupDraft((draft) => ({ ...draft, hour: event.target.value }))} />
+            </label>
+            <button className="primary-button compact" type="submit">Stage Schedule</button>
+          </form>
+        </article>
+      )}
+
+      {isLoadingDatabases && <p className="empty-state">Loading databases from cp_config_MSSQLs and cp_config_MySQLs...</p>}
+      {databaseMessage && <p className="sandbox-message">{databaseMessage}</p>}
+      {connectionPreview && (
+        <article className="panel-card connection-preview-card">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill blue">{connectionPreview.engine}</span>
+              <h3>{connectionPreview.name} connection string</h3>
+              <p>Password is intentionally not displayed.</p>
+            </div>
+            <button className="secondary-button compact" type="button" onClick={() => setConnectionPreview(null)}>Close</button>
+          </div>
+          <code>{connectionPreview.text}</code>
+        </article>
+      )}
+      {databaseError && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{databaseError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadDatabases}>Retry</button>
+        </div>
+      )}
+      {!isLoadingDatabases && !databaseError && !visibleDatabases.length && (
+        <div className="panel-card cp-placeholder">
+          <span className="status-pill muted">No databases</span>
+          <h2>No {activeEngine === "All" ? "" : activeEngine} databases found</h2>
+          <p>This hosting account does not have visible database rows for the selected engine.</p>
+        </div>
+      )}
+
+      {!!visibleDatabases.length && (
+        <div className="database-card-grid">
+          {visibleDatabases.map((database) => (
+            <article className="panel-card database-card" key={`${database.engine}-${database.databaseId}`}>
+              <div className="database-card-header">
+                <div>
+                  <span className={database.status === "Active" ? "status-pill" : "status-pill muted"}>{database.status}</span>
+                  <h3>{database.name}</h3>
+                  <p>{database.engine} · {database.host || "Server pending"}</p>
+                </div>
+                <MenuIcon name="database" />
+              </div>
+              <dl className="card-meta single">
+                <div><dt>Login ID</dt><dd>{database.login}</dd></div>
+                <div><dt>Quota</dt><dd>{database.spaceQuotaMb} MB</dd></div>
+                <div><dt>Created</dt><dd>{formatDate(database.createDate)}</dd></div>
+              </dl>
+              <div className="database-action-row">
+                {["Backup", "Restore", "Connection String", "More"].map((action) => (
+                  <button className="secondary-button compact" type="button" key={action} onClick={() => action === "Connection String" ? showConnectionString(database) : queueDatabaseTest(action, database)}>
+                    {action}
+                  </button>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      <ActivityList jobs={databaseJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent database jobs" onRetry={reloadActivity} />
+    </section>
   );
 }
 
@@ -1289,6 +2016,1961 @@ function ThemeToggle({ theme, onToggleTheme }) {
       </span>
       <span>{theme === "dark" ? "Day" : "Dark"}</span>
     </button>
+  );
+}
+
+function EmailsSection({ cpId }) {
+  const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
+  const [emailDashboard, setEmailDashboard] = useState(null);
+  const [activeType, setActiveType] = useState("All");
+  const [isLoadingEmails, setIsLoadingEmails] = useState(true);
+  const [emailError, setEmailError] = useState("");
+  const [emailMessage, setEmailMessage] = useState("");
+
+  async function loadEmails() {
+    setIsLoadingEmails(true);
+    setEmailError("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/emails", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setEmailError(result?.message ?? "Unable to load email domains.");
+        return;
+      }
+
+      setEmailDashboard(result.dashboard);
+    } catch {
+      setEmailError("Unable to reach email domain service.");
+    } finally {
+      setIsLoadingEmails(false);
+    }
+  }
+
+  useEffect(() => {
+    loadEmails();
+  }, [cpId]);
+
+  const domains = emailDashboard?.domains ?? [];
+  const visibleDomains = activeType === "All" ? domains : domains.filter((domain) => domain.type === activeType);
+  const totals = emailDashboard?.totals ?? { total: 0, hosted: 0, corporate: 0, dailyLimits: 0 };
+  const primaryDomain = visibleDomains[0] ?? domains[0] ?? null;
+  const mailSetupRows = buildMailSetupRows(primaryDomain);
+  const mailJobs = (activity?.jobs ?? []).filter((job) =>
+    job.server === "mail-manager" ||
+    String(job.type ?? "").toLowerCase().includes("mail") ||
+    String(job.from ?? "").toLowerCase().startsWith("email:")
+  );
+
+  async function queueEmailTest(action, domain = null) {
+    setEmailMessage("");
+    try {
+      await createPanelTestActivity(cpId, {
+        from: domain ? `email:${domain.domain}` : `email:${action}`,
+        to: domain ? domain.mailHost || domain.webmailUrl || "mail-server" : "/panel-test/email",
+        server: "mail-manager",
+        note: `Safe email planning row for ${action}`
+      });
+      setEmailMessage(`${action} test activity created.`);
+      await reloadActivity();
+    } catch (error) {
+      setEmailMessage(error.message);
+    }
+  }
+
+  function refreshEmailSection() {
+    loadEmails();
+    reloadActivity();
+  }
+
+  return (
+    <section className="cp-inventory-section">
+      <article className="panel-card cp-inventory-summary">
+        <div>
+          <span className="status-pill blue">Live email</span>
+          <h2>{emailDashboard?.cpLogin || "Email Manager"}</h2>
+          <p>Hosted email and corporate email domains from the hosting control panel.</p>
+        </div>
+        <div className="database-total-grid">
+          <div><span>Total</span><strong>{totals.total}</strong></div>
+          <div><span>Hosted</span><strong>{totals.hosted}</strong></div>
+          <div><span>Corporate</span><strong>{totals.corporate}</strong></div>
+          <div><span>Daily Limits</span><strong>{totals.dailyLimits}</strong></div>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={refreshEmailSection}>Refresh</button>
+      </article>
+
+      <div className="database-toolbar panel-card">
+        <div className="database-actions">
+          <button className="primary-button compact" type="button" onClick={() => queueEmailTest("+ Email Domain")}>+ Email Domain</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("+ Corporate Email")}>+ Corporate Email</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("+ Mailbox")}>+ Mailbox</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("Daily Send Limit")}>Daily Send Limit</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("DNS Records", primaryDomain)}>DNS Records</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("Webmail Login", primaryDomain)}>Webmail Login</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("DKIM Setup", primaryDomain)}>DKIM Setup</button>
+        </div>
+        <div className="engine-tabs" aria-label="Email type filter">
+          {["All", "Hosted Email", "Corporate Email"].map((type) => (
+            <button
+              className={activeType === type ? "active" : ""}
+              type="button"
+              key={type}
+              onClick={() => setActiveType(type)}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="email-tools-grid">
+        <article className="panel-card mail-setup-card">
+          <div>
+            <span className="status-pill blue">Mail Setup</span>
+            <h2>{primaryDomain?.domain || "No email domain selected"}</h2>
+            <p>DNS and SmarterMail setup values for the selected email domain.</p>
+          </div>
+          <div className="mail-setup-records">
+            {mailSetupRows.map((record) => (
+              <div className="mail-setup-record" key={record.label}>
+                <span>{record.label}</span>
+                <code>{record.value}</code>
+              </div>
+            ))}
+          </div>
+          <div className="database-action-row">
+            <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("Verify MX", primaryDomain)}>Verify MX</button>
+            <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("Generate DKIM", primaryDomain)}>Generate DKIM</button>
+            <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("Sync SmarterMail", primaryDomain)}>Sync SmarterMail</button>
+          </div>
+        </article>
+        <KnowledgeBaseCard title="Email Guides" articles={emailKbArticles} />
+      </div>
+
+      {isLoadingEmails && <p className="empty-state">Loading email domains from cp_config_EmailDomains...</p>}
+      {emailMessage && <p className="sandbox-message">{emailMessage}</p>}
+      {emailError && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{emailError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadEmails}>Retry</button>
+        </div>
+      )}
+      {!isLoadingEmails && !emailError && !visibleDomains.length && (
+        <div className="panel-card cp-placeholder">
+          <span className="status-pill muted">No email domains</span>
+          <h2>No {activeType === "All" ? "" : activeType} email domains found</h2>
+          <p>This hosting account does not have visible email domain rows for the selected type.</p>
+        </div>
+      )}
+
+      {!!visibleDomains.length && (
+        <div className="database-card-grid">
+          {visibleDomains.map((domain) => (
+            <article className="panel-card database-card" key={`${domain.type}-${domain.domain}`}>
+              <div className="database-card-header">
+                <div>
+                  <span className={domain.status === "Active" ? "status-pill" : "status-pill muted"}>{domain.status}</span>
+                  <h3>{domain.domain}</h3>
+                  <p>{domain.type} · {domain.server || "Mail server pending"}</p>
+                </div>
+                <MenuIcon name="mail" />
+              </div>
+              <dl className="card-meta single">
+                <div><dt>Webmail</dt><dd>{domain.webmailUrl || "Pending"}</dd></div>
+                <div><dt>SMTP / POP / IMAP</dt><dd>{domain.mailHost || "Pending"}</dd></div>
+                <div><dt>Space</dt><dd>{domain.spaceMb > 0 ? `${domain.spaceMb} MB` : "Product quota"}</dd></div>
+                <div><dt>Created</dt><dd>{formatDate(domain.createDate)}</dd></div>
+              </dl>
+              <div className="database-action-row">
+                {["Manage Mailboxes", "Alias", "Forwarding", "Password", "DNS", "Webmail", "Delete"].map((action) => (
+                  <button className="secondary-button compact" type="button" key={action} onClick={() => queueEmailTest(action, domain)}>
+                    {action}
+                  </button>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      <ActivityList jobs={mailJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent email jobs" onRetry={reloadActivity} />
+    </section>
+  );
+}
+
+function buildMailSetupRows(domain) {
+  if (!domain) {
+    return [
+      { label: "MX", value: "Add an email domain to preview MX records." },
+      { label: "SPF", value: "Add an email domain to preview SPF records." },
+      { label: "DKIM", value: "Add an email domain to preview DKIM setup." }
+    ];
+  }
+
+  const host = domain.mailHost || domain.webmailUrl || "mail.site4now.net";
+  const domainName = domain.domain || "example.com";
+
+  return [
+    { label: "MX", value: `${domainName} -> ${host}` },
+    { label: "POP / IMAP / SMTP", value: host },
+    { label: "SPF", value: "v=spf1 a mx include:_spf.site4now.net -all" },
+    { label: "DKIM", value: `default._domainkey.${domainName}` },
+    { label: "Webmail", value: domain.webmailUrl || `https://${host}` }
+  ];
+}
+
+function FtpSection({ cpId }) {
+  const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
+  const [ftpDashboard, setFtpDashboard] = useState(null);
+  const [isLoadingFtp, setIsLoadingFtp] = useState(true);
+  const [ftpError, setFtpError] = useState("");
+  const [ftpMessage, setFtpMessage] = useState("");
+
+  async function loadFtp() {
+    setIsLoadingFtp(true);
+    setFtpError("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/ftp", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setFtpError(result?.message ?? "Unable to load FTP users.");
+        return;
+      }
+
+      setFtpDashboard(result.dashboard);
+    } catch {
+      setFtpError("Unable to reach FTP service.");
+    } finally {
+      setIsLoadingFtp(false);
+    }
+  }
+
+  useEffect(() => {
+    loadFtp();
+  }, [cpId]);
+
+  const users = ftpDashboard?.users ?? [];
+  const totals = ftpDashboard?.totals ?? { total: 0, rootUsers: 0, extraUsers: 0 };
+  const ftpJobs = (activity?.jobs ?? []).filter((job) =>
+    job.server === "ftp-manager" ||
+    String(job.from ?? "").toLowerCase().startsWith("ftp:") ||
+    String(job.type ?? "").toLowerCase().includes("ftp")
+  );
+
+  async function queueFtpTest(action, user = null) {
+    setFtpMessage("");
+    try {
+      await createPanelTestActivity(cpId, {
+        from: user ? `ftp:${user.login}` : `ftp:${action}`,
+        to: user ? user.path || "/www" : "/panel-test/ftp",
+        server: user?.server || "ftp-manager",
+        note: `Safe FTP planning row for ${action}`
+      });
+      setFtpMessage(`${action} test activity created.`);
+      await reloadActivity();
+    } catch (error) {
+      setFtpMessage(error.message);
+    }
+  }
+
+  function refreshFtpSection() {
+    loadFtp();
+    reloadActivity();
+  }
+
+  return (
+    <section className="cp-inventory-section">
+      <article className="panel-card cp-inventory-summary">
+        <div>
+          <span className="status-pill blue">Live FTP</span>
+          <h2>{ftpDashboard?.cpLogin || "FTP Manager"}</h2>
+          <p>FTP account inventory from cp_config_FTP. Remote agent actions are staged for the next pass.</p>
+        </div>
+        <div className="database-total-grid">
+          <div><span>Total</span><strong>{totals.total}</strong></div>
+          <div><span>Root</span><strong>{totals.rootUsers}</strong></div>
+          <div><span>Extra</span><strong>{totals.extraUsers}</strong></div>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={refreshFtpSection}>Refresh</button>
+      </article>
+
+      <div className="database-toolbar panel-card">
+        <div className="database-actions">
+          <button className="primary-button compact" type="button" onClick={() => queueFtpTest("+ FTP User")}>+ FTP User</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueFtpTest("Import Users")}>Import Users</button>
+          <button className="secondary-button compact" type="button" onClick={() => queueFtpTest("Reset Root Path")}>Reset Root Path</button>
+        </div>
+      </div>
+
+      {isLoadingFtp && <p className="empty-state">Loading FTP users from cp_config_FTP...</p>}
+      {ftpMessage && <p className="sandbox-message">{ftpMessage}</p>}
+      {ftpError && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{ftpError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadFtp}>Retry</button>
+        </div>
+      )}
+      {!isLoadingFtp && !ftpError && !users.length && (
+        <div className="panel-card cp-placeholder">
+          <span className="status-pill muted">No FTP users</span>
+          <h2>No FTP users found</h2>
+          <p>This hosting account does not have any visible FTP rows.</p>
+        </div>
+      )}
+
+      {!!users.length && (
+        <div className="table-wrap website-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Login</th>
+                <th>Path</th>
+                <th>Quota</th>
+                <th>Permission</th>
+                <th>Server</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.login}>
+                  <td>
+                    <span className="ftp-login-cell">
+                      <MenuIcon name="ftp" />
+                      {user.login}
+                      {user.isRootUser && <span className="status-pill blue">Root</span>}
+                    </span>
+                  </td>
+                  <td>{user.path}</td>
+                  <td>{user.quotaMb > 0 ? `${user.quotaMb} MB` : "Unlimited"}</td>
+                  <td>{user.permission}</td>
+                  <td>{user.server || "Default FTP server"}</td>
+                  <td><span className="status-pill">{user.status}</span></td>
+                  <td>
+                    <div className="website-action-buttons compact-actions">
+                      {["Edit", "Password", "Enable", "Disable", "Delete"].map((action) => (
+                        <button className="secondary-button compact" type="button" key={action} onClick={() => queueFtpTest(action, user)}>
+                          {action}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <ActivityList jobs={ftpJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent FTP jobs" onRetry={reloadActivity} />
+    </section>
+  );
+}
+
+function FilesSection({ cpId }) {
+  const { activity, isLoading, error, reload } = useHostingActivity(cpId);
+  const [sitesDashboard, setSitesDashboard] = useState(null);
+  const [securityDashboard, setSecurityDashboard] = useState(null);
+  const [sitesError, setSitesError] = useState("");
+  const [filesMessage, setFilesMessage] = useState("");
+  const [protectionDraft, setProtectionDraft] = useState({
+    site: "sample.com",
+    path: "/www/sample.com",
+    action: "Enable Password Protection",
+    username: "protected-user"
+  });
+  const [migrationDraft, setMigrationDraft] = useState({
+    source: "legacy-panel",
+    target: "/www/sample.com",
+    action: "Repair Migration Permissions"
+  });
+  const fileJobs = (activity?.jobs ?? []).filter((job) =>
+    ["zip", "Unzip", "perm", "scanvirus"].includes(job.type) ||
+    job.server === "file-manager" ||
+    String(job.from ?? "").toLowerCase().startsWith("/www/")
+  );
+  const totals = activity?.totals ?? { total: 0, pending: 0, running: 0, errors: 0 };
+
+  async function loadFileSites() {
+    setSitesError("");
+    try {
+      const sitesResponse = await fetch(hostingApiUrl("/api/hosting/sites", cpId));
+      const result = await sitesResponse.json().catch(() => null);
+      if (!sitesResponse.ok || !result?.success) {
+        setSitesError(result?.message ?? "Unable to load site folders.");
+        return;
+      }
+
+      setSitesDashboard(result.dashboard);
+      fetch(hostingApiUrl("/api/hosting/security", cpId))
+        .then((response) => response.json().then((securityResult) => ({ response, securityResult })))
+        .then(({ response, securityResult }) => {
+          if (response.ok && securityResult?.success) {
+            setSecurityDashboard(securityResult.dashboard);
+          }
+        })
+        .catch(() => {});
+    } catch {
+      setSitesError("Unable to reach site folder service.");
+    }
+  }
+
+  useEffect(() => {
+    loadFileSites();
+  }, [cpId]);
+
+  const siteFolders = (sitesDashboard?.sites ?? []).slice(0, 12);
+  const securityBySite = new Map((securityDashboard?.siteSecurityRows ?? []).map((row) => [String(row.siteUid), row]));
+
+  async function queueFileTest(action, site = null, details = "") {
+    setFilesMessage("");
+    try {
+      await createPanelTestActivity(cpId, {
+        from: site ? simplifySitePath(site.sitePath, sitesDashboard?.cpLogin) : `/www/${action.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        to: site ? `${action}:${site.siteName}` : `/panel-test/files/${action.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        server: "file-manager",
+        note: details || `Safe file-manager planning row for ${action}`
+      });
+      setFilesMessage(`${action} test activity created.`);
+      await reload();
+    } catch (error) {
+      setFilesMessage(error.message);
+    }
+  }
+
+  function submitProtectionDraft(event) {
+    event.preventDefault();
+    queueFileTest(
+      protectionDraft.action,
+      null,
+      `Safe site protection draft: site ${protectionDraft.site}; path ${protectionDraft.path}; user ${protectionDraft.username}; action ${protectionDraft.action}`
+    );
+  }
+
+  function submitMigrationDraft(event) {
+    event.preventDefault();
+    queueFileTest(
+      migrationDraft.action,
+      null,
+      `Safe migration repair draft: source ${migrationDraft.source}; target ${migrationDraft.target}; action ${migrationDraft.action}`
+    );
+  }
+
+  return (
+    <section className="cp-inventory-section">
+      <article className="panel-card cp-inventory-summary">
+        <div>
+          <span className="status-pill blue">File Manager</span>
+          <h2>{activity?.cpLogin || "Files"}</h2>
+          <p>File operations use the legacy work queue for long-running zip, unzip, permission, and scan jobs.</p>
+        </div>
+        <div className="database-total-grid">
+          <div><span>Recent Jobs</span><strong>{fileJobs.length}</strong></div>
+          <div><span>Pending</span><strong>{totals.pending}</strong></div>
+          <div><span>Running</span><strong>{totals.running}</strong></div>
+          <div><span>Errors</span><strong>{totals.errors}</strong></div>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={() => { reload(); loadFileSites(); }}>Refresh</button>
+      </article>
+
+      {!!securityDashboard?.siteSecurityRows?.length && (
+        <article className="panel-card site-security-summary-card">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill blue">Site Security</span>
+              <h3>Lock and Firewall Inventory</h3>
+              <p>Read-only view from `audit.dbo.siteSecurity` and site WebKnight flags.</p>
+            </div>
+            <MenuIcon name="shield" />
+          </div>
+          <div className="service-status-grid">
+            <div className="service-status-card">
+              <div><span>Locked Sites</span><strong>{securityDashboard.totals?.lockedSites ?? 0}</strong></div>
+              <p>Sites with audit rows marked not writable.</p>
+            </div>
+            <div className="service-status-card">
+              <div><span>Firewall On</span><strong>{securityDashboard.siteSecurityRows.filter((row) => row.webKnight).length}</strong></div>
+              <p>Sites with WebKnight enabled in CP config.</p>
+            </div>
+            <div className="service-status-card">
+              <div><span>Audit Rows</span><strong>{securityDashboard.siteSecurityRows.filter((row) => row.hasAuditRow).length}</strong></div>
+              <p>Existing file lock records from audit DB.</p>
+            </div>
+          </div>
+        </article>
+      )}
+
+      <div className="database-toolbar panel-card">
+        <div className="database-actions">
+          {["Upload", "New Folder", "Zip", "Unzip", "Permissions", "Scan Virus", "Lock Site", "Unlock Site", "Raw Logs"].map((action, index) => (
+            <button className={index === 0 ? "primary-button compact" : "secondary-button compact"} type="button" key={action} onClick={() => queueFileTest(action)}>
+              {action}
+            </button>
+          ))}
+        </div>
+      </div>
+      {filesMessage && <p className="sandbox-message">{filesMessage}</p>}
+
+      <article className="panel-card file-root-card">
+        <div className="database-card-header">
+          <div>
+            <span className="status-pill">Root</span>
+            <h3>/www</h3>
+            <p>Remote file browsing, uploads, and edits need the file manager gateway before writes are enabled.</p>
+          </div>
+          <MenuIcon name="folder" />
+        </div>
+        <dl className="card-meta single">
+          <div><dt>Queue Types</dt><dd>zip, Unzip, perm, scanvirus</dd></div>
+          <div><dt>Processing</dt><dd>Legacy worker-compatible workqueue rows</dd></div>
+        </dl>
+      </article>
+
+      <div className="advance-form-grid">
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Site Protection Draft</span>
+            <h3>Password Protection</h3>
+            <p>Stages lock site, unlock site, password protection, and FB API access planning without changing files or IIS rules.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitProtectionDraft}>
+            <label>
+              Site
+              <input value={protectionDraft.site} onChange={(event) => setProtectionDraft((draft) => ({ ...draft, site: event.target.value }))} />
+            </label>
+            <label>
+              Path
+              <input value={protectionDraft.path} onChange={(event) => setProtectionDraft((draft) => ({ ...draft, path: event.target.value }))} />
+            </label>
+            <label>
+              User
+              <input value={protectionDraft.username} onChange={(event) => setProtectionDraft((draft) => ({ ...draft, username: event.target.value }))} />
+            </label>
+            <label>
+              Action
+              <select value={protectionDraft.action} onChange={(event) => setProtectionDraft((draft) => ({ ...draft, action: event.target.value }))}>
+                <option value="Enable Password Protection">Enable Password Protection</option>
+                <option value="Disable Password Protection">Disable Password Protection</option>
+                <option value="Lock Site">Lock Site</option>
+                <option value="Unlock Site">Unlock Site</option>
+                <option value="Allow FB API">Allow FB API</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Stage Protection</button>
+          </form>
+        </article>
+
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Migration Draft</span>
+            <h3>Repair Queue</h3>
+            <p>Stages migration completion checks and permission repair steps from the migration repair flow.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitMigrationDraft}>
+            <label>
+              Source
+              <input value={migrationDraft.source} onChange={(event) => setMigrationDraft((draft) => ({ ...draft, source: event.target.value }))} />
+            </label>
+            <label>
+              Target
+              <input value={migrationDraft.target} onChange={(event) => setMigrationDraft((draft) => ({ ...draft, target: event.target.value }))} />
+            </label>
+            <label>
+              Action
+              <select value={migrationDraft.action} onChange={(event) => setMigrationDraft((draft) => ({ ...draft, action: event.target.value }))}>
+                <option value="Repair Migration Permissions">Repair Permissions</option>
+                <option value="Check Migration Status">Check Migration Status</option>
+                <option value="Rescan Migrated Files">Rescan Migrated Files</option>
+                <option value="Queue Migration Notice">Queue Migration Notice</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Stage Repair</button>
+          </form>
+        </article>
+      </div>
+
+      {sitesError && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{sitesError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadFileSites}>Retry</button>
+        </div>
+      )}
+
+      {!!siteFolders.length && (
+        <div className="domain-service-grid">
+          {siteFolders.map((site) => {
+            const security = securityBySite.get(String(site.siteUid));
+            const locked = !!security?.hasAuditRow && !security?.isWritable;
+            return (
+              <article className="panel-card domain-service-card" key={site.siteUid}>
+                <div className="database-card-header">
+                  <div>
+                    <span className={locked ? "status-pill warning" : site.status === "Running" ? "status-pill" : "status-pill muted"}>
+                      {locked ? "Locked" : site.status}
+                    </span>
+                    <h3>{site.siteName}</h3>
+                    <p>{site.rootName || "Website folder"}</p>
+                  </div>
+                  <MenuIcon name="folder" />
+                </div>
+                <dl className="card-meta single">
+                  <div><dt>Path</dt><dd>{simplifySitePath(site.sitePath, sitesDashboard?.cpLogin)}</dd></div>
+                  <div><dt>Runtime</dt><dd>{site.version ? `.NET ${site.version}` : site.phpVersion ? `PHP ${site.phpVersion}` : "Website"}</dd></div>
+                  <div><dt>Domains</dt><dd>{site.mappedDomains?.length ?? 0}</dd></div>
+                  <div><dt>Firewall</dt><dd>{security?.webKnight ? "Enabled" : "Off"}</dd></div>
+                  <div><dt>Writable</dt><dd>{security?.hasAuditRow ? security.isWritable ? "Yes" : "No" : "No audit row"}</dd></div>
+                </dl>
+                <div className="database-action-row">
+                  {["Open", "Upload", "Permissions", "Lock Site"].map((action) => (
+                    <button className="secondary-button compact" type="button" key={action} onClick={() => queueFileTest(action, site)}>{action}</button>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      <ActivityList activity={activity} jobs={fileJobs} isLoading={isLoading} error={error} emptyTitle="No recent file jobs" onRetry={reload} />
+    </section>
+  );
+}
+
+function AppsSection({ cpId }) {
+  const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
+  const [appsDashboard, setAppsDashboard] = useState(null);
+  const [securityDashboard, setSecurityDashboard] = useState(null);
+  const [isLoadingApps, setIsLoadingApps] = useState(true);
+  const [appsError, setAppsError] = useState("");
+  const [appsMessage, setAppsMessage] = useState("");
+  const [previewPluginId, setPreviewPluginId] = useState(null);
+  const [appSearch, setAppSearch] = useState("");
+  const [activeAppType, setActiveAppType] = useState("All");
+  const [wpDraft, setWpDraft] = useState({
+    site: "sample.com",
+    url: "https://sample.com/wp-admin",
+    note: "WordPress Desk safe review"
+  });
+
+  async function loadApps() {
+    setIsLoadingApps(true);
+    setAppsError("");
+    try {
+      const appsResponse = await fetch(hostingApiUrl("/api/hosting/apps", cpId));
+      const result = await appsResponse.json().catch(() => null);
+      if (!appsResponse.ok || !result?.success) {
+        setAppsError(result?.message ?? "Unable to load app catalog.");
+        return;
+      }
+
+      setAppsDashboard(result.dashboard);
+      fetch(hostingApiUrl("/api/hosting/security", cpId))
+        .then((response) => response.json().then((securityResult) => ({ response, securityResult })))
+        .then(({ response, securityResult }) => {
+          if (response.ok && securityResult?.success) {
+            setSecurityDashboard(securityResult.dashboard);
+          }
+        })
+        .catch(() => {});
+    } catch {
+      setAppsError("Unable to reach app catalog service.");
+    } finally {
+      setIsLoadingApps(false);
+    }
+  }
+
+  useEffect(() => {
+    loadApps();
+  }, [cpId]);
+
+  const catalog = appsDashboard?.catalog ?? [];
+  const appTypes = ["All", ...Array.from(new Set(catalog.map((plugin) => appTypeName(plugin)))).sort()];
+  const filteredCatalog = catalog.filter((plugin) => {
+    const appType = appTypeName(plugin);
+    const matchesType = activeAppType === "All" || appType === activeAppType;
+    const haystack = `${plugin.name} ${plugin.version} ${plugin.language} ${plugin.category} ${plugin.description}`.toLowerCase();
+    return matchesType && haystack.includes(appSearch.trim().toLowerCase());
+  });
+  const deployJobs = appsDashboard?.deployJobs ?? [];
+  const siteSecurityRows = securityDashboard?.siteSecurityRows ?? [];
+  const firewallSites = siteSecurityRows.filter((row) => row.webKnight);
+  const lockedSites = siteSecurityRows.filter((row) => row.hasAuditRow && !row.isWritable);
+  const appJobs = [
+    ...deployJobs,
+    ...(activity?.jobs ?? []).filter((job) =>
+      job.server === "plugin-installer" ||
+      job.server === "wordpress-manager" ||
+      String(job.from ?? "").toLowerCase().startsWith("plugin:") ||
+      String(job.from ?? "").toLowerCase().startsWith("wordpress:") ||
+      String(job.from ?? "").toLowerCase().startsWith("requirements:")
+    )
+  ].filter((job, index, list) => list.findIndex((candidate) => candidate.id === job.id) === index);
+
+  async function createPluginInstallTest(plugin) {
+    setAppsMessage("");
+    try {
+      const result = await createPanelTestActivity(cpId, {
+        from: `plugin:${plugin.name}`,
+        to: `/www/${plugin.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "app"}`,
+        server: "plugin-installer",
+        note: `Safe install planning row for ${plugin.name} ${plugin.version || ""}`.trim()
+      });
+      setAppsMessage(result.message);
+      await loadApps();
+      await reloadActivity();
+    } catch (error) {
+      setAppsMessage(error.message);
+    }
+  }
+
+  async function createPluginRequirementTest(plugin) {
+    setAppsMessage("");
+    try {
+      const result = await createPanelTestActivity(cpId, {
+        from: `requirements:${plugin.name}`,
+        to: plugin.language || "app-runtime",
+        server: "plugin-installer",
+        note: `Safe requirements planning row for ${plugin.name} ${plugin.version || ""}`.trim()
+      });
+      setAppsMessage(result.message);
+      await loadApps();
+      await reloadActivity();
+    } catch (error) {
+      setAppsMessage(error.message);
+    }
+  }
+
+  async function createWordPressDeskTest(action) {
+    setAppsMessage("");
+    try {
+      const result = await createPanelTestActivity(cpId, {
+        from: `wordpress:${action}`,
+        to: wpDraft.site || "wordpress-site",
+        server: "wordpress-manager",
+        note: `Safe WordPress Desk draft: ${action}; site ${wpDraft.site}; admin ${wpDraft.url}; ${wpDraft.note}`
+      });
+      setAppsMessage(result.message);
+      await reloadActivity();
+    } catch (error) {
+      setAppsMessage(error.message);
+    }
+  }
+
+  return (
+    <section className="cp-inventory-section">
+      <article className="panel-card cp-inventory-summary">
+        <div>
+          <span className="status-pill blue">One-click Apps</span>
+          <h2>{appsDashboard?.cpLogin || "Application Installer"}</h2>
+          <p>Plugin catalog and deploy history for ASP.NET, PHP, WordPress, and Node.js installers.</p>
+        </div>
+        <div className="database-total-grid">
+          <div><span>Apps</span><strong>{catalog.length}</strong></div>
+          <div><span>Deploy Jobs</span><strong>{appJobs.length}</strong></div>
+          <div><span>Enabled</span><strong>{catalog.filter((plugin) => plugin.enabled).length}</strong></div>
+          <div><span>DB Required</span><strong>{catalog.filter((plugin) => plugin.usesDatabase).length}</strong></div>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={() => { loadApps(); reloadActivity(); }}>Refresh</button>
+      </article>
+
+      <div className="database-toolbar panel-card">
+        <label className="app-search-field">
+          <MenuIcon name="apps" />
+          <input
+            value={appSearch}
+            onChange={(event) => setAppSearch(event.target.value)}
+            placeholder="Search apps..."
+          />
+        </label>
+        <div className="engine-tabs" aria-label="App language filter">
+          {appTypes.map((type) => (
+            <button
+              className={activeAppType === type ? "active" : ""}
+              type="button"
+              key={type}
+              onClick={() => setActiveAppType(type)}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoadingApps && <p className="empty-state">Loading app catalog...</p>}
+      {appsError && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{appsError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadApps}>Retry</button>
+        </div>
+      )}
+      {appsMessage && <p className="sandbox-message">{appsMessage}</p>}
+
+      <article className="panel-card wordpress-desk-panel">
+        <div className="database-card-header">
+          <div>
+            <span className="status-pill blue">WordPress Desk</span>
+            <h3>Site Security and WordPress Tools</h3>
+            <p>Stages the wpdesk CDN, firewall, and security checks without changing Cloudflare, WebKnight, or site files.</p>
+          </div>
+          <MenuIcon name="apps" />
+        </div>
+        <form className="advance-inline-form" onSubmit={(event) => event.preventDefault()}>
+          <label>
+            Site
+            <input value={wpDraft.site} onChange={(event) => setWpDraft((draft) => ({ ...draft, site: event.target.value }))} />
+          </label>
+          <label>
+            Admin URL
+            <input value={wpDraft.url} onChange={(event) => setWpDraft((draft) => ({ ...draft, url: event.target.value }))} />
+          </label>
+          <label>
+            Note
+            <input value={wpDraft.note} onChange={(event) => setWpDraft((draft) => ({ ...draft, note: event.target.value }))} />
+          </label>
+        </form>
+        <div className="database-action-row">
+          {["Scan WordPress Sites", "Check Site Security", "Enable WordPress CDN", "Disable WordPress CDN", "Toggle Firewall", "Repair Permissions"].map((action, index) => (
+            <button
+              className={index === 0 ? "primary-button compact" : "secondary-button compact"}
+              type="button"
+              key={action}
+              onClick={() => createWordPressDeskTest(action)}
+            >
+              {action}
+            </button>
+          ))}
+        </div>
+        {!!siteSecurityRows.length && (
+          <div className="service-status-grid">
+            <div className="service-status-card">
+              <div><span>Known Sites</span><strong>{siteSecurityRows.length}</strong></div>
+              <p>Site rows available to WordPress Desk.</p>
+            </div>
+            <div className="service-status-card">
+              <div><span>Firewall On</span><strong>{firewallSites.length}</strong></div>
+              <p>WebKnight flags currently enabled.</p>
+            </div>
+            <div className="service-status-card">
+              <div><span>Locked</span><strong>{lockedSites.length}</strong></div>
+              <p>Sites currently marked not writable.</p>
+            </div>
+          </div>
+        )}
+      </article>
+
+      {!!filteredCatalog.length && (
+        <div className="domain-service-grid">
+          {filteredCatalog.map((plugin) => (
+            <article className="panel-card domain-service-card" key={plugin.pluginId}>
+              <div className="database-card-header">
+                <div>
+                  <span className="status-pill">{appTypeName(plugin)}</span>
+                  <h3>{plugin.name}</h3>
+                  <p>{plugin.version || "Latest"} · {plugin.installCount} installs · {plugin.category || "Catalog"}</p>
+                </div>
+                <MenuIcon name="apps" />
+              </div>
+              <p className="catalog-description">{plainCatalogText(plugin.description) || "Application package ready for the rebuilt installer workflow."}</p>
+              <dl className="card-meta single">
+                <div><dt>Database</dt><dd>{plugin.usesDatabase ? "Required" : "Not required"}</dd></div>
+                <div><dt>Admin</dt><dd>{plugin.adminPage || "Configured after install"}</dd></div>
+                <div><dt>Script</dt><dd>{plugin.scriptVersion || "Default"}</dd></div>
+                <div><dt>Rules</dt><dd>{plugin.configFiles} config · {plugin.parameterSets} params · {plugin.permissionRules} permissions</dd></div>
+              </dl>
+              {previewPluginId === plugin.pluginId && (
+                <ol className="plugin-step-list">
+                  <li>Select target website folder.</li>
+                  {plugin.usesDatabase && <li>Choose database engine and create a database/user pair.</li>}
+                  <li>Apply {plugin.configFiles || "the"} config template{plugin.configFiles === 1 ? "" : "s"} and collect installer parameters.</li>
+                  <li>Apply {plugin.permissionRules || "required"} file permission rule{plugin.permissionRules === 1 ? "" : "s"}.</li>
+                  <li>Create legacy worker-compatible install job and track deploy progress.</li>
+                </ol>
+              )}
+              <div className="database-action-row">
+                <button className="primary-button compact" type="button" onClick={() => createPluginInstallTest(plugin)}>Install</button>
+                <button className="secondary-button compact" type="button" onClick={() => createPluginRequirementTest(plugin)}>Requirements</button>
+                <button className="secondary-button compact" type="button" onClick={() => setPreviewPluginId((currentId) => currentId === plugin.pluginId ? null : plugin.pluginId)}>Preview Steps</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      {!isLoadingApps && !appsError && !filteredCatalog.length && (
+        <div className="panel-card cp-placeholder">
+          <span className="status-pill muted">No apps</span>
+          <h2>No catalog matches</h2>
+          <p>Adjust the app search or language filter.</p>
+        </div>
+      )}
+
+      <ActivityList
+        activity={appsDashboard ? { cpLogin: appsDashboard.cpLogin, jobs: deployJobs, totals: { total: deployJobs.length, pending: 0, running: 0, errors: deployJobs.filter((job) => job.statusCode === 3).length } } : null}
+        jobs={appJobs}
+        isLoading={isLoadingApps || isLoadingActivity}
+        error={appsError || activityError}
+        emptyTitle="No recent deploy jobs"
+        onRetry={() => { loadApps(); reloadActivity(); }}
+      />
+    </section>
+  );
+}
+
+function appTypeName(plugin) {
+  return String(plugin?.language || plugin?.category || "App").trim() || "App";
+}
+
+function plainCatalogText(value) {
+  return String(value || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function AdvanceSection({ cpId }) {
+  const { activity, isLoading, error, reload } = useHostingActivity(cpId);
+  const [runtimeDashboard, setRuntimeDashboard] = useState(null);
+  const [isLoadingRuntime, setIsLoadingRuntime] = useState(true);
+  const [runtimeError, setRuntimeError] = useState("");
+  const [sandboxMessage, setSandboxMessage] = useState("");
+  const [sandboxDraft, setSandboxDraft] = useState({
+    from: "/panel-test/source",
+    to: "/panel-test/destination",
+    server: "local-panel",
+    note: "Sandbox row created by rebuilt panel_cp."
+  });
+  const [taskDraft, setTaskDraft] = useState({
+    protocol: "https://",
+    url: "example.com/health",
+    timeout: "20",
+    interval: "30",
+    taskType: "sharedtask"
+  });
+  const [teamDraft, setTeamDraft] = useState({
+    username: "new-cp-user",
+    accessList: "websites,databases,email",
+    siteList: "all"
+  });
+  const [redirectDraft, setRedirectDraft] = useState({
+    source: "/old-page",
+    target: "https://sample.com/new-page",
+    statusCode: "301",
+    site: "sample.com"
+  });
+  const [webDeployDraft, setWebDeployDraft] = useState({
+    username: "openreward-deploy",
+    site: "sample.com",
+    action: "Generate Web Deploy"
+  });
+  const [staticIpDraft, setStaticIpDraft] = useState({
+    domain: "sample.com",
+    ipAddress: "208.98.35.146",
+    action: "Review Binding"
+  });
+  const runtimeActions = [
+    "Application Pool",
+    "ASP.NET Version",
+    "PHP Settings",
+    "Node.js App",
+    "Environment Variables",
+    "Remote IIS",
+    "Redirect Rules",
+    "Web Deploy Users",
+    "Scheduled Tasks",
+    "Team Access",
+    "Static IP",
+    "Work Queue"
+  ];
+
+  const testJobs = (activity?.jobs ?? []).filter((job) => job.type === "panel-test");
+
+  async function loadRuntimeDashboard() {
+    setIsLoadingRuntime(true);
+    setRuntimeError("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/runtime", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setRuntimeError(result?.message ?? "Unable to load runtime inventory.");
+        return;
+      }
+
+      setRuntimeDashboard(result.dashboard);
+    } catch {
+      setRuntimeError("Unable to reach runtime inventory service.");
+    } finally {
+      setIsLoadingRuntime(false);
+    }
+  }
+
+  useEffect(() => {
+    loadRuntimeDashboard();
+  }, [cpId]);
+
+  async function submitSandboxJob(event) {
+    event.preventDefault();
+    setSandboxMessage("");
+
+    try {
+      const response = await fetch("/api/hosting/activity/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId, ...sandboxDraft })
+      });
+      const result = await response.json().catch(() => null);
+      setSandboxMessage(result?.message ?? "Unable to create sandbox activity.");
+      if (response.ok && result?.success) {
+        await reload();
+      }
+    } catch {
+      setSandboxMessage("Unable to reach sandbox activity service.");
+    }
+  }
+
+  async function updateSandboxJob(job) {
+    setSandboxMessage("");
+    try {
+      const response = await fetch(`/api/hosting/activity/test/${encodeURIComponent(job.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId,
+          from: `${job.from || "/panel-test/source"}-edited`,
+          to: job.to || "/panel-test/destination",
+          server: job.server || "local-panel",
+          note: `Edited from panel_cp at ${new Date().toLocaleString()}`
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setSandboxMessage(result?.message ?? "Unable to update sandbox activity.");
+      if (response.ok && result?.success) {
+        await reload();
+      }
+    } catch {
+      setSandboxMessage("Unable to reach sandbox activity service.");
+    }
+  }
+
+  async function deleteSandboxJob(job) {
+    setSandboxMessage("");
+    try {
+      const response = await fetch(`/api/hosting/activity/test/${encodeURIComponent(job.id)}?cpId=${encodeURIComponent(cpId)}`, { method: "DELETE" });
+      const result = await response.json().catch(() => null);
+      setSandboxMessage(result?.message ?? "Unable to delete sandbox activity.");
+      if (response.ok && result?.success) {
+        await reload();
+      }
+    } catch {
+      setSandboxMessage("Unable to reach sandbox activity service.");
+    }
+  }
+
+  async function queueAdvanceTool(action, details = "") {
+    setSandboxMessage("");
+    try {
+      await createPanelTestActivity(cpId, {
+        from: `advanced:${action}`,
+        to: `/panel-test/advance/${action.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        server: "advanced-manager",
+        note: details || `Safe advanced planning row for ${action}`
+      });
+      setSandboxMessage(`${action} test activity created.`);
+      await reload();
+    } catch (error) {
+      setSandboxMessage(error.message);
+    }
+  }
+
+  function advanceToolTone(action, index) {
+    if (["Application Pool", "ASP.NET Version", "PHP Settings", "Node.js App"].includes(action)) return "Runtime";
+    if (["Redirect Rules", "Web Deploy Users", "Team Access"].includes(action)) return "Access";
+    if (["Static IP", "Scheduled Tasks", "Work Queue"].includes(action)) return "Worker";
+    return index < 4 ? "Runtime" : "Worker";
+  }
+
+  const workflowGroups = buildAdvanceWorkflowGroups(runtimeDashboard);
+
+  function submitTaskDraft(event) {
+    event.preventDefault();
+    const timeout = Math.max(20, Math.min(300, Number(taskDraft.timeout) || 20));
+    const interval = Math.max(5, Math.min(1440, Number(taskDraft.interval) || 30));
+    const url = `${taskDraft.protocol}${taskDraft.url.replace(/^https?:\/\//i, "")}`;
+    queueAdvanceTool(
+      taskDraft.taskType === "wintask" ? "Add Windows Task" : "Add URL Task",
+      `Safe scheduled task draft: ${url}; timeout ${timeout}s; every ${interval} minutes; type ${taskDraft.taskType}`
+    );
+  }
+
+  function submitTeamDraft(event) {
+    event.preventDefault();
+    queueAdvanceTool(
+      "Invite CP User",
+      `Safe CP alias draft: username ${teamDraft.username}; access ${teamDraft.accessList}; sites ${teamDraft.siteList}`
+    );
+  }
+
+  function submitRedirectDraft(event) {
+    event.preventDefault();
+    queueAdvanceTool(
+      "Add Redirect",
+      `Safe redirect draft: ${redirectDraft.site}; ${redirectDraft.source} -> ${redirectDraft.target}; status ${redirectDraft.statusCode}`
+    );
+  }
+
+  function submitWebDeployDraft(event) {
+    event.preventDefault();
+    queueAdvanceTool(
+      webDeployDraft.action,
+      `Safe Web Deploy draft: user ${webDeployDraft.username}; site ${webDeployDraft.site}; action ${webDeployDraft.action}`
+    );
+  }
+
+  function submitStaticIpDraft(event) {
+    event.preventDefault();
+    queueAdvanceTool(
+      staticIpDraft.action,
+      `Safe Static IP/VPS draft: domain ${staticIpDraft.domain}; ip ${staticIpDraft.ipAddress}; action ${staticIpDraft.action}`
+    );
+  }
+
+  return (
+    <section className="cp-inventory-section">
+      <article className="panel-card cp-inventory-summary">
+        <div>
+          <span className="status-pill blue">Advanced Tools</span>
+          <h2>{activity?.cpLogin || "Advance"}</h2>
+          <p>Runtime and worker-backed operations for app pools, deployments, permissions, scheduled tasks, and long-running jobs.</p>
+        </div>
+        <div className="database-total-grid">
+          <div><span>Total Jobs</span><strong>{activity?.totals?.total ?? 0}</strong></div>
+          <div><span>Pending</span><strong>{activity?.totals?.pending ?? 0}</strong></div>
+              <div><span>Running</span><strong>{activity?.totals?.running ?? 0}</strong></div>
+              <div><span>Errors</span><strong>{activity?.totals?.errors ?? 0}</strong></div>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={() => { reload(); loadRuntimeDashboard(); }}>Refresh</button>
+      </article>
+
+      <article className="panel-card cp-runtime-panel">
+        <div className="database-card-header">
+          <div>
+            <span className="status-pill blue">Read-only inventory</span>
+            <h3>{runtimeDashboard?.cpLogin || "Runtime Inventory"}</h3>
+            <p>Legacy runtime tables loaded without changing IIS, DNS, task, or deploy settings.</p>
+          </div>
+          <MenuIcon name="advance" />
+        </div>
+        <div className="database-total-grid">
+          <div><span>Pools</span><strong>{runtimeDashboard?.totals?.pools ?? 0}</strong></div>
+          <div><span>Redirects</span><strong>{runtimeDashboard?.totals?.redirects ?? 0}</strong></div>
+          <div><span>Web Deploy</span><strong>{runtimeDashboard?.totals?.siteUsers ?? 0}</strong></div>
+          <div><span>Static IPs</span><strong>{runtimeDashboard?.totals?.staticIps ?? 0}</strong></div>
+          <div><span>Team Users</span><strong>{runtimeDashboard?.totals?.aliases ?? 0}</strong></div>
+        </div>
+        {isLoadingRuntime && <p className="empty-state">Loading runtime inventory...</p>}
+        {runtimeError && <p className="inline-status">{runtimeError}</p>}
+        {!!runtimeDashboard?.warnings?.length && (
+          <div className="runtime-warning-list">
+            {runtimeDashboard.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+          </div>
+        )}
+        <RuntimeRows title="Application Pools" rows={runtimeDashboard?.pools ?? []} emptyText="No app pool rows found." />
+        <RuntimeRows title="Redirect Rules" rows={runtimeDashboard?.redirects ?? []} emptyText="No redirect rules found." />
+        <RuntimeRows title="Web Deploy Users" rows={runtimeDashboard?.siteUsers ?? []} emptyText="No Web Deploy users found." />
+        <RuntimeRows title="Static IPs" rows={runtimeDashboard?.staticIps ?? []} emptyText="No static IP rows found." />
+        <RuntimeRows title="Team Access Users" rows={runtimeDashboard?.aliases ?? []} emptyText="No CP alias users found." />
+      </article>
+
+      <div className="advance-tool-grid">
+        {runtimeActions.map((action, index) => (
+          <article className="panel-card advance-tool-card" key={action}>
+            <div>
+              <span className={index < 4 ? "status-pill" : "status-pill muted"}>{advanceToolTone(action, index)}</span>
+              <h3>{action}</h3>
+              <p>{advancedToolDescription(action)}</p>
+            </div>
+            <button className={action === "Work Queue" ? "primary-button compact" : "secondary-button compact"} type="button" onClick={() => queueAdvanceTool(action)}>
+              Stage
+            </button>
+          </article>
+        ))}
+      </div>
+
+      <div className="advance-workflow-grid">
+        {workflowGroups.map((group) => (
+          <article className="panel-card advance-workflow-card" key={group.title}>
+            <div>
+              <span className="status-pill blue">{group.badge}</span>
+              <h3>{group.title}</h3>
+              <p>{group.description}</p>
+            </div>
+            <dl className="card-meta single">
+              {group.meta.map(([label, value]) => (
+                <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+              ))}
+            </dl>
+            <div className="database-action-row">
+              {group.actions.map((action, index) => (
+                <button
+                  className={index === 0 ? "primary-button compact" : "secondary-button compact"}
+                  type="button"
+                  key={action}
+                  onClick={() => queueAdvanceTool(action)}
+                >
+                  {action}
+                </button>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="advance-form-grid">
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Scheduled Task Draft</span>
+            <h3>HTTP / Windows Task</h3>
+            <p>Stages the old task form values without writing to the legacy `tasks` table.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitTaskDraft}>
+            <label>
+              Protocol
+              <select value={taskDraft.protocol} onChange={(event) => setTaskDraft((draft) => ({ ...draft, protocol: event.target.value }))}>
+                <option value="https://">https://</option>
+                <option value="http://">http://</option>
+              </select>
+            </label>
+            <label>
+              URL
+              <input value={taskDraft.url} onChange={(event) => setTaskDraft((draft) => ({ ...draft, url: event.target.value }))} />
+            </label>
+            <label>
+              Timeout
+              <input type="number" min="20" max="300" value={taskDraft.timeout} onChange={(event) => setTaskDraft((draft) => ({ ...draft, timeout: event.target.value }))} />
+            </label>
+            <label>
+              Every Minutes
+              <input type="number" min="5" max="1440" value={taskDraft.interval} onChange={(event) => setTaskDraft((draft) => ({ ...draft, interval: event.target.value }))} />
+            </label>
+            <label>
+              Type
+              <select value={taskDraft.taskType} onChange={(event) => setTaskDraft((draft) => ({ ...draft, taskType: event.target.value }))}>
+                <option value="sharedtask">Schedule Task</option>
+                <option value="wintask">Dedicated Windows Task</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Stage Task</button>
+          </form>
+        </article>
+
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Team Access Draft</span>
+            <h3>CP Alias User</h3>
+            <p>Stages username, permission list, and site scope before real `cp_loginAlias` writes are enabled.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitTeamDraft}>
+            <label>
+              Username
+              <input value={teamDraft.username} onChange={(event) => setTeamDraft((draft) => ({ ...draft, username: event.target.value }))} />
+            </label>
+            <label>
+              Access List
+              <input value={teamDraft.accessList} onChange={(event) => setTeamDraft((draft) => ({ ...draft, accessList: event.target.value }))} />
+            </label>
+            <label>
+              Site List
+              <input value={teamDraft.siteList} onChange={(event) => setTeamDraft((draft) => ({ ...draft, siteList: event.target.value }))} />
+            </label>
+            <button className="primary-button compact" type="submit">Stage Invite</button>
+          </form>
+        </article>
+
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Redirect Draft</span>
+            <h3>URL Rewrite Rule</h3>
+            <p>Stages the `cp_config_redirect` values for review before real rewrite API calls are enabled.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitRedirectDraft}>
+            <label>
+              Site
+              <input value={redirectDraft.site} onChange={(event) => setRedirectDraft((draft) => ({ ...draft, site: event.target.value }))} />
+            </label>
+            <label>
+              From
+              <input value={redirectDraft.source} onChange={(event) => setRedirectDraft((draft) => ({ ...draft, source: event.target.value }))} />
+            </label>
+            <label>
+              To
+              <input value={redirectDraft.target} onChange={(event) => setRedirectDraft((draft) => ({ ...draft, target: event.target.value }))} />
+            </label>
+            <label>
+              Code
+              <select value={redirectDraft.statusCode} onChange={(event) => setRedirectDraft((draft) => ({ ...draft, statusCode: event.target.value }))}>
+                <option value="301">301 Permanent</option>
+                <option value="302">302 Temporary</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Stage Redirect</button>
+          </form>
+        </article>
+
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Web Deploy Draft</span>
+            <h3>Deploy Credentials</h3>
+            <p>Stages IIS Manager and Web Deploy credential actions without creating or resetting existing users.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitWebDeployDraft}>
+            <label>
+              Username
+              <input value={webDeployDraft.username} onChange={(event) => setWebDeployDraft((draft) => ({ ...draft, username: event.target.value }))} />
+            </label>
+            <label>
+              Site
+              <input value={webDeployDraft.site} onChange={(event) => setWebDeployDraft((draft) => ({ ...draft, site: event.target.value }))} />
+            </label>
+            <label>
+              Action
+              <select value={webDeployDraft.action} onChange={(event) => setWebDeployDraft((draft) => ({ ...draft, action: event.target.value }))}>
+                <option value="Generate Web Deploy">Generate Web Deploy</option>
+                <option value="Reset Web Deploy Password">Reset Password</option>
+                <option value="Remote IIS User">Remote IIS User</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Stage Deploy</button>
+          </form>
+        </article>
+
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Static IP / VPS Draft</span>
+            <h3>Domain Binding</h3>
+            <p>Stages static IP, VPS domain binding, snapshot, and backup planning without touching provider data.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitStaticIpDraft}>
+            <label>
+              Domain
+              <input value={staticIpDraft.domain} onChange={(event) => setStaticIpDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+            </label>
+            <label>
+              IP Address
+              <input value={staticIpDraft.ipAddress} onChange={(event) => setStaticIpDraft((draft) => ({ ...draft, ipAddress: event.target.value }))} />
+            </label>
+            <label>
+              Action
+              <select value={staticIpDraft.action} onChange={(event) => setStaticIpDraft((draft) => ({ ...draft, action: event.target.value }))}>
+                <option value="Review Binding">Review Binding</option>
+                <option value="Bind Domain to VPS">Bind Domain to VPS</option>
+                <option value="Create Snapshot">Create Snapshot</option>
+                <option value="Update Cloud Backup">Update Cloud Backup</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Stage VPS</button>
+          </form>
+        </article>
+      </div>
+
+      <article className="panel-card sandbox-card">
+        <div>
+          <span className="status-pill blue">Safe Write Test</span>
+          <h3>Panel Test Activity</h3>
+          <p>Create, edit, and delete new `panel-test` rows only. Existing worker jobs are protected.</p>
+        </div>
+        <form className="sandbox-form" onSubmit={submitSandboxJob}>
+          <label>
+            From
+            <input value={sandboxDraft.from} onChange={(event) => setSandboxDraft((draft) => ({ ...draft, from: event.target.value }))} />
+          </label>
+          <label>
+            To
+            <input value={sandboxDraft.to} onChange={(event) => setSandboxDraft((draft) => ({ ...draft, to: event.target.value }))} />
+          </label>
+          <label>
+            Server
+            <input value={sandboxDraft.server} onChange={(event) => setSandboxDraft((draft) => ({ ...draft, server: event.target.value }))} />
+          </label>
+          <label>
+            Note
+            <input value={sandboxDraft.note} onChange={(event) => setSandboxDraft((draft) => ({ ...draft, note: event.target.value }))} />
+          </label>
+          <button className="primary-button compact" type="submit">Add Test Row</button>
+        </form>
+        {sandboxMessage && <p className="sandbox-message">{sandboxMessage}</p>}
+        {!!testJobs.length && (
+          <div className="sandbox-job-list">
+            {testJobs.map((job) => (
+              <div className="sandbox-job-row" key={job.id}>
+                <span>#{job.id}</span>
+                <strong>{job.from}</strong>
+                <small>{job.data || job.to}</small>
+                <button className="secondary-button compact" type="button" onClick={() => updateSandboxJob(job)}>Edit</button>
+                <button className="secondary-button compact" type="button" onClick={() => deleteSandboxJob(job)}>Delete</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </article>
+
+      <ActivityList activity={activity} jobs={activity?.jobs ?? []} isLoading={isLoading} error={error} emptyTitle="No workqueue activity" onRetry={reload} />
+    </section>
+  );
+}
+
+function RuntimeRows({ title, rows, emptyText }) {
+  return (
+    <section className="runtime-row-section">
+      <h4>{title}</h4>
+      {!rows.length ? (
+        <p className="runtime-empty">{emptyText}</p>
+      ) : (
+        <div className="runtime-row-grid">
+          {rows.slice(0, 6).map((row, index) => (
+            <article className="runtime-row-card" key={`${title}-${row.title}-${index}`}>
+              <div>
+                <span className="status-pill muted">{row.status}</span>
+                <strong>{row.title || "Item"}</strong>
+                <p>{row.subtitle || "No details"}</p>
+              </div>
+              <dl>
+                {Object.entries(row.details ?? {}).slice(0, 4).map(([key, value]) => (
+                  <div key={key}>
+                    <dt>{key}</dt>
+                    <dd>{value || "-"}</dd>
+                  </div>
+                ))}
+              </dl>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function useHostingActivity(cpId) {
+  const [activity, setActivity] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function loadActivity() {
+    setIsLoading(true);
+    setError("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/activity", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setError(result?.message ?? "Unable to load activity.");
+        return;
+      }
+
+      setActivity(result.dashboard);
+    } catch {
+      setError("Unable to reach activity service.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadActivity();
+  }, [cpId]);
+
+  return { activity, isLoading, error, reload: loadActivity };
+}
+
+function ActivityList({ jobs, isLoading, error, emptyTitle, onRetry }) {
+  if (isLoading) return <p className="empty-state">Loading workqueue activity...</p>;
+  if (error) {
+    return (
+      <div className="panel-card dashboard-error-panel">
+        <p>{error}</p>
+        <button className="secondary-button compact" type="button" onClick={onRetry}>Retry</button>
+      </div>
+    );
+  }
+
+  if (!jobs.length) {
+    return (
+      <div className="panel-card cp-placeholder">
+        <span className="status-pill muted">No jobs</span>
+        <h2>{emptyTitle}</h2>
+        <p>No matching workqueue rows were found for this hosting plan.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="table-wrap website-table activity-table">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>From</th>
+            <th>To</th>
+            <th>Server</th>
+            <th>Date</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((job) => (
+            <tr key={job.id}>
+              <td>{job.id}</td>
+              <td>{job.type || "Job"}</td>
+              <td>{job.from || "-"}</td>
+              <td>{job.to || "-"}</td>
+              <td>{job.server || "-"}</td>
+              <td>{formatDateTime(job.enterDate)}</td>
+              <td>
+                <span className={job.statusCode === 3 ? "status-pill danger" : job.statusCode === 2 ? "status-pill" : "status-pill blue"}>
+                  {job.status}
+                </span>
+                {job.errorMessage && <p className="job-error-message">{job.errorMessage}</p>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function advancedToolDescription(action) {
+  const descriptions = {
+    "Application Pool": "Recycle, isolate, or create application pools through the legacy worker path.",
+    "ASP.NET Version": "Review .NET runtime selection and prepare version-change jobs.",
+    "PHP Settings": "Manage PHP runtime and handler settings per website.",
+    "Node.js App": "Prepare IISNode configuration and deployment jobs.",
+    "Environment Variables": "View and stage app pool environment variable changes.",
+    "Remote IIS": "Manage IIS Manager credential workflows.",
+    "Redirect Rules": "Prepare URL rewrite redirects from the cp_config_redirect flow.",
+    "Web Deploy Users": "Stage Web Deploy credential generation and reset workflows.",
+    "Scheduled Tasks": "Prepare URL and Windows scheduled task worker integration.",
+    "Team Access": "Stage CP alias user and permission review workflows.",
+    "Static IP": "Review dedicated IP binding and VPS-domain routing workflows.",
+    "Work Queue": "Read pending, running, successful, and failed worker jobs."
+  };
+
+  return descriptions[action] ?? "Advanced hosting control panel tool.";
+}
+
+function buildAdvanceWorkflowGroups(runtimeDashboard) {
+  const totals = runtimeDashboard?.totals ?? { pools: 0, redirects: 0, siteUsers: 0, staticIps: 0, aliases: 0 };
+
+  return [
+    {
+      badge: "Tasks",
+      title: "Scheduled Tasks",
+      description: "URL pings and Windows Task Scheduler jobs with interval, timeout, and worker validation.",
+      meta: [
+        ["Interval Rule", "5-1440 minutes"],
+        ["Timeout Rule", "20-300 seconds"],
+        ["Worker Name", "{cpLogin}-{taskID}"]
+      ],
+      actions: ["Add URL Task", "Add Windows Task", "Task Logs", "Delete Task"]
+    },
+    {
+      badge: "Node",
+      title: "Node.js Deploy",
+      description: "IISNode, HTTP Platform Handler, sub-application, Git deploy, and ZIP deploy staging.",
+      meta: [
+        ["Queue Types", "nodejs, deploy"],
+        ["Current Redirects", totals.redirects],
+        ["Deploy Source", "Git or uploaded ZIP"]
+      ],
+      actions: ["Enable IISNode", "Enable HTTP Platform", "Create Node Sub App", "Deploy from Git", "Deploy from ZIP"]
+    },
+    {
+      badge: "Access",
+      title: "Redirects and Web Deploy",
+      description: "URL rewrite rules, Web Deploy users, IIS Manager credentials, and generated deployment config.",
+      meta: [
+        ["Redirect Rules", totals.redirects],
+        ["Web Deploy Users", totals.siteUsers],
+        ["Remote IIS", "Credential workflow"]
+      ],
+      actions: ["Add Redirect", "Generate Web Deploy", "Reset Web Deploy Password", "Remote IIS User"]
+    },
+    {
+      badge: "Users",
+      title: "Team Access",
+      description: "CP alias users and permission review before real cp_loginAlias writes are enabled.",
+      meta: [
+        ["Legacy Table", "cp_loginAlias"],
+        ["Alias Users", totals.aliases],
+        ["Permission Mode", "Review first"],
+        ["Static IPs", totals.staticIps]
+      ],
+      actions: ["Invite CP User", "Review Permissions", "Disable CP User", "Audit Access"]
+    }
+  ];
+}
+
+function simplifySitePath(path, cpLogin) {
+  const text = String(path ?? "").replace(/\\/g, "/");
+  if (!text) return "/";
+  const marker = cpLogin ? `/${cpLogin}/www` : "/www";
+  const markerIndex = text.toLowerCase().indexOf(marker.toLowerCase());
+  if (markerIndex >= 0) {
+    const trimmed = text.slice(markerIndex + marker.length).replace(/^\/+/, "");
+    return trimmed ? `/${trimmed}` : "/www";
+  }
+  return text;
+}
+
+function buildSecurityRows(mode, securityDashboard) {
+  if (!securityDashboard || !["cdn", "ssl"].includes(mode)) return [];
+
+  if (mode === "cdn") {
+    return [
+      {
+        title: "Cloudflare Account",
+        emptyText: "No Cloudflare account row found for this customer.",
+        rows: (securityDashboard.cloudflareAccounts ?? []).map((account) => ({
+          title: account.email || `Customer #${account.customerId}`,
+          subtitle: account.createDate ? formatDateTime(account.createDate) : "Cloudflare tenant",
+          status: account.status || "Cloudflare",
+          details: {
+            "Customer ID": String(account.customerId || ""),
+            Email: account.email || "-",
+            Status: account.status || "-",
+            Created: account.createDate ? formatDateTime(account.createDate) : "-"
+          }
+        }))
+      },
+      {
+        title: "CDN Domain Flags",
+        emptyText: "No mapped CDN domain rows found.",
+        rows: (securityDashboard.cdnDomains ?? []).filter((domain) => domain.cdn).slice(0, 12).map((domain) => ({
+          title: domain.domain,
+          subtitle: domain.siteName || "Mapped domain",
+          status: domain.cdn ? "CDN on" : "CDN off",
+          details: {
+            "Domain UID": String(domain.domainUid || ""),
+            Site: domain.siteName || "-",
+            Default: domain.isDefault ? "Yes" : "No",
+            CDN: domain.cdn ? "Enabled" : "Disabled"
+          }
+        }))
+      }
+    ];
+  }
+
+  return [
+    {
+      title: "SSL Orders",
+      emptyText: "No paid SSL order rows found.",
+      rows: (securityDashboard.sslOrders ?? []).map((order) => ({
+        title: order.commonName || `SSL #${order.id}`,
+        subtitle: order.email || "No approver email",
+        status: order.status || "SSL",
+        details: {
+          "Order ID": String(order.id || ""),
+          Years: order.buyYears || "Free/unknown",
+          Certificate: order.certificateId || "-",
+          Created: order.createDate ? formatDateTime(order.createDate) : "-"
+        }
+      }))
+    },
+    {
+      title: "Free SSL",
+      emptyText: "No Let's SSL rows found for this hosting plan.",
+      rows: (securityDashboard.freeSslRows ?? []).map((row) => ({
+        title: row.domain || `Free SSL #${row.id}`,
+        subtitle: row.lastUpdate ? `Updated ${formatDateTime(row.lastUpdate)}` : "Let's SSL",
+        status: row.status || "Free SSL",
+        details: {
+          "Row ID": String(row.id || ""),
+          Domain: row.domain || "-",
+          Created: row.createDate ? formatDateTime(row.createDate) : "-",
+          Updated: row.lastUpdate ? formatDateTime(row.lastUpdate) : "-"
+        }
+      }))
+    }
+  ];
+}
+
+function DomainServicesSection({ mode, cpId }) {
+  const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
+  const [sitesDashboard, setSitesDashboard] = useState(null);
+  const [securityDashboard, setSecurityDashboard] = useState(null);
+  const [isLoadingDomains, setIsLoadingDomains] = useState(true);
+  const [isLoadingSecurity, setIsLoadingSecurity] = useState(false);
+  const [domainError, setDomainError] = useState("");
+  const [securityError, setSecurityError] = useState("");
+  const [domainMessage, setDomainMessage] = useState("");
+  const [dnsDraft, setDnsDraft] = useState({
+    host: "@",
+    type: "A",
+    value: "208.98.35.146",
+    ttl: "3600",
+    priority: "10"
+  });
+
+  async function loadDomainServices() {
+    setIsLoadingDomains(true);
+    setDomainError("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/sites", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setDomainError(result?.message ?? "Unable to load domains.");
+        return;
+      }
+
+      setSitesDashboard(result.dashboard);
+    } catch {
+      setDomainError("Unable to reach domain inventory service.");
+    } finally {
+      setIsLoadingDomains(false);
+    }
+  }
+
+  useEffect(() => {
+    loadDomainServices();
+  }, [cpId]);
+
+  async function loadSecurityServices() {
+    if (!["cdn", "ssl"].includes(mode)) return;
+
+    setIsLoadingSecurity(true);
+    setSecurityError("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/security", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setSecurityError(result?.message ?? "Unable to load security inventory.");
+        return;
+      }
+
+      setSecurityDashboard(result.dashboard);
+    } catch {
+      setSecurityError("Unable to reach security inventory service.");
+    } finally {
+      setIsLoadingSecurity(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSecurityServices();
+  }, [cpId, mode]);
+
+  const domains = (sitesDashboard?.sites ?? []).flatMap((site) =>
+    (site.mappedDomains ?? []).map((domain) => ({
+      ...domain,
+      siteName: site.siteName || site.rootName || `site-${site.siteUid}`,
+      siteStatus: site.status,
+      runtime: site.version ? `.NET ${site.version}` : site.phpVersion ? `PHP ${site.phpVersion}` : "Website"
+    }))
+  );
+  const modeCopy = {
+    dns: {
+      title: "DNS",
+      label: "Live DNS",
+      description: "Mapped domains that can move into DNS record management once the DNS helper gateway is wired.",
+      actions: ["Preview Records", "Add A Record", "Add CNAME", "Add MX", "Import Zone", "Scan Records", "Publish DNS"],
+      statOne: "Domains",
+      statTwo: "Default Domains",
+      statThree: "Sites"
+    },
+    cdn: {
+      title: "CDN",
+      label: "Live CDN",
+      description: "Cloudflare/CDN readiness from mapped hosting domains. Purge and mode changes stay staged for the remote gateway pass.",
+      actions: ["Create Tenant", "Invite User", "Add Zone", "Enable CDN", "Disable CDN", "Purge Cache", "SSL Mode", "WWW Redirect"],
+      statOne: "Domains",
+      statTwo: "CDN Enabled",
+      statThree: "Sites"
+    },
+    ssl: {
+      title: "SSL",
+      label: "Live SSL",
+      description: "SSL binding inventory from mapped domains. Free SSL and certificate install flows are staged for the Namecheap/LetSSL pass.",
+      actions: ["Free SSL", "Import SSL", "Install Certificate", "Reinstall", "Approver Email", "Renew SSL", "Delete SSL"],
+      statOne: "Domains",
+      statTwo: "SSL Ready",
+      statThree: "Sites"
+    }
+  }[mode];
+  const enabledCount = mode === "cdn"
+    ? securityDashboard?.totals?.cdnEnabled ?? domains.filter((domain) => domain.cdn).length
+    : mode === "ssl"
+      ? securityDashboard?.totals?.sslOrders ?? domains.filter((domain) => domain.ssl).length
+      : domains.filter((domain) => domain.isDefault).length;
+  const uniqueSites = new Set(domains.map((domain) => domain.siteName)).size;
+  const securityRows = buildSecurityRows(mode, securityDashboard);
+  const domainJobs = (activity?.jobs ?? []).filter((job) =>
+    job.server === `${mode}-manager` ||
+    String(job.from ?? "").toLowerCase().startsWith(`${mode}:`)
+  );
+
+  async function queueDomainServiceTest(action, domain = null, details = "") {
+    setDomainMessage("");
+    try {
+      await createPanelTestActivity(cpId, {
+        from: domain ? `${mode}:${domain.label}` : `${mode}:${action}`,
+        to: domain ? domain.siteName : `/panel-test/${mode}`,
+        server: `${mode}-manager`,
+        note: details || `Safe ${mode.toUpperCase()} planning row for ${action}`
+      });
+      setDomainMessage(`${action} test activity created.`);
+      await reloadActivity();
+    } catch (error) {
+      setDomainMessage(error.message);
+    }
+  }
+
+  function submitDnsDraft(event) {
+    event.preventDefault();
+    const ttl = Math.max(300, Math.min(86400, Number(dnsDraft.ttl) || 3600));
+    const priorityNote = ["MX", "SRV"].includes(dnsDraft.type) ? `; priority ${dnsDraft.priority || "10"}` : "";
+    queueDomainServiceTest(
+      `${dnsDraft.type} Record`,
+      null,
+      `Safe DNS record draft: host ${dnsDraft.host || "@"}; type ${dnsDraft.type}; value ${dnsDraft.value}; ttl ${ttl}${priorityNote}`
+    );
+  }
+
+  function refreshDomainServiceSection() {
+    loadDomainServices();
+    loadSecurityServices();
+    reloadActivity();
+  }
+
+  return (
+    <section className="cp-inventory-section">
+      <article className="panel-card cp-inventory-summary">
+        <div>
+          <span className="status-pill blue">{modeCopy.label}</span>
+          <h2>{sitesDashboard?.cpLogin || `${modeCopy.title} Manager`}</h2>
+          <p>{modeCopy.description}</p>
+        </div>
+        <div className="database-total-grid">
+          <div><span>{modeCopy.statOne}</span><strong>{domains.length}</strong></div>
+          <div><span>{modeCopy.statTwo}</span><strong>{enabledCount}</strong></div>
+          <div><span>{modeCopy.statThree}</span><strong>{uniqueSites}</strong></div>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={refreshDomainServiceSection}>Refresh</button>
+      </article>
+
+      <div className="database-toolbar panel-card">
+        <div className="database-actions">
+          {modeCopy.actions.map((action, index) => (
+            <button className={index === 0 ? "primary-button compact" : "secondary-button compact"} type="button" key={action} onClick={() => queueDomainServiceTest(action)}>
+              {action}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode === "dns" && (
+        <article className="panel-card dns-record-draft-card">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill blue">DNS Draft</span>
+              <h3>Record Editor</h3>
+              <p>Stages DNS record values for the rebuilt DNS action flow without publishing provider changes.</p>
+            </div>
+            <MenuIcon name="dns" />
+          </div>
+          <form className="advance-inline-form" onSubmit={submitDnsDraft}>
+            <label>
+              Host
+              <input value={dnsDraft.host} onChange={(event) => setDnsDraft((draft) => ({ ...draft, host: event.target.value }))} />
+            </label>
+            <label>
+              Type
+              <select value={dnsDraft.type} onChange={(event) => setDnsDraft((draft) => ({ ...draft, type: event.target.value }))}>
+                <option value="A">A</option>
+                <option value="AAAA">AAAA</option>
+                <option value="CNAME">CNAME</option>
+                <option value="MX">MX</option>
+                <option value="TXT">TXT</option>
+                <option value="SRV">SRV</option>
+              </select>
+            </label>
+            <label>
+              Value
+              <input value={dnsDraft.value} onChange={(event) => setDnsDraft((draft) => ({ ...draft, value: event.target.value }))} />
+            </label>
+            <label>
+              TTL
+              <input type="number" min="300" max="86400" value={dnsDraft.ttl} onChange={(event) => setDnsDraft((draft) => ({ ...draft, ttl: event.target.value }))} />
+            </label>
+            {["MX", "SRV"].includes(dnsDraft.type) && (
+              <label>
+                Priority
+                <input type="number" min="0" max="100" value={dnsDraft.priority} onChange={(event) => setDnsDraft((draft) => ({ ...draft, priority: event.target.value }))} />
+              </label>
+            )}
+            <button className="primary-button compact" type="submit">Stage Record</button>
+          </form>
+        </article>
+      )}
+
+      {isLoadingDomains && <p className="empty-state">Loading mapped domains from cp_config_Domains...</p>}
+      {isLoadingSecurity && <p className="empty-state">Loading {mode.toUpperCase()} legacy inventory...</p>}
+      {domainMessage && <p className="sandbox-message">{domainMessage}</p>}
+      {securityError && <p className="inline-status">{securityError}</p>}
+      {domainError && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{domainError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadDomainServices}>Retry</button>
+        </div>
+      )}
+      {!isLoadingDomains && !domainError && !domains.length && (
+        <div className="panel-card cp-placeholder">
+          <span className="status-pill muted">No domains</span>
+          <h2>No mapped domains found</h2>
+          <p>This hosting account does not have visible mapped domain rows.</p>
+        </div>
+      )}
+      {!!securityDashboard?.warnings?.length && (
+        <div className="runtime-warning-list">
+          {securityDashboard.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+        </div>
+      )}
+      {securityRows.map((section) => (
+        <RuntimeRows key={section.title} title={section.title} rows={section.rows} emptyText={section.emptyText} />
+      ))}
+
+      {!!domains.length && (
+        <div className="domain-service-grid">
+          {domains.map((domain) => (
+            <article className="panel-card domain-service-card" key={`${mode}-${domain.domainUid}-${domain.label}`}>
+              <div className="database-card-header">
+                <div>
+                  <span className={domain.ssl ? "status-pill" : "status-pill muted"}>
+                    {mode === "cdn" ? (domain.cdn ? "CDN on" : "CDN off") : mode === "ssl" ? (domain.ssl ? "SSL ready" : "SSL pending") : (domain.isDefault ? "Default" : "Mapped")}
+                  </span>
+                  <h3>{domain.label}</h3>
+                  <p>{domain.siteName} · {domain.runtime}</p>
+                </div>
+                <MenuIcon name={mode} />
+              </div>
+              <dl className="card-meta single">
+                <div><dt>URL</dt><dd>{domain.url}</dd></div>
+                <div><dt>Website Status</dt><dd>{domain.siteStatus}</dd></div>
+                <div><dt>CDN</dt><dd>{domain.cdn ? "Enabled" : "Not enabled"}</dd></div>
+                <div><dt>SSL</dt><dd>{domain.ssl ? "Enabled" : "Pending"}</dd></div>
+              </dl>
+              <div className="database-action-row">
+                {modeCopy.actions.slice(0, 3).map((action) => (
+                  <button className="secondary-button compact" type="button" key={action} onClick={() => queueDomainServiceTest(action, domain)}>{action}</button>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      <ActivityList jobs={domainJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle={`No recent ${mode.toUpperCase()} jobs`} onRetry={reloadActivity} />
+    </section>
   );
 }
 
@@ -1514,7 +4196,7 @@ function DashboardSection({ activeSection, dashboard, dashboardError, isDashboar
   if (activeSection === "vpn") return <VpnSection />;
   if (activeSection === "addon") return <AddonSection />;
   if (activeSection === "affiliate") return <AffiliateSection />;
-  if (activeSection === "billing") return <BillingSection />;
+  if (activeSection === "billing") return <BillingSection onChangeSection={onChangeSection} />;
   if (activeSection === "settings") return <SettingsSection />;
   if (activeSection === "new-order") return <NewOrderSection onChangeSection={onChangeSection} />;
   return (
@@ -1524,6 +4206,7 @@ function DashboardSection({ activeSection, dashboard, dashboardError, isDashboar
       isDashboardLoading={isDashboardLoading}
       onManageHosting={onManageHosting}
       onShowAffiliate={() => onChangeSection("affiliate")}
+      onOpenNewOrder={() => onChangeSection("new-order")}
       onReloadDashboard={onReloadDashboard}
     />
   );
@@ -1800,7 +4483,7 @@ function NewOrderSection({ onChangeSection }) {
   );
 }
 
-function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManageHosting, onReloadDashboard, onShowAffiliate }) {
+function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManageHosting, onReloadDashboard, onShowAffiliate, onOpenNewOrder }) {
   const accounts = dashboard?.hostingAccounts?.length ? dashboard.hostingAccounts : [];
   const notices = dashboard?.renewalNotices?.length ? dashboard.renewalNotices : [];
   const urgentLogs = dashboard?.urgentLogs ?? [];
@@ -1987,7 +4670,23 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
               <div><dt>Total Sites</dt><dd>{account.totalSites}</dd></div>
               <div><dt>Server</dt><dd>{account.serverId}</dd></div>
             </dl>
-            <button className="secondary-button" type="button" onClick={onManageHosting}>Manage</button>
+            <div className="hosting-card-actions">
+              <button className="secondary-button" type="button" onClick={onManageHosting}>Manage</button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={!account.clientProductId || renewalBusyId !== null}
+                onClick={() => loadHostingRenewalPreview({
+                  clientProductId: account.clientProductId,
+                  name: account.cpLogin
+                })}
+              >
+                {renewalBusyId === account.clientProductId ? "Checking..." : "Renew"}
+              </button>
+              <button className="primary-button" type="button" onClick={onOpenNewOrder}>
+                Upgrade
+              </button>
+            </div>
           </article>
         ))}
       </div>
@@ -2021,6 +4720,14 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function cleanLegacyText(value) {
+  return String(value ?? "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function toCheckoutPreview(order, itemCount = 1) {
@@ -2086,6 +4793,7 @@ function DomainSection() {
   const [isDomainSearching, setIsDomainSearching] = useState(false);
   const [isDomainCheckingOut, setIsDomainCheckingOut] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState(null);
+  const [domainServiceStatus, setDomainServiceStatus] = useState(null);
   const [domainRenewalPreview, setDomainRenewalPreview] = useState(null);
   const [domainActionMessage, setDomainActionMessage] = useState("");
   const [domainDnsPreview, setDomainDnsPreview] = useState([]);
@@ -2118,7 +4826,20 @@ function DomainSection() {
 
   useEffect(() => {
     loadAccountDomains();
+    loadDomainServiceStatus();
   }, []);
+
+  async function loadDomainServiceStatus() {
+    try {
+      const response = await fetch("/api/account/service-status");
+      const result = await response.json();
+      if (response.ok && result.success) {
+        setDomainServiceStatus(result.services);
+      }
+    } catch {
+      setDomainServiceStatus(null);
+    }
+  }
 
   const filteredDomains = accountDomains.filter((domain) =>
     domain.domainName.toLowerCase().includes(domainSearch.trim().toLowerCase())
@@ -2339,6 +5060,123 @@ function DomainSection() {
     setDomainDnsPreview([]);
   }
 
+  function updateNameserverAt(index, value) {
+    const nameservers = domainRegistrarForm.value
+      .split(/[,\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    while (nameservers.length < 5) {
+      nameservers.push("");
+    }
+    nameservers[index] = value.trim();
+    setDomainRegistrarForm((form) => ({
+      ...form,
+      value: nameservers.filter(Boolean).join(", ")
+    }));
+  }
+
+  function getContactValue(key) {
+    const line = domainRegistrarForm.value
+      .split("\n")
+      .find((item) => item.toLowerCase().startsWith(`${key.toLowerCase()}=`));
+    return line ? line.slice(line.indexOf("=") + 1) : "";
+  }
+
+  function updateContactValue(key, value) {
+    const fields = new Map();
+    domainRegistrarForm.value.split("\n").forEach((line) => {
+      const separator = line.indexOf("=");
+      if (separator > -1) {
+        fields.set(line.slice(0, separator), line.slice(separator + 1));
+      }
+    });
+    fields.set(key, value);
+    const order = ["first_name", "last_name", "org_name", "address1", "address2", "address3", "city", "state", "postal_code", "country", "phone", "fax", "email", "url"];
+    setDomainRegistrarForm((form) => ({
+      ...form,
+      value: order.map((field) => `${field}=${fields.get(field) ?? ""}`).join("\n")
+    }));
+  }
+
+  function renderDomainRegistrarFields() {
+    const action = domainRegistrarForm.action;
+    if (["status", "auth-code", "lock", "unlock", "privacy-on", "privacy-off", "auto-renew-on", "auto-renew-off"].includes(action)) {
+      return null;
+    }
+
+    if (action === "nameservers") {
+      const nameservers = domainRegistrarForm.value.split(/[,\n]/).map((item) => item.trim());
+      return (
+        <div className="domain-field-grid">
+          {[0, 1, 2, 3, 4].map((index) => (
+            <label key={index}>
+              {index < 2 ? `Nameserver ${index + 1}` : `Nameserver ${index + 1} optional`}
+              <input
+                type="text"
+                value={nameservers[index] ?? ""}
+                onChange={(event) => updateNameserverAt(index, event.target.value)}
+              />
+            </label>
+          ))}
+        </div>
+      );
+    }
+
+    if (action === "contact") {
+      const fields = [
+        ["first_name", "First Name"],
+        ["last_name", "Last Name"],
+        ["org_name", "Organization"],
+        ["email", "Email"],
+        ["phone", "Phone"],
+        ["address1", "Address 1"],
+        ["address2", "Address 2"],
+        ["city", "City"],
+        ["state", "State"],
+        ["postal_code", "Postal Code"],
+        ["country", "Country"],
+        ["url", "URL"]
+      ];
+      return (
+        <div className="domain-field-grid">
+          {fields.map(([key, label]) => (
+            <label key={key}>
+              {label}
+              <input
+                type={key === "email" ? "email" : "text"}
+                value={getContactValue(key)}
+                onChange={(event) => updateContactValue(key, event.target.value)}
+              />
+            </label>
+          ))}
+        </div>
+      );
+    }
+
+    if (action === "forwarding") {
+      return (
+        <label>
+          Forwarding Email
+          <input
+            type="email"
+            value={domainRegistrarForm.value}
+            onChange={(event) => setDomainRegistrarForm((form) => ({ ...form, value: event.target.value }))}
+          />
+        </label>
+      );
+    }
+
+    return (
+      <label>
+        DNS Records
+        <textarea
+          value={domainRegistrarForm.value}
+          onChange={(event) => setDomainRegistrarForm((form) => ({ ...form, value: event.target.value }))}
+        />
+      </label>
+    );
+  }
+
   return (
     <section className="domain-section">
       <article className="panel-card domain-search-panel">
@@ -2346,6 +5184,14 @@ function DomainSection() {
           <div>
             <h2>Search and Buy New Domain Name</h2>
           </div>
+          {domainServiceStatus?.openSrs && (
+            <span
+              className={domainServiceStatus.openSrs.configured ? "service-status-pill live" : "service-status-pill pending"}
+              title={domainServiceStatus.openSrs.message}
+            >
+              {domainServiceStatus.openSrs.state}
+            </span>
+          )}
         </div>
         <form className="search-row" onSubmit={handleDomainSearch}>
           <input
@@ -2486,6 +5332,19 @@ function DomainSection() {
           </div>
           <button className="secondary-button compact" type="button" onClick={loadAccountDomains}>Refresh</button>
         </div>
+        {domainServiceStatus && (
+          <div className="service-status-grid">
+            {[domainServiceStatus.openSrs, domainServiceStatus.dns].map((service) => (
+              <div className="service-status-card" key={service.name}>
+                <div>
+                  <span>{service.name}</span>
+                  <strong>{service.state}</strong>
+                </div>
+                <p>{service.message}</p>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="search-row compact-search">
           <input
             type="search"
@@ -2585,15 +5444,7 @@ function DomainSection() {
                   <option value="dns">Update DNS</option>
                 </select>
               </label>
-              {domainRegistrarForm.action !== "status" && domainRegistrarForm.action !== "auth-code" && domainRegistrarForm.action !== "lock" && domainRegistrarForm.action !== "unlock" && domainRegistrarForm.action !== "privacy-on" && domainRegistrarForm.action !== "privacy-off" && domainRegistrarForm.action !== "auto-renew-on" && domainRegistrarForm.action !== "auto-renew-off" && (
-                <label>
-                  {domainRegistrarForm.action === "dns" ? "DNS Records" : domainRegistrarForm.action === "forwarding" ? "Forwarding Email" : "Detail"}
-                  <textarea
-                    value={domainRegistrarForm.value}
-                    onChange={(event) => setDomainRegistrarForm((form) => ({ ...form, value: event.target.value }))}
-                  />
-                </label>
-              )}
+              {renderDomainRegistrarFields()}
               <button className="secondary-button" type="submit" disabled={isDomainActionBusy}>
                 {isDomainActionBusy ? "Working..." : "Run Action"}
               </button>
@@ -2993,6 +5844,7 @@ function AddonSection() {
 
   const catalog = addonDashboard?.catalog ?? [];
   const activeAddons = addonDashboard?.activeAddons ?? [];
+  const addonHostingAccounts = addonDashboard?.hostingAccounts ?? [];
   const categories = ["All", ...Array.from(new Set(catalog.map((product) => product.category))).sort()];
   const visibleCatalog = catalog.filter((product) => {
     const matchesCategory = activeCategory === "All" || product.category === activeCategory;
@@ -3005,7 +5857,8 @@ function AddonSection() {
     const selected = addonSelections[addon.productId] ?? {};
     return {
       priceId: selected.priceId ?? addon.prices[0]?.priceId,
-      quantity: selected.quantity ?? 1
+      quantity: selected.quantity ?? 1,
+      cpId: selected.cpId ?? addonHostingAccounts[0]?.cpId ?? ""
     };
   }
 
@@ -3024,17 +5877,29 @@ function AddonSection() {
     const price = addon.prices.find((item) => item.priceId === Number(selection.priceId)) ?? addon.prices[0];
     if (!price) return;
     const quantity = Math.max(1, Math.min(99, Number(selection.quantity) || 1));
+    const cpId = Number(selection.cpId) || 0;
+    const hostingAccount = addonHostingAccounts.find((account) => Number(account.cpId) === cpId);
     setAddonCart((items) => {
-      const existing = items.find((item) => item.productId === addon.productId && item.priceId === price.priceId);
+      const existing = items.find((item) => item.productId === addon.productId && item.priceId === price.priceId && item.cpId === cpId);
       if (existing) {
         return items.map((item) => item === existing ? { ...item, qty: Math.min(99, item.qty + quantity) } : item);
       }
-      return [...items, { productId: addon.productId, priceId: price.priceId, name: addon.name, term: price.paymentTerm, amount: price.amount, currency: price.currency, qty: quantity }];
+      return [...items, {
+        productId: addon.productId,
+        priceId: price.priceId,
+        cpId,
+        cpLabel: hostingAccount?.cpLogin ?? "No hosting target",
+        name: addon.name,
+        term: price.paymentTerm,
+        amount: price.amount,
+        currency: price.currency,
+        qty: quantity
+      }];
     });
   }
 
-  function removeAddonFromCart(productId, priceId) {
-    setAddonCart((items) => items.filter((item) => item.productId !== productId || item.priceId !== priceId));
+  function removeAddonFromCart(productId, priceId, cpId) {
+    setAddonCart((items) => items.filter((item) => item.productId !== productId || item.priceId !== priceId || item.cpId !== cpId));
   }
 
   async function checkoutAddons() {
@@ -3046,7 +5911,7 @@ function AddonSection() {
       const response = await fetch("/api/account/addons/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: addonCart.map((item) => ({ productId: item.productId, priceId: item.priceId, quantity: item.qty })) })
+        body: JSON.stringify({ items: addonCart.map((item) => ({ productId: item.productId, priceId: item.priceId, quantity: item.qty, cpId: item.cpId })) })
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.success) {
@@ -3094,6 +5959,14 @@ function AddonSection() {
     }
 
     return result.order;
+  }
+
+  function findMatchingAddons(addon) {
+    const category = addon.productType || "All";
+    setActiveCategory(categories.includes(category) ? category : "All");
+    setAddonSearch(addon.name.split(/\s+/).slice(0, 2).join(" "));
+    setSelectedAddon(null);
+    setAddonActionMessage("");
   }
 
   const addonCartTotal = addonCart.reduce((total, item) => total + (Number(item.amount) * item.qty), 0);
@@ -3144,7 +6017,7 @@ function AddonSection() {
         )}
         {!!visibleCatalog.length && (
           <DataTable
-            columns={["Product Name", "Description", "Billing Terms", "Qty", "Action"]}
+            columns={["Product Name", "Description", "Billing Terms", "Apply To", "Qty", "Action"]}
             rows={visibleCatalog.map((addon) => {
               const selection = getAddonSelection(addon);
               return [
@@ -3161,6 +6034,19 @@ function AddonSection() {
                       {formatPaymentTerm(price.paymentTerm)} {formatMoney(price.amount, price.currency)}
                     </option>
                   )) : <option value="">No price available</option>}
+                </select>,
+                <select
+                  className="inline-select"
+                  aria-label={`${addon.name} target hosting account`}
+                  value={selection.cpId}
+                  onChange={(event) => updateAddonSelection(addon.productId, { cpId: event.target.value })}
+                >
+                  <option value="">No hosting target</option>
+                  {addonHostingAccounts.map((account) => (
+                    <option key={account.cpId} value={account.cpId}>
+                      {account.cpLogin || account.primaryDomain || `CP ${account.cpId}`}
+                    </option>
+                  ))}
                 </select>,
                 <input
                   className="qty-input"
@@ -3183,9 +6069,9 @@ function AddonSection() {
               <strong>{formatMoney(addonCartTotal)}</strong>
             </div>
             {addonCart.map((item) => (
-              <div className="domain-cart-item" key={`${item.productId}-${item.priceId}`}>
-                <span>{item.name} · {formatPaymentTerm(item.term)} · Qty {item.qty}</span>
-                <button className="ghost-button compact" type="button" onClick={() => removeAddonFromCart(item.productId, item.priceId)}>Remove</button>
+              <div className="domain-cart-item" key={`${item.productId}-${item.priceId}-${item.cpId}`}>
+                <span>{item.name} · {formatPaymentTerm(item.term)} · {item.cpLabel} · Qty {item.qty}</span>
+                <button className="ghost-button compact" type="button" onClick={() => removeAddonFromCart(item.productId, item.priceId, item.cpId)}>Remove</button>
               </div>
             ))}
             <button className="primary-button" type="button" disabled={isAddonCheckingOut} onClick={checkoutAddons}>
@@ -3240,8 +6126,8 @@ function AddonSection() {
               <button className="primary-button" type="button" disabled={isAddonActionBusy} onClick={renewSelectedAddon}>
                 {isAddonActionBusy ? "Checking..." : "Renew Add-On"}
               </button>
-              <button className="secondary-button" type="button" onClick={() => setAddonActionMessage("Provisioning changes for this add-on will be handled inside the hosting control panel after payment.")}>
-                Provisioning Notes
+              <button className="secondary-button" type="button" onClick={() => findMatchingAddons(selectedAddon)}>
+                Find Matching Add-Ons
               </button>
             </div>
             {addonActionMessage && <p className="renewal-action-message">{addonActionMessage}</p>}
@@ -3259,7 +6145,7 @@ function AddonSection() {
   );
 }
 
-function BillingSection() {
+function BillingSection({ onChangeSection }) {
   const billingTabsLive = [
     ["purchases", "My Purchases"],
     ["active", "Current Active Products"],
@@ -3336,6 +6222,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
   const [selectedPurchase, setSelectedPurchase] = useState(null);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [renewalPreview, setRenewalPreview] = useState(null);
+  const [selectedRenewalCheckoutPreview, setSelectedRenewalCheckoutPreview] = useState(null);
   const [renewalMessage, setRenewalMessage] = useState("");
   const [renewalBusyId, setRenewalBusyId] = useState(null);
   const [invoiceMessage, setInvoiceMessage] = useState("");
@@ -3348,6 +6235,8 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
   const [transferPreview, setTransferPreview] = useState(null);
   const [isBalanceActionBusy, setIsBalanceActionBusy] = useState(false);
   const [productActionMessage, setProductActionMessage] = useState("");
+  const [selectedRenewalIds, setSelectedRenewalIds] = useState([]);
+  const creditTransactions = billing?.creditTransactions ?? [];
 
   async function loadInvoice(purchase) {
     setInvoiceBusyId(purchase.orderId);
@@ -3373,6 +6262,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
   async function runRenewalAction(product, action) {
     setRenewalBusyId(`${action}-${product.clientProductId}`);
     setRenewalMessage("");
+    setSelectedRenewalCheckoutPreview(null);
 
     try {
       const response = await fetch(`/api/account/renewals/${product.clientProductId}/${action}`, { method: "POST" });
@@ -3461,6 +6351,65 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
     }
   }
 
+  function toggleRenewalSelection(clientProductId) {
+    setSelectedRenewalIds((selected) =>
+      selected.includes(clientProductId)
+        ? selected.filter((id) => id !== clientProductId)
+        : [...selected, clientProductId]
+    );
+  }
+
+  function toggleAllRenewals(renewals) {
+    const renewalIds = renewals.map((product) => product.clientProductId);
+    setSelectedRenewalIds((selected) =>
+      renewalIds.every((id) => selected.includes(id)) ? [] : renewalIds
+    );
+  }
+
+  async function createSelectedRenewalCheckout() {
+    if (!selectedRenewalIds.length) return;
+    setRenewalBusyId("many");
+    setRenewalMessage("");
+    setRenewalPreview(null);
+    setSelectedRenewalCheckoutPreview(null);
+
+    try {
+      const response = await fetch("/api/account/renewals/checkout-many", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientProductIds: selectedRenewalIds })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setRenewalMessage(result?.message ?? "Unable to create selected renewal checkout.");
+        return;
+      }
+
+      setRenewalMessage(result.message);
+      setSelectedRenewalCheckoutPreview(toCheckoutPreview(result.order, selectedRenewalIds.length));
+    } catch {
+      setRenewalMessage("Unable to reach selected renewal checkout service.");
+    } finally {
+      setRenewalBusyId(null);
+    }
+  }
+
+  function getProductManageTarget(product) {
+    const text = `${product.name ?? ""} ${product.description ?? ""} ${product.productType ?? ""}`.toLowerCase();
+    if (text.includes("domain")) return "domain";
+    if (text.includes("vpn")) return "vpn";
+    if (text.includes("ssl") || text.includes("addon") || text.includes("add-on") || text.includes("backup") || text.includes("ram") || text.includes("quota")) return "addon";
+    if (text.includes("hosting") || text.startsWith("w") || text.includes("asp.net")) return "hosting";
+    return "new-order";
+  }
+
+  function manageProduct(product) {
+    const target = getProductManageTarget(product);
+    setSelectedProduct(null);
+    setProductActionMessage("");
+    onChangeSection?.(target);
+  }
+
   if (activeTab === "balance") {
     return (
       <div className="billing-balance-layout">
@@ -3471,7 +6420,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
         </div>
         <div className="billing-action-card">
           <h3>Add Funds</h3>
-          <p>Deposit money into the account balance or validate a credit transfer to another account.</p>
+          <p>Deposit money into the account balance or check whether a credit transfer can be made to another account.</p>
           <div className="balance-action-grid">
             <label>
               Deposit Amount
@@ -3489,7 +6438,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
               <input type="number" min="1" step="0.01" value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} />
             </label>
             <button className="secondary-button" type="button" disabled={isBalanceActionBusy || !transferTarget.trim()} onClick={checkTransferCredit}>
-              {isBalanceActionBusy ? "Checking..." : "Transfer Credit"}
+              {isBalanceActionBusy ? "Checking..." : "Check Transfer"}
             </button>
           </div>
           {balanceActionMessage && <p className="renewal-action-message">{balanceActionMessage}</p>}
@@ -3506,6 +6455,57 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
                 <div><dt>Available Balance</dt><dd>{formatMoney(transferPreview.availableBalance)}</dd></div>
               </dl>
             </div>
+          )}
+        </div>
+        <div className="billing-action-card alternate-deposit-card">
+          <h3>Other Deposit Methods</h3>
+          <p>For bank transfer, USDT, or other manual deposits, send the payment details to helpdesk after payment so support can credit the account.</p>
+          <div className="alternate-deposit-grid">
+            <section>
+              <span>Bank Transfer</span>
+              <dl>
+                <div><dt>Account Name</dt><dd>Smarterasp Limited</dd></div>
+                <div><dt>Account No.</dt><dd>862019599099</dd></div>
+                <div><dt>Bank</dt><dd>ZA Bank Limited</dd></div>
+                <div><dt>SWIFT</dt><dd>AABLHKHH</dd></div>
+                <div><dt>Bank Code</dt><dd>387</dd></div>
+                <div><dt>Branch No.</dt><dd>747</dd></div>
+              </dl>
+              <p>Bank wire processing fee is $30. Include the fee with the transfer.</p>
+            </section>
+            <section>
+              <span>USDT Transfer</span>
+              <dl>
+                <div><dt>Wallet</dt><dd>0x59e731952884d0327ad9afc3a70c0b8bd52b2cc0</dd></div>
+                <div><dt>Networks</dt><dd>BNB Smart Chain (BEP20), Ethereum (ERC20)</dd></div>
+              </dl>
+              <p>Cover network fees on your end before sending the payment detail to helpdesk.</p>
+            </section>
+          </div>
+        </div>
+        <div className="billing-action-card credit-history-card">
+          <div className="billing-header compact">
+            <div>
+              <span className="status-pill">Ledger</span>
+              <h3>Credit Transactions</h3>
+            </div>
+            <span className="muted-count">{creditTransactions.length} rows</span>
+          </div>
+          {creditTransactions.length ? (
+            <DataTable
+              columns={["Date", "Description", "Method", "Amount", "Status"]}
+              rows={creditTransactions.map((transaction) => [
+                formatDateTime(transaction.createdAt),
+                cleanLegacyText(transaction.description || transaction.name || `Product #${transaction.productId}`),
+                transaction.paymentMethod,
+                <span className={Number(transaction.ledgerAmount) >= 0 ? "credit-amount positive" : "credit-amount negative"}>
+                  {formatMoney(transaction.ledgerAmount)}
+                </span>,
+                <span className="status-pill muted">{transaction.orderStatus}</span>
+              ])}
+            />
+          ) : (
+            <p className="empty-state">No credit ledger transactions found.</p>
           )}
         </div>
         <KnowledgeBaseCard title="Billing Guides" articles={billingKbArticles} />
@@ -3533,7 +6533,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
           <BillingProductDetail
             product={selectedProduct}
             onClose={() => setSelectedProduct(null)}
-            onManage={() => setProductActionMessage("Product management bridge pending. Use hosting/add-on/domain sections for live read-only detail for now.")}
+            onManage={() => manageProduct(selectedProduct)}
             onRenew={() => runRenewalAction(selectedProduct, "renew")}
           />
         )}
@@ -3547,10 +6547,34 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
     const renewals = billing?.renewalNotices ?? [];
     return renewals.length ? (
       <div className="billing-detail-layout">
+        <div className="renewal-bulk-bar">
+          <label>
+            <input
+              type="checkbox"
+              checked={renewals.every((product) => selectedRenewalIds.includes(product.clientProductId))}
+              onChange={() => toggleAllRenewals(renewals)}
+            />
+            <span>{selectedRenewalIds.length ? `${selectedRenewalIds.length} selected` : "Select all"}</span>
+          </label>
+          <button
+            className="primary-button compact"
+            type="button"
+            disabled={!selectedRenewalIds.length || renewalBusyId !== null}
+            onClick={createSelectedRenewalCheckout}
+          >
+            {renewalBusyId === "many" ? "Creating..." : "Renew Selected"}
+          </button>
+        </div>
         {renewalMessage && <p className="renewal-action-message">{renewalMessage}</p>}
         <DataTable
-          columns={["Product", "Due Date", "Days Left", "Status", "Action"]}
+          columns={["Select", "Product", "Due Date", "Days Left", "Status", "Action"]}
           rows={renewals.map((product) => [
+            <input
+              aria-label={`Select ${product.name}`}
+              checked={selectedRenewalIds.includes(product.clientProductId)}
+              type="checkbox"
+              onChange={() => toggleRenewalSelection(product.clientProductId)}
+            />,
             product.name,
             formatDate(product.nextDueDate),
             product.daysLeft ?? "N/A",
@@ -3575,33 +6599,73 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
             </div>
           ])}
         />
+        {selectedRenewalCheckoutPreview && (
+          <CheckoutPreviewCard preview={selectedRenewalCheckoutPreview} onClose={() => setSelectedRenewalCheckoutPreview(null)} />
+        )}
         {renewalPreview && <RenewalCheckoutPreview renewal={renewalPreview} onClose={() => setRenewalPreview(null)} onCheckout={createBillingRenewalCheckout} />}
       </div>
     ) : <p className="empty-state">No renewal notices found.</p>;
   }
 
   const purchases = billing?.purchases ?? [];
-  return purchases.length ? (
+  const pendingCheckouts = billing?.pendingCheckouts ?? [];
+  const pendingRenewCheckouts = billing?.pendingRenewCheckouts ?? [];
+  return purchases.length || pendingCheckouts.length || pendingRenewCheckouts.length ? (
     <div className="billing-detail-layout">
+      {!!(pendingCheckouts.length || pendingRenewCheckouts.length) && (
+        <section className="pending-checkout-panel">
+          <div className="billing-detail-header">
+            <div>
+              <span className="status-pill blue">Checkout Recovery</span>
+              <h3>Pending Checkouts</h3>
+            </div>
+          </div>
+          <DataTable
+            columns={["Created", "Product", "Total", "Payment", "Fulfillment", "Action"]}
+            rows={[
+              ...pendingCheckouts.map((checkout) => [
+                formatDate(checkout.addDate),
+                checkout.productName,
+                formatMoney(checkout.amount),
+                <span className={checkout.isPaid ? "status-pill" : "status-pill muted"}>{checkout.isPaid ? "Paid" : "Unpaid"}</span>,
+                <span className={checkout.processed ? "status-pill" : "status-pill muted"}>{checkout.processed ? "Processed" : "Waiting"}</span>,
+                <a className="secondary-button compact as-link" href={`/checkout?guid=${encodeURIComponent(checkout.id)}`}>Open</a>
+              ]),
+              ...pendingRenewCheckouts.map((checkout) => [
+                formatDate(checkout.addDate),
+                "Multiple Renewal",
+                formatMoney(checkout.amount),
+                <span className={checkout.isPaid ? "status-pill" : "status-pill muted"}>{checkout.isPaid ? "Paid" : "Unpaid"}</span>,
+                <span className={checkout.isProcessed ? "status-pill" : "status-pill muted"}>{checkout.isProcessed ? "Processed" : "Waiting"}</span>,
+                <a className="secondary-button compact as-link" href={`/checkout/renew?guid=${encodeURIComponent(checkout.id)}`}>Open</a>
+              ])
+            ]}
+          />
+        </section>
+      )}
       {invoiceMessage && <p className="renewal-action-message">{invoiceMessage}</p>}
-      <DataTable
-        columns={["Date", "Product", "Term", "Amount", "Status", "Action"]}
-        rows={purchases.map((purchase) => [
-          formatDate(purchase.createDate),
-          purchase.name,
-          purchase.paymentTerm,
-          formatMoney(purchase.amount),
-          <span className={purchase.paymentStatus === "completed" ? "status-pill" : "status-pill muted"}>{purchase.paymentStatus}</span>,
-          <button
-            className="secondary-button compact"
-            type="button"
-            disabled={invoiceBusyId !== null}
-            onClick={() => loadInvoice(purchase)}
-          >
-            {invoiceBusyId === purchase.orderId ? "Loading..." : "Invoice"}
-          </button>
-        ])}
-      />
+      {purchases.length ? (
+        <DataTable
+          columns={["Date", "Product", "Term", "Amount", "Status", "Action"]}
+          rows={purchases.map((purchase) => [
+            formatDate(purchase.createDate),
+            purchase.name,
+            purchase.paymentTerm,
+            formatMoney(purchase.amount),
+            <span className={purchase.paymentStatus === "completed" ? "status-pill" : "status-pill muted"}>{purchase.paymentStatus}</span>,
+            <button
+              className="secondary-button compact"
+              type="button"
+              disabled={invoiceBusyId !== null}
+              onClick={() => loadInvoice(purchase)}
+            >
+              {invoiceBusyId === purchase.orderId ? "Loading..." : "Invoice"}
+            </button>
+          ])}
+        />
+      ) : (
+        <p className="empty-state">No completed purchases found.</p>
+      )}
       {selectedPurchase && <BillingPurchaseDetail purchase={selectedPurchase} onClose={() => setSelectedPurchase(null)} />}
     </div>
   ) : <p className="empty-state">No purchases found.</p>;
@@ -3823,6 +6887,9 @@ function SettingsSection() {
   });
   const [profileMessage, setProfileMessage] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [emailChange, setEmailChange] = useState("");
+  const [emailChangeMessage, setEmailChangeMessage] = useState("");
+  const [isRequestingEmailChange, setIsRequestingEmailChange] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
     newPassword: "",
@@ -3830,6 +6897,8 @@ function SettingsSection() {
   });
   const [passwordMessage, setPasswordMessage] = useState("");
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [twoFactorMessage, setTwoFactorMessage] = useState("");
+  const [isUpdatingTwoFactor, setIsUpdatingTwoFactor] = useState(false);
 
   async function loadSettings() {
     setIsLoadingSettings(true);
@@ -3908,6 +6977,51 @@ function SettingsSection() {
     } finally {
       setIsChangingPassword(false);
     }
+  }
+
+  async function requestEmailChange(event) {
+    event.preventDefault();
+    setIsRequestingEmailChange(true);
+    setEmailChangeMessage("");
+
+    try {
+      const response = await fetch("/api/account/settings/email-change", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailChange })
+      });
+      const result = await response.json().catch(() => null);
+      setEmailChangeMessage(result?.message ?? "Unable to create email verification request.");
+      if (response.ok && result?.success) {
+        setEmailChange("");
+      }
+    } catch {
+      setEmailChangeMessage("Unable to reach email verification service.");
+    } finally {
+      setIsRequestingEmailChange(false);
+    }
+  }
+
+  async function disableTwoFactor() {
+    setIsUpdatingTwoFactor(true);
+    setTwoFactorMessage("");
+
+    try {
+      const response = await fetch("/api/account/settings/2fa/disable", { method: "POST" });
+      const result = await response.json().catch(() => null);
+      setTwoFactorMessage(result?.message ?? "Unable to update two-factor authentication.");
+      if (response.ok && result?.success) {
+        setSettings(result.dashboard);
+      }
+    } catch {
+      setTwoFactorMessage("Unable to reach two-factor authentication service.");
+    } finally {
+      setIsUpdatingTwoFactor(false);
+    }
+  }
+
+  function showTwoFactorSetupNotice() {
+    setTwoFactorMessage("Authenticator setup needs the legacy encrypted secret writer before this rebuilt panel can create compatible 2FA secrets.");
   }
 
   const profile = settings?.profile;
@@ -4014,6 +7128,52 @@ function SettingsSection() {
           </div>
         </form>
         {profileMessage && <p className="renewal-action-message">{profileMessage}</p>}
+      </article>
+
+      <article className="panel-card password-card">
+        <div>
+          <span className="status-pill blue">Email</span>
+          <h2>Change Email Address</h2>
+          <p>Create a verification request for a new account contact email.</p>
+        </div>
+        <form className="settings-form" onSubmit={requestEmailChange}>
+          <label>
+            New Email
+            <input
+              type="email"
+              autoComplete="email"
+              value={emailChange}
+              onChange={(event) => setEmailChange(event.target.value)}
+            />
+          </label>
+          <button className="primary-button" type="submit" disabled={isRequestingEmailChange || !emailChange.trim()}>
+            {isRequestingEmailChange ? "Creating..." : "Create Verification Request"}
+          </button>
+        </form>
+        {emailChangeMessage && <p className="renewal-action-message">{emailChangeMessage}</p>}
+      </article>
+
+      <article className="panel-card password-card">
+        <div>
+          <span className={twoFactor?.isEnabled ? "status-pill" : "status-pill muted"}>
+            {twoFactor?.isEnabled ? "Enabled" : "Disabled"}
+          </span>
+          <h2>Two-Factor Authentication</h2>
+          <p>Review the current authenticator status and disable 2FA when an account needs recovery.</p>
+        </div>
+        <div className="settings-action-strip">
+          {twoFactor?.isEnabled ? (
+            <button className="primary-button" type="button" onClick={disableTwoFactor} disabled={isUpdatingTwoFactor}>
+              {isUpdatingTwoFactor ? "Disabling..." : "Disable 2FA"}
+            </button>
+          ) : (
+            <button className="secondary-button compact" type="button" onClick={showTwoFactorSetupNotice}>
+              Setup 2FA
+            </button>
+          )}
+          <span>{twoFactor?.hasSecret ? `Created ${formatDate(twoFactor.enterDate)}` : "No authenticator secret on file"}</span>
+        </div>
+        {twoFactorMessage && <p className="renewal-action-message">{twoFactorMessage}</p>}
       </article>
 
       <article className="panel-card password-card">
@@ -4247,6 +7407,33 @@ function AffiliateWithdraw({ summary }) {
     }
   }
 
+  async function submitPaypalWithdraw() {
+    setIsCheckingWithdraw(true);
+    setWithdrawMessage("");
+    setWithdrawPreview(null);
+
+    try {
+      const response = await fetch("/api/account/affiliate/withdraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(paypalAmount), method: "paypal", paypal: paypalAccount })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setWithdrawPreview(result?.preview ?? null);
+        setWithdrawMessage(result?.message ?? "Unable to submit payout request.");
+        return;
+      }
+
+      setWithdrawPreview(result.preview);
+      setWithdrawMessage(result.preview?.note ?? result.message);
+    } catch {
+      setWithdrawMessage("Unable to reach affiliate payout service.");
+    } finally {
+      setIsCheckingWithdraw(false);
+    }
+  }
+
   return (
     <div className="affiliate-withdraw-grid">
       <article className="affiliate-withdraw-card">
@@ -4271,8 +7458,8 @@ function AffiliateWithdraw({ summary }) {
           Amount
           <input type="number" min="100" step="0.01" value={paypalAmount} onChange={(event) => setPaypalAmount(event.target.value)} />
         </label>
-        <button className="secondary-button" type="button" disabled={isCheckingWithdraw || !paypalAccount.trim()} onClick={() => checkWithdraw("paypal", paypalAmount)}>
-          {isCheckingWithdraw ? "Checking..." : "Submit Withdraw"}
+        <button className="secondary-button" type="button" disabled={isCheckingWithdraw || !paypalAccount.trim()} onClick={submitPaypalWithdraw}>
+          {isCheckingWithdraw ? "Submitting..." : "Submit Withdraw"}
         </button>
       </article>
       {(withdrawMessage || withdrawPreview) && (
@@ -4339,44 +7526,24 @@ function AffiliatePromoAssets() {
   );
 }
 
-function TabbedSection({ title, tabs, showHeading = true }) {
-  const [activeTab, setActiveTab] = useState(tabs[0][0]);
-  const current = tabs.find((tab) => tab[0] === activeTab) ?? tabs[0];
-
-  return (
-    <section className="panel-card">
-      {showHeading && (
-        <div className="section-heading">
-          <div>
-            <h2>{title}</h2>
-            <p>Mock tabbed information for review only.</p>
-          </div>
-        </div>
-      )}
-      <div className="tabs" role="tablist" aria-label={`${title} tabs`}>
-        {tabs.map(([id, label]) => (
-          <button
-            aria-selected={id === activeTab}
-            className={id === activeTab ? "tab active" : "tab"}
-            key={id}
-            role="tab"
-            type="button"
-            onClick={() => setActiveTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="tab-panel" role="tabpanel">
-        {current[2] === "affiliate-getting-started" ? <AffiliateGettingStarted /> : <p>{current[2]}</p>}
-      </div>
-    </section>
-  );
-}
-
 function AffiliateGettingStarted() {
   const [activeBanner, setActiveBanner] = useState(affiliateBanners[0]);
   const [copiedBanner, setCopiedBanner] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteCopied, setInviteCopied] = useState("");
+  const referralUrl = "https://www.SmarterASP.NET/index?r=openreward";
+  const referralIdUrl = "https://www.SmarterASP.NET/index?r=100468564";
+  const inviteSubject = "Try SmarterASP.NET hosting";
+  const inviteBody = [
+    `Hi${inviteName.trim() ? ` ${inviteName.trim()}` : ""},`,
+    "",
+    "I wanted to share SmarterASP.NET with you. They offer Windows ASP.NET hosting, domains, VPN services, SSL certificates, and add-ons.",
+    "",
+    `You can start here: ${referralUrl}`,
+    "",
+    "Thanks!"
+  ].join("\n");
 
   async function copyActiveBanner() {
     if (await writeTextToClipboard(activeBanner.code)) {
@@ -4385,6 +7552,28 @@ function AffiliateGettingStarted() {
     } else {
       setCopiedBanner("failed");
       window.setTimeout(() => setCopiedBanner(""), 1600);
+    }
+  }
+
+  async function copyInviteDraft() {
+    const draft = `To: ${inviteEmail || "customer@example.com"}\nSubject: ${inviteSubject}\n\n${inviteBody}`;
+    if (await writeTextToClipboard(draft)) {
+      setInviteCopied("draft");
+      window.setTimeout(() => setInviteCopied(""), 1600);
+    } else {
+      setInviteCopied("failed");
+      window.setTimeout(() => setInviteCopied(""), 1600);
+    }
+  }
+
+  async function copyReferralUrl(urlKey) {
+    const url = urlKey === "id" ? referralIdUrl : referralUrl;
+    if (await writeTextToClipboard(url)) {
+      setInviteCopied(urlKey);
+      window.setTimeout(() => setInviteCopied(""), 1600);
+    } else {
+      setInviteCopied("failed");
+      window.setTimeout(() => setInviteCopied(""), 1600);
     }
   }
 
@@ -4406,12 +7595,35 @@ function AffiliateGettingStarted() {
         <div className="affiliate-guide-box">
           <p>To refer a customer to us, you can use the following URLs:</p>
           <div className="affiliate-url-list">
-            <div>https://www.SmarterASP.NET/index?r=openreward</div>
-            <div>https://www.SmarterASP.NET/index?r=100468564</div>
+            <div>
+              <span>{referralUrl}</span>
+              <button type="button" onClick={() => copyReferralUrl("login")}>{inviteCopied === "login" ? "Copied" : "Copy"}</button>
+            </div>
+            <div>
+              <span>{referralIdUrl}</span>
+              <button type="button" onClick={() => copyReferralUrl("id")}>{inviteCopied === "id" ? "Copied" : "Copy"}</button>
+            </div>
           </div>
           <p className="affiliate-note">
             <strong>Note:</strong> Once your customer visits our site through the URL above, your referral ID will be recorded in their browser's cookie. Anytime your customer decides to signup, you'll get credited.
           </p>
+          <div className="affiliate-invite-card">
+            <h4>Invite Customer</h4>
+            <div className="affiliate-invite-fields">
+              <label>
+                Customer Name
+                <input type="text" value={inviteName} onChange={(event) => setInviteName(event.target.value)} />
+              </label>
+              <label>
+                Customer Email
+                <input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} />
+              </label>
+            </div>
+            <textarea readOnly value={`Subject: ${inviteSubject}\n\n${inviteBody}`} aria-label="Affiliate invitation email draft" />
+            <button className="secondary-button compact" type="button" onClick={copyInviteDraft}>
+              {inviteCopied === "draft" ? "Copied" : inviteCopied === "failed" ? "Copy Failed" : "Copy Invite Draft"}
+            </button>
+          </div>
           <p>You can also use the following banners we provide:</p>
           <div className="banner-tabs" aria-label="Banner sizes">
             {affiliateBanners.map((banner) => (
