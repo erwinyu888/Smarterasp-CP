@@ -1,0 +1,10 @@
+{
+  "name": "controlpanel",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "ClientApp/node_modules/.bin/vite ClientApp",
+    "build": "ClientApp/node_modules/.bin/vite build ClientApp",
+    "preview": "ClientApp/node_modules/.bin/vite preview ClientApp"
+  }
+}
