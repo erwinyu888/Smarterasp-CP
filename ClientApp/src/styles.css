@@ -277,6 +277,10 @@ a:focus {
   color: var(--accent-ink);
 }
 
+.primary-button.as-link {
+  text-decoration: none;
+}
+
 .secondary-button,
 .ghost-button {
   background: var(--field);
@@ -344,6 +348,19 @@ a:focus {
   padding: 10px 12px;
 }
 
+.auth-loading {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  padding: 34px 32px;
+}
+
+.auth-loading p {
+  color: var(--muted);
+  margin: 0;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 256px 1fr;
@@ -358,8 +375,12 @@ a:focus {
   color: var(--ink);
   display: flex;
   flex-direction: column;
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
   padding: 14px 8px 12px;
+  position: sticky;
+  top: 0;
 }
 
 html[data-theme="light"] .sidebar {
@@ -498,9 +519,34 @@ html[data-theme="light"] .plan-pill {
 }
 
 .side-nav {
+  align-content: start;
   display: grid;
+  flex: 0 1 auto;
   gap: 3px;
+  grid-auto-rows: min-content;
   margin-top: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: #333333 transparent;
+}
+
+.side-nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.side-nav::-webkit-scrollbar-thumb {
+  background: #333333;
+  border-radius: 999px;
+}
+
+html[data-theme="light"] .side-nav {
+  scrollbar-color: #d4d4d4 transparent;
+}
+
+html[data-theme="light"] .side-nav::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
 }
 
 .nav-item {
@@ -542,21 +588,44 @@ html[data-theme="light"] .nav-item {
   width: 15px;
 }
 
-.nav-item strong {
+.nav-stat {
   color: #bdbdbd;
   font-size: 13px;
   font-weight: 400;
 }
 
-html[data-theme="light"] .nav-item strong {
+html[data-theme="light"] .nav-stat {
   color: #747474;
+}
+
+.nav-stat.warning {
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.42);
+  border-radius: 999px;
+  color: #f59e0b;
+  min-width: 24px;
+  padding: 2px 8px;
+  text-align: center;
+}
+
+html[data-theme="light"] .nav-stat.warning {
+  background: rgba(217, 119, 6, 0.12);
+  border-color: rgba(217, 119, 6, 0.32);
+  color: #b45309;
 }
 
 .nav-item.active,
 .nav-item:hover {
   background: #202020;
-  border-color: var(--line);
+  border-color: transparent;
   color: #ededed;
+}
+
+.nav-item:focus,
+.nav-item:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+  outline: 0;
 }
 
 .back-account-item {
@@ -715,6 +784,17 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
   gap: 10px;
 }
 
+.account-chip {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.8rem;
+  min-height: 32px;
+  padding: 7px 11px;
+}
+
 .theme-toggle {
   align-items: center;
   background: var(--field);
@@ -777,6 +857,12 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
   color: #78b7ff;
 }
 
+.status-pill.muted {
+  background: rgba(161, 161, 170, 0.1);
+  border-color: rgba(161, 161, 170, 0.28);
+  color: var(--muted);
+}
+
 .card-grid {
   display: grid;
   gap: 16px;
@@ -786,6 +872,57 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
 .hosting-stack {
   display: grid;
   gap: 16px;
+}
+
+.account-summary-panel,
+.dashboard-error-panel {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.account-summary-panel h2 {
+  font-size: 1.2rem;
+  font-weight: 400;
+  margin: 10px 0 6px;
+}
+
+.account-summary-panel p,
+.dashboard-error-panel p,
+.empty-state {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.account-summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.account-summary-stats div {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: grid;
+  gap: 3px;
+  min-width: 86px;
+  padding: 10px 12px;
+  text-align: right;
+}
+
+.account-summary-stats strong {
+  color: var(--ink);
+  font-size: 1.1rem;
+  font-weight: 400;
+}
+
+.account-summary-stats span {
+  color: var(--soft);
+  font-size: 0.75rem;
 }
 
 .renewal-panel {
@@ -863,6 +1000,12 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
   font-size: 0.76rem;
   padding: 5px 9px;
   white-space: nowrap;
+}
+
+.renewal-item-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
 }
 
 html[data-theme="light"] .renewal-status {
@@ -1195,11 +1338,422 @@ html[data-theme="light"] .ram-meter {
   justify-content: space-between;
 }
 
+.website-live-summary {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.website-live-summary p {
+  color: var(--muted);
+  margin: 10px 0 0;
+}
+
 .website-actions,
 .website-action-buttons {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.domain-section {
+  display: grid;
+  gap: 16px;
+}
+
+.domain-search-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.domain-results,
+.domain-cart {
+  display: grid;
+  gap: 8px;
+}
+
+.domain-result-row,
+.domain-cart {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.domain-result-row,
+.domain-result-action,
+.domain-cart-header,
+.domain-cart-item {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.domain-result-row strong,
+.domain-cart-header strong {
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.domain-result-row > div:first-child {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.domain-cart-header {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  padding-bottom: 8px;
+}
+
+.domain-cart-item {
+  color: var(--muted);
+}
+
+.domain-live-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.domain-live-header {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.domain-live-header h2 {
+  font-size: 1.2rem;
+  font-weight: 400;
+  margin: 10px 0 0;
+}
+
+.compact-search {
+  grid-template-columns: 1fr;
+}
+
+.inline-error {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.billing-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.billing-header {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.billing-header h2 {
+  font-size: 1.2rem;
+  font-weight: 400;
+  margin: 10px 0 0;
+}
+
+.billing-balance-card {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  max-width: 360px;
+  padding: 18px;
+}
+
+.billing-balance-card span,
+.billing-balance-card p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.billing-balance-card strong {
+  color: var(--ink);
+  font-size: 2rem;
+  font-weight: 400;
+}
+
+.billing-balance-layout,
+.billing-detail-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.billing-balance-layout {
+  grid-template-columns: minmax(260px, 360px) minmax(260px, 1fr);
+}
+
+.billing-action-card,
+.billing-detail-card {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.billing-action-card h3,
+.billing-detail-card h3 {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 400;
+  margin: 0;
+}
+
+.billing-action-card p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.billing-action-row,
+.billing-detail-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.compact-row {
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.checkout-ready-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.checkout-ready-row span {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.75rem;
+}
+
+.renewal-action-message {
+  background: rgba(77, 163, 255, 0.1);
+  border: 1px solid rgba(77, 163, 255, 0.24);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.card-meta.single {
+  grid-template-columns: 1fr;
+}
+
+.vpn-section {
+  display: grid;
+  gap: 16px;
+}
+
+.vpn-summary {
+  display: grid;
+  gap: 16px;
+}
+
+.vpn-quota-row {
+  align-items: center;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(180px, 260px) 1fr;
+  padding: 16px;
+}
+
+.vpn-quota-row span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.78rem;
+  margin-bottom: 6px;
+}
+
+.vpn-quota-row strong {
+  color: var(--ink);
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+.vpn-quota-meter {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.vpn-quota-meter span {
+  background: linear-gradient(90deg, var(--accent), #21a67a);
+  display: block;
+  height: 100%;
+  margin: 0;
+  min-width: 4px;
+}
+
+.vpn-purchase-card {
+  max-width: 520px;
+}
+
+.empty-panel {
+  padding: 18px;
+}
+
+.empty-panel p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.addon-section {
+  display: grid;
+  gap: 16px;
+}
+
+.addon-catalog-panel,
+.addon-active-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.addon-category-tabs {
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.addon-product-name {
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.inline-select,
+.qty-input {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 32px;
+}
+
+.inline-select {
+  min-width: 150px;
+  padding: 0 28px 0 10px;
+}
+
+.qty-input {
+  max-width: 66px;
+  padding: 0 8px;
+}
+
+.muted-count {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.affiliate-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.affiliate-summary-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.affiliate-metric {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.affiliate-metric span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.affiliate-metric strong {
+  color: var(--ink);
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+.affiliate-withdraw-grid,
+.promo-assets-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.affiliate-withdraw-card,
+.promo-asset-card {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.affiliate-withdraw-card h3 {
+  font-size: 1rem;
+  font-weight: 400;
+  margin: 0;
+}
+
+.affiliate-withdraw-card p,
+.promo-asset-card p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.promo-asset-card textarea {
+  background: #111111;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #c9c9d1;
+  min-height: 86px;
+  padding: 10px;
+  resize: vertical;
+  width: 100%;
+}
+
+html[data-theme="light"] .promo-asset-card textarea {
+  background: #ffffff;
+  color: #4b5563;
+}
+
+.affiliate-withdraw-card label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.78rem;
+  gap: 7px;
 }
 
 .view-toggle {
@@ -1455,8 +2009,91 @@ html[data-theme="light"] .ssl-domain-badge {
 .search-row {
   display: grid;
   gap: 10px;
-  grid-template-columns: 1fr 120px auto;
+  grid-template-columns: 1fr 190px auto;
   margin-bottom: 16px;
+}
+
+.extension-picker {
+  position: relative;
+}
+
+.extension-picker-button {
+  align-items: center;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 13px;
+  width: 100%;
+}
+
+.extension-picker-button svg {
+  color: var(--muted);
+  height: 16px;
+  width: 16px;
+}
+
+.extension-picker-menu {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34);
+  display: grid;
+  gap: 8px;
+  left: 0;
+  padding: 8px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+}
+
+.extension-picker-menu input {
+  min-height: 38px;
+}
+
+.extension-picker-list {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.extension-option {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.86rem;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.extension-option:hover,
+.extension-option.active {
+  background: var(--field);
+  color: var(--ink);
+}
+
+.extension-option span:last-child {
+  color: var(--soft);
+  font-size: 0.78rem;
+}
+
+.extension-empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin: 0;
+  padding: 8px;
 }
 
 .table-wrap {
@@ -1687,6 +2324,22 @@ html[data-theme="light"] .affiliate-guide textarea {
   color: #4b5563;
 }
 
+.affiliate-real-banner-preview {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: inline-flex;
+  max-width: 100%;
+  overflow: auto;
+  padding: 10px;
+}
+
+.affiliate-real-banner-preview img {
+  display: block;
+  height: auto;
+  max-width: 100%;
+}
+
 .affiliate-banner-preview {
   align-items: center;
   background:
@@ -1734,6 +2387,13 @@ html[data-theme="light"] .affiliate-guide textarea {
     grid-template-columns: 1fr;
   }
 
+  .sidebar {
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+    position: relative;
+  }
+
   .login-page {
     padding: 18px;
   }
@@ -1758,6 +2418,8 @@ html[data-theme="light"] .affiliate-guide textarea {
 
   .side-nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+    padding-right: 0;
   }
 
   .workspace {
@@ -1779,6 +2441,11 @@ html[data-theme="light"] .affiliate-guide textarea {
 
   .renewal-days {
     text-align: left;
+  }
+
+  .renewal-item-actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .ram-card,

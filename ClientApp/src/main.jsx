@@ -97,8 +97,8 @@ const sections = [
   { id: "domain", label: "Domain", stat: "8", icon: "globe" },
   { id: "vpn", label: "VPN", stat: "2", icon: "shield" },
   { id: "addon", label: "Add-On", stat: "4", icon: "plus" },
-  { id: "affiliate", label: "Affiliate", stat: "Pays 60%", icon: "share" },
-  { id: "billing", label: "Billing", stat: "$42", icon: "card" }
+  { id: "affiliate", label: "Affiliate", stat: "Earn 60%", icon: "share" },
+  { id: "billing", label: "Billing", stat: "0", icon: "card", statTone: "warning" }
 ];
 
 const controlPanelSections = [
@@ -196,12 +196,66 @@ const affiliateTabs = [
   ["promo-assets", "Promo Assets", "Banner, email copy, and landing page link placeholders."]
 ];
 
+const affiliateBanners = [
+  { size: "728X90", file: "728X90.gif" },
+  { size: "468x60", file: "468X60.gif" },
+  { size: "300x250", file: "300x250.gif" },
+  { size: "234x60", file: "234x60.gif" }
+].map((banner) => ({
+  ...banner,
+  url: `https://www.SmarterASP.NET/affiliate/${banner.file}`,
+  code: `<a href="https://www.SmarterASP.NET/index?r=openreward"><img src="https://www.SmarterASP.NET/affiliate/${banner.file}" border="0"></a>`
+}));
+
 const billingTabs = [
   ["purchases", "My Purchases", "Recent mock purchases: Business Hosting, SSL-S, VPN Dedicated IP."],
   ["active", "Current Active Products", "8 active products across hosting, domains, VPN, and SSL add-ons."],
   ["balance", "Account Balance", "Account balance: $42.00 credit."],
   ["renewal", "Renewal Notice", "Next renewal notice: sample-client.org on July 15, 2026."]
 ];
+
+const domainExtensions = [
+  ".com", ".net", ".org", ".io", ".app", ".ai", ".co", ".dev", ".shop", ".store", ".online", ".site", ".website", ".tech", ".cloud", ".host", ".hosting", ".digital", ".software", ".systems",
+  ".biz", ".info", ".name", ".pro", ".mobi", ".me", ".tv", ".cc", ".us", ".ca", ".uk", ".co.uk", ".de", ".fr", ".it", ".es", ".nl", ".be", ".ch", ".at",
+  ".se", ".no", ".dk", ".fi", ".ie", ".pl", ".cz", ".sk", ".pt", ".gr", ".hu", ".ro", ".bg", ".lt", ".lv", ".ee", ".is", ".lu", ".li", ".si",
+  ".hr", ".rs", ".ua", ".ru", ".com.au", ".net.au", ".au", ".nz", ".co.nz", ".jp", ".co.jp", ".kr", ".cn", ".com.cn", ".hk", ".tw", ".sg", ".my", ".th", ".id",
+  ".ph", ".vn", ".in", ".co.in", ".ae", ".sa", ".qa", ".il", ".tr", ".za", ".com.br", ".mx", ".com.mx", ".ar", ".cl", ".pe", ".uy", ".ec", ".cr",
+  ".agency", ".academy", ".accountants", ".accountant", ".apartments", ".associates", ".business", ".capital", ".care", ".careers", ".center", ".company", ".consulting", ".contractors", ".enterprises", ".estate", ".exchange", ".expert", ".finance", ".financial",
+  ".fund", ".group", ".gmbh", ".holdings", ".industries", ".international", ".investments", ".limited", ".llc", ".ltd", ".management", ".marketing", ".media", ".network", ".partners", ".properties", ".services", ".solutions", ".support", ".ventures",
+  ".art", ".audio", ".blog", ".camera", ".chat", ".community", ".design", ".email", ".events", ".family", ".fans", ".fashion", ".fitness", ".gallery", ".games", ".graphics", ".guru", ".life", ".live", ".news",
+  ".photo", ".photos", ".pics", ".press", ".productions", ".social", ".space", ".studio", ".today", ".tools", ".video", ".wiki", ".world", ".works", ".zone", ".one", ".page", ".plus", ".run", ".team",
+  ".cafe", ".catering", ".coffee", ".delivery", ".dental", ".doctor", ".education", ".energy", ".engineer", ".engineering", ".farm", ".florist", ".health", ".hospital", ".kitchen", ".law", ".legal", ".money", ".pizza", ".restaurant",
+  ".school", ".science", ".security", ".solar", ".tax", ".taxi", ".training", ".travel", ".university", ".vet", ".vin", ".wine", ".xxx"
+];
+
+const domainExtensionPriceOverrides = {
+  ".com": 12.9,
+  ".net": 14.9,
+  ".org": 13.9,
+  ".io": 39,
+  ".app": 18,
+  ".ai": 79,
+  ".co": 29,
+  ".dev": 18,
+  ".shop": 24,
+  ".store": 28,
+  ".online": 22,
+  ".tech": 34,
+  ".cloud": 22,
+  ".tv": 39,
+  ".cc": 29,
+  ".us": 12,
+  ".ca": 18,
+  ".uk": 12,
+  ".co.uk": 12,
+  ".com.au": 18,
+  ".com.br": 24,
+  ".co.jp": 45
+};
+
+function getDomainExtensionPrice(extension) {
+  return domainExtensionPriceOverrides[extension] ?? 19.9;
+}
 
 function App() {
   const [route, setRoute] = useState(() => {
@@ -210,11 +264,52 @@ function App() {
     return "login";
   });
   const [theme, setTheme] = useState(() => localStorage.getItem("controlpanel-theme") ?? "dark");
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("controlpanel-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCurrentUser() {
+      try {
+        const response = await fetch("/api/auth/me");
+        const result = await response.json().catch(() => null);
+        if (!isMounted) return;
+
+        if (response.ok && result?.success) {
+          setCurrentUser(result.user);
+        } else if (route !== "login") {
+          window.history.replaceState({}, "", "/");
+          setRoute("login");
+        }
+      } catch {
+        if (isMounted && route !== "login") {
+          window.history.replaceState({}, "", "/");
+          setRoute("login");
+        }
+      } finally {
+        if (isMounted) setIsAuthReady(true);
+      }
+    }
+
+    loadCurrentUser();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthReady || currentUser || route === "login") return;
+
+    window.history.replaceState({}, "", "/");
+    setRoute("login");
+  }, [currentUser, isAuthReady, route]);
 
   const goToPanel = (event) => {
     event?.preventDefault();
@@ -230,18 +325,45 @@ function App() {
 
   const toggleTheme = () => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
 
+  const handleLogin = (user, event) => {
+    event?.preventDefault();
+    setCurrentUser(user);
+    window.history.pushState({}, "", "/panel");
+    setRoute("panel");
+  };
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => { });
+    setCurrentUser(null);
+    window.history.pushState({}, "", "/");
+    setRoute("login");
+  };
+
+  if (!isAuthReady) {
+    return (
+      <main className="login-page">
+        <section className="login-card auth-loading" aria-label="Loading session">
+          <div className="product-mark" aria-hidden="true">CP</div>
+          <p>Checking session...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if ((route === "panel" || route === "panel_cp") && !currentUser) return null;
+
   if (route === "panel_cp") {
-    return <HostingControlPanel theme={theme} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} />;
+    return <HostingControlPanel theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onLogout={handleLogout} onToggleTheme={toggleTheme} />;
   }
 
   return route === "panel"
-    ? <Panel theme={theme} onManageHosting={goToControlPanel} onToggleTheme={toggleTheme} />
-    : <Login onLogin={goToPanel} theme={theme} onToggleTheme={toggleTheme} />;
+    ? <Panel theme={theme} currentUser={currentUser} onLogout={handleLogout} onManageHosting={goToControlPanel} onToggleTheme={toggleTheme} />
+    : <Login onLogin={handleLogin} theme={theme} onToggleTheme={toggleTheme} />;
 }
 
 function Login({ onLogin, theme, onToggleTheme }) {
-  const [login, setLogin] = useState("");
-  const [password, setPassword] = useState("");
+  const [login, setLogin] = useState("openreward");
+  const [password, setPassword] = useState("abcd1234");
   const [loginError, setLoginError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -266,7 +388,7 @@ function Login({ onLogin, theme, onToggleTheme }) {
         return;
       }
 
-      onLogin(event);
+      onLogin(result.user, event);
     } catch {
       setLoginError("Unable to reach the login service. Please try again.");
     } finally {
@@ -282,7 +404,6 @@ function Login({ onLogin, theme, onToggleTheme }) {
           <span>ControlPanel</span>
         </a>
         <nav className="login-links" aria-label="Top navigation">
-          <a href="/panel" onClick={onLogin}>Demo Panel</a>
           <a href="#help">Help</a>
           <a href="#contact">Contact</a>
           <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
@@ -327,25 +448,103 @@ function Login({ onLogin, theme, onToggleTheme }) {
   );
 }
 
-function Panel({ theme, onManageHosting, onToggleTheme }) {
+function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme }) {
   const [activeSection, setActiveSection] = useState("hosting");
+  const [dashboard, setDashboard] = useState(null);
+  const [isDashboardLoading, setIsDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState("");
+  const [accountStats, setAccountStats] = useState({
+    domains: null,
+    vpn: null,
+    addons: null,
+    billingRenewals: null,
+    balance: null
+  });
+  const realHostingCount = dashboard?.hostingAccounts?.filter((account) => account.status === "Active").length;
+  const renderedSections = sections.map((section) => {
+    if (section.id === "hosting" && realHostingCount !== undefined) return { ...section, stat: String(realHostingCount) };
+    if (section.id === "domain" && accountStats.domains !== null) return { ...section, stat: String(accountStats.domains) };
+    if (section.id === "vpn" && accountStats.vpn !== null) return { ...section, stat: String(accountStats.vpn) };
+    if (section.id === "addon" && accountStats.addons !== null) return { ...section, stat: String(accountStats.addons) };
+    if (section.id === "billing" && accountStats.billingRenewals !== null) return { ...section, stat: String(accountStats.billingRenewals), statTone: "warning" };
+    return section;
+  });
   const activeTitle = useMemo(
-    () => sections.find((section) => section.id === activeSection)?.label ?? "Hosting Plans",
-    [activeSection]
+    () => renderedSections.find((section) => section.id === activeSection)?.label ?? "Hosting Plans",
+    [activeSection, renderedSections]
   );
+  const browserDomain = useMemo(() => {
+    const hostname = window.location.hostname;
+    if (!hostname) return "LocalHost";
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return "LocalHost";
+    return hostname;
+  }, []);
+
+  async function loadDashboard() {
+    setIsDashboardLoading(true);
+    setDashboardError("");
+
+    try {
+      const response = await fetch("/api/account/dashboard");
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success) {
+        setDashboardError(result?.message ?? "Unable to load account dashboard.");
+        return;
+      }
+
+      setDashboard(result.dashboard);
+    } catch {
+      setDashboardError("Unable to reach account dashboard service.");
+    } finally {
+      setIsDashboardLoading(false);
+    }
+  }
+
+  async function loadAccountStats() {
+    const [domainResult, vpnResult, addonResult, billingResult] = await Promise.allSettled([
+      fetch("/api/account/domains").then((response) => response.json()),
+      fetch("/api/account/vpn").then((response) => response.json()),
+      fetch("/api/account/addons").then((response) => response.json()),
+      fetch("/api/account/billing").then((response) => response.json())
+    ]);
+
+    setAccountStats({
+      domains: domainResult.status === "fulfilled" && domainResult.value?.success
+        ? domainResult.value.domains?.length ?? 0
+        : null,
+      vpn: vpnResult.status === "fulfilled" && vpnResult.value?.success
+        ? vpnResult.value.dashboard?.used ?? 0
+        : null,
+      addons: addonResult.status === "fulfilled" && addonResult.value?.success
+        ? addonResult.value.dashboard?.activeAddons?.length ?? 0
+        : null,
+      billingRenewals: billingResult.status === "fulfilled" && billingResult.value?.success
+        ? billingResult.value.dashboard?.renewalNotices?.length ?? 0
+        : null,
+      balance: billingResult.status === "fulfilled" && billingResult.value?.success
+        ? billingResult.value.dashboard?.balance?.amount ?? null
+        : null
+    });
+  }
+
+  useEffect(() => {
+    loadDashboard();
+    loadAccountStats();
+  }, []);
+
+  const accountFunds = accountStats.balance === null ? "$179.92" : formatUsdFull(accountStats.balance);
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-top">
           <a className="brand project-brand" href="/panel">
-            <span className="user-dot blue-dot"></span>
-            <span className="brand-name">Control Panel</span>
-            <span className="plan-pill">Hobby</span>
+            <span className="brand-name">{browserDomain}</span>
           </a>
         </div>
         <nav className="side-nav" aria-label="Account panel sections">
-          {sections.map((section) => (
+          {renderedSections.map((section) => (
             <button
               className={section.id === activeSection ? "nav-item active" : "nav-item"}
               key={section.id}
@@ -356,7 +555,7 @@ function Panel({ theme, onManageHosting, onToggleTheme }) {
                 <MenuIcon name={section.icon} />
                 <span>{section.label}</span>
               </span>
-              <strong>{section.stat}</strong>
+              <strong className={section.statTone === "warning" ? "nav-stat warning" : "nav-stat"}>{section.stat}</strong>
             </button>
           ))}
         </nav>
@@ -382,7 +581,7 @@ function Panel({ theme, onManageHosting, onToggleTheme }) {
           <span className="user-dot green-dot"></span>
           <div>
             <strong>OPENREWARD</strong>
-            <span>Funds $179.92</span>
+            <span>Funds {accountFunds}</span>
           </div>
         </div>
       </aside>
@@ -394,16 +593,64 @@ function Panel({ theme, onManageHosting, onToggleTheme }) {
             <h1>{activeTitle}</h1>
           </div>
           <div className="workspace-actions">
+            <span className="account-chip">{currentUser?.login}</span>
             <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+            <button className="secondary-button compact" type="button" onClick={onLogout}>Logout</button>
           </div>
         </div>
-        <DashboardSection activeSection={activeSection} onManageHosting={onManageHosting} />
+        <DashboardSection
+          activeSection={activeSection}
+          dashboard={dashboard}
+          dashboardError={dashboardError}
+          isDashboardLoading={isDashboardLoading}
+          onChangeSection={setActiveSection}
+          onManageHosting={onManageHosting}
+          onReloadDashboard={loadDashboard}
+        />
       </main>
     </div>
   );
 }
 
-function HostingControlPanel({ theme, onBackToPanel, onToggleTheme }) {
+function formatUsdShort(amount) {
+  if (amount === null || amount === undefined || amount === "") return "$0";
+  const value = Number(amount);
+  if (Number.isNaN(value)) return "$0";
+  return `$${Math.round(value)}`;
+}
+
+function formatUsdFull(amount) {
+  if (amount === null || amount === undefined || amount === "") return "$0.00";
+  const value = Number(amount);
+  if (Number.isNaN(value)) return "$0.00";
+  return `$${value.toFixed(2)}`;
+}
+
+async function writeTextToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.left = "-9999px";
+    textarea.style.position = "fixed";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+
+    try {
+      document.execCommand("copy");
+      return true;
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+}
+
+function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onToggleTheme }) {
   const [activeSection, setActiveSection] = useState("dashboard");
   const [selectedHostingPlan, setSelectedHostingPlan] = useState("Hosting Plan 1");
   const [isHostingPlanMenuOpen, setIsHostingPlanMenuOpen] = useState(false);
@@ -493,7 +740,9 @@ function HostingControlPanel({ theme, onBackToPanel, onToggleTheme }) {
           </div>
           <div className="workspace-actions">
             <button className="secondary-button compact" type="button" onClick={onBackToPanel}>Back to Plans</button>
+            <span className="account-chip">{currentUser?.login}</span>
             <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+            <button className="secondary-button compact" type="button" onClick={onLogout}>Logout</button>
           </div>
         </div>
         {activeSection === "dashboard" && <HostingDashboard />}
@@ -598,6 +847,38 @@ function HostingCpPlaceholder({ title }) {
 function WebsitesSection() {
   const [viewMode, setViewMode] = useState("cards");
   const [siteRecords, setSiteRecords] = useState(websites);
+  const [sitesDashboard, setSitesDashboard] = useState(null);
+  const [isLoadingSites, setIsLoadingSites] = useState(true);
+  const [sitesError, setSitesError] = useState("");
+
+  async function loadHostingSites() {
+    setIsLoadingSites(true);
+    setSitesError("");
+    try {
+      const response = await fetch("/api/hosting/sites");
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setSitesError(result?.message ?? "Unable to load websites.");
+        return;
+      }
+
+      setSitesDashboard(result.dashboard);
+      const loadedSites = result.dashboard?.sites?.map(mapHostingSiteToUi) ?? [];
+      if (loadedSites.length) {
+        setSiteRecords(loadedSites);
+      } else {
+        setSiteRecords([]);
+      }
+    } catch {
+      setSitesError("Unable to reach website service.");
+    } finally {
+      setIsLoadingSites(false);
+    }
+  }
+
+  useEffect(() => {
+    loadHostingSites();
+  }, []);
 
   function updateSiteName(index, siteName) {
     setSiteRecords((currentSites) =>
@@ -635,13 +916,55 @@ function WebsitesSection() {
         </div>
       </div>
 
-      {viewMode === "cards" ? (
+      <div className="panel-card website-live-summary">
+        <div>
+          <span className="status-pill blue">Live websites</span>
+          <p>{sitesDashboard?.cpLogin ? `${sitesDashboard.cpLogin} · ${siteRecords.length} sites` : "Loading hosting websites"}</p>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={loadHostingSites}>Refresh</button>
+      </div>
+
+      {isLoadingSites && <p className="empty-state">Loading websites from cp_config_Sites...</p>}
+      {sitesError && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{sitesError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadHostingSites}>Retry</button>
+        </div>
+      )}
+      {!isLoadingSites && !sitesError && !siteRecords.length && (
+        <div className="panel-card cp-placeholder">
+          <span className="status-pill muted">No websites</span>
+          <h2>No websites found</h2>
+          <p>This hosting account does not have any visible website rows in cp_config_Sites.</p>
+        </div>
+      )}
+
+      {!!siteRecords.length && (viewMode === "cards" ? (
         <WebsiteCards sites={siteRecords} onUpdateSiteName={updateSiteName} />
       ) : (
         <WebsiteTable sites={siteRecords} onUpdateSiteName={updateSiteName} />
-      )}
+      ))}
     </section>
   );
+}
+
+function mapHostingSiteToUi(site) {
+  const runtime = site.version
+    ? `.NET ${site.version}`
+    : site.phpVersion
+      ? `PHP ${site.phpVersion}`
+      : site.isSubdomain
+        ? "Subdomain"
+        : "Website";
+
+  return {
+    siteName: site.siteName || site.rootName || `site-${site.siteUid}`,
+    mappedDomains: site.mappedDomains?.length
+      ? site.mappedDomains
+      : [{ label: "No mapped domains", url: "#" }],
+    runtime,
+    status: site.status || "Unknown"
+  };
 }
 
 function WebsiteCards({ sites, onUpdateSiteName }) {
@@ -1022,51 +1345,160 @@ function MenuIcon({ name }) {
   );
 }
 
-function DashboardSection({ activeSection, onManageHosting }) {
+function DashboardSection({ activeSection, dashboard, dashboardError, isDashboardLoading, onChangeSection, onManageHosting, onReloadDashboard }) {
   if (activeSection === "domain") return <DomainSection />;
   if (activeSection === "vpn") return <VpnSection />;
   if (activeSection === "addon") return <AddonSection />;
-  if (activeSection === "affiliate") return <TabbedSection title="Affiliate" tabs={affiliateTabs} showHeading={false} />;
-  if (activeSection === "billing") return <TabbedSection title="Billing" tabs={billingTabs} showHeading={false} />;
-  return <HostingSection onManageHosting={onManageHosting} />;
+  if (activeSection === "affiliate") return <AffiliateSection />;
+  if (activeSection === "billing") return <BillingSection />;
+  return (
+    <HostingSection
+      dashboard={dashboard}
+      dashboardError={dashboardError}
+      isDashboardLoading={isDashboardLoading}
+      onManageHosting={onManageHosting}
+      onShowAffiliate={() => onChangeSection("affiliate")}
+      onReloadDashboard={onReloadDashboard}
+    />
+  );
 }
 
-function HostingSection({ onManageHosting }) {
+function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManageHosting, onReloadDashboard, onShowAffiliate }) {
+  const accounts = dashboard?.hostingAccounts?.length ? dashboard.hostingAccounts : [];
+  const notices = dashboard?.renewalNotices?.length ? dashboard.renewalNotices : [];
+  const statusSummary = dashboard?.hostingStatusSummary ?? [];
+  const [renewalBusyId, setRenewalBusyId] = useState(null);
+  const [renewalPreview, setRenewalPreview] = useState(null);
+  const [renewalMessage, setRenewalMessage] = useState("");
+
+  async function loadHostingRenewalPreview(notice) {
+    setRenewalBusyId(notice.clientProductId);
+    setRenewalMessage("");
+    setRenewalPreview(null);
+
+    try {
+      const response = await fetch(`/api/account/renewals/${notice.clientProductId}/renew`, { method: "POST" });
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success) {
+        setRenewalMessage(result?.message ?? "Unable to prepare renewal preview.");
+        return;
+      }
+
+      setRenewalPreview(result.renewal);
+      setRenewalMessage(result.message);
+    } catch {
+      setRenewalMessage("Unable to reach renewal service.");
+    } finally {
+      setRenewalBusyId(null);
+    }
+  }
+
+  async function createHostingRenewalCheckout(renewal) {
+    const response = await fetch(`/api/account/renewals/${renewal.clientProductId}/checkout`, { method: "POST" });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.message ?? "Unable to create renewal checkout.");
+    }
+
+    return result.order;
+  }
+
   return (
     <section className="hosting-stack">
+      <article className="panel-card account-summary-panel">
+        <div>
+          <span className="status-pill blue">Live account data</span>
+          <h2>{dashboard?.customer?.login ?? "Account"}</h2>
+          <p>
+            Customer ID {dashboard?.customer?.customerId ?? "loading"} · {dashboard?.customer?.customerType ?? "loading"}
+          </p>
+        </div>
+        <div className="account-summary-stats">
+          {statusSummary.length ? statusSummary.map((item) => (
+            <div key={item.status}>
+              <strong>{item.count}</strong>
+              <span>{item.status}</span>
+            </div>
+          )) : (
+            <div>
+              <strong>{isDashboardLoading ? "..." : "0"}</strong>
+              <span>Hosting plans</span>
+            </div>
+          )}
+        </div>
+      </article>
+
+      {dashboardError && (
+        <article className="panel-card dashboard-error-panel">
+          <p>{dashboardError}</p>
+          <button className="secondary-button compact" type="button" onClick={onReloadDashboard}>Retry</button>
+        </article>
+      )}
+
       <div className="panel-card renewal-panel">
         <div className="renewal-panel-header">
           <h2>Renewal Notice</h2>
-          <span>{renewalNotices.length} items</span>
+          <span>{isDashboardLoading ? "Loading" : `${notices.length} items`}</span>
         </div>
         <div className="renewal-list">
-          {renewalNotices.map((notice) => (
+          {isDashboardLoading && <p className="empty-state">Loading renewal notices...</p>}
+          {!isDashboardLoading && !notices.length && <p className="empty-state">No renewal notices found for this account.</p>}
+          {notices.map((notice) => (
             <article className="renewal-item" key={notice.name}>
               <div>
                 <h3>{notice.name}</h3>
-                <p>Renewal {notice.renewal}</p>
+                <p>Renewal {formatDate(notice.renewalDate)}</p>
               </div>
               <div className="renewal-days">
                 <strong>{notice.daysLeft}</strong>
                 <span>days left</span>
               </div>
-              <span className="renewal-status">{notice.status}</span>
+              <div className="renewal-item-actions">
+                <span className="renewal-status">{notice.status}</span>
+                <button
+                  className="secondary-button compact"
+                  type="button"
+                  disabled={renewalBusyId !== null}
+                  onClick={() => loadHostingRenewalPreview(notice)}
+                >
+                  {renewalBusyId === notice.clientProductId ? "Checking..." : "Renew"}
+                </button>
+              </div>
             </article>
           ))}
         </div>
+        {renewalMessage && <p className="renewal-action-message">{renewalMessage}</p>}
+        {renewalPreview && <RenewalCheckoutPreview renewal={renewalPreview} onClose={() => setRenewalPreview(null)} onCheckout={createHostingRenewalCheckout} />}
       </div>
 
       <div className="card-grid">
-        {hostingAccounts.map((account) => (
-          <article className="service-card" key={account.hosting_account_name}>
+        {isDashboardLoading && (
+          <article className="service-card">
+            <span className="status-pill blue">Loading</span>
+            <h2>Loading hosting plans...</h2>
+            <p>Pulling your hosting accounts from ehbconfig.</p>
+          </article>
+        )}
+        {!isDashboardLoading && !accounts.length && (
+          <article className="service-card">
+            <span className="status-pill blue">Empty</span>
+            <h2>No active hosting plans found</h2>
+            <p>This account has no visible hosting plans in cp_config.</p>
+          </article>
+        )}
+        {accounts.map((account) => (
+          <article className="service-card" key={account.cpId}>
             <div>
-              <span className="status-pill">Active</span>
-              <h2>{account.hosting_account_name}</h2>
-              <p>{account.siteHosted}</p>
+              <span className={account.status === "Active" ? "status-pill" : "status-pill muted"}>{account.status}</span>
+              <h2>{account.cpLogin}</h2>
+              <p>{account.primaryDomain}</p>
             </div>
             <dl className="card-meta">
-              <div><dt>Renewal</dt><dd>{account.renewal}</dd></div>
-              <div><dt>Plan Name</dt><dd>{account.planName}</dd></div>
+              <div><dt>Renewal</dt><dd>{formatDate(account.renewalDate)}</dd></div>
+              <div><dt>Plan</dt><dd>{account.webHostType}</dd></div>
+              <div><dt>Total Sites</dt><dd>{account.totalSites}</dd></div>
+              <div><dt>Server</dt><dd>{account.serverId}</dd></div>
             </dl>
             <button className="secondary-button" type="button" onClick={onManageHosting}>Manage</button>
           </article>
@@ -1082,84 +1514,1417 @@ function HostingSection({ onManageHosting }) {
             For every Free Trial customer, you get $5 USD.
           </p>
         </div>
-        <button className="primary-button" type="button">View Affiliate Program</button>
+        <button className="primary-button" type="button" onClick={onShowAffiliate}>View Affiliate Program</button>
       </article>
     </section>
   );
 }
 
+function formatDate(value) {
+  if (!value) return "Not available";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function toCheckoutPreview(order, itemCount = 1) {
+  return {
+    checkoutId: order.guid,
+    title: order.title,
+    itemCount,
+    total: order.amount,
+    currency: order.currency,
+    checkoutUrl: order.checkoutUrl,
+    note: order.note,
+    isOrder: true
+  };
+}
+
 function DomainSection() {
+  const [accountDomains, setAccountDomains] = useState([]);
+  const [domainSearch, setDomainSearch] = useState("");
+  const [domainQuery, setDomainQuery] = useState("sample");
+  const [domainExtension, setDomainExtension] = useState(".com");
+  const [domainExtensionFilter, setDomainExtensionFilter] = useState("");
+  const [isDomainExtensionOpen, setIsDomainExtensionOpen] = useState(false);
+  const [domainResults, setDomainResults] = useState([]);
+  const [domainCart, setDomainCart] = useState([]);
+  const [domainCheckoutPreview, setDomainCheckoutPreview] = useState(null);
+  const [domainCheckoutMessage, setDomainCheckoutMessage] = useState("");
+  const [domainLookupMessage, setDomainLookupMessage] = useState("");
+  const [isDomainSearching, setIsDomainSearching] = useState(false);
+  const [isDomainCheckingOut, setIsDomainCheckingOut] = useState(false);
+  const [selectedDomain, setSelectedDomain] = useState(null);
+  const [isLoadingDomains, setIsLoadingDomains] = useState(true);
+  const [domainError, setDomainError] = useState("");
+
+  async function loadAccountDomains() {
+    setIsLoadingDomains(true);
+    setDomainError("");
+    try {
+      const response = await fetch("/api/account/domains");
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setDomainError(result?.message ?? "Unable to load domains.");
+        return;
+      }
+
+      setAccountDomains(result.domains ?? []);
+    } catch {
+      setDomainError("Unable to reach domain service.");
+    } finally {
+      setIsLoadingDomains(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAccountDomains();
+  }, []);
+
+  const filteredDomains = accountDomains.filter((domain) =>
+    domain.domainName.toLowerCase().includes(domainSearch.trim().toLowerCase())
+  );
+  const visibleDomainExtensions = domainExtensions.filter((extension) => {
+    const filter = domainExtensionFilter.trim().toLowerCase().replace(/^\./, "");
+    return !filter || extension.replace(/^\./, "").includes(filter);
+  });
+
+  function normalizeDomainSearch(value, extension) {
+    const cleaned = value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+    if (!cleaned) return "";
+    return cleaned.includes(".") ? cleaned : `${cleaned}${extension}`;
+  }
+
+  function selectDomainExtension(extension) {
+    setDomainExtension(extension);
+    setDomainExtensionFilter("");
+    setIsDomainExtensionOpen(false);
+  }
+
+  async function handleDomainSearch(event) {
+    event.preventDefault();
+    const primary = normalizeDomainSearch(domainQuery, domainExtension);
+    if (!primary) {
+      setDomainResults([]);
+      return;
+    }
+
+    const base = primary.split(".")[0];
+    const featuredExtensions = [domainExtension, ".com", ".net", ".org", ".io", ".app", ".ai", ".co", ".dev", ".shop", ".store", ".online", ".tech"];
+    const options = Array.from(new Set([primary, ...featuredExtensions.map((extension) => `${base}${extension}`)]));
+    const pricedOptions = options.map((domainName) => {
+      const extension = domainExtensions
+        .filter((candidate) => domainName.endsWith(candidate))
+        .sort((a, b) => b.length - a.length)[0] ?? `.${domainName.split(".").pop()}`;
+      const basePrice = getDomainExtensionPrice(extension);
+      return {
+        domainName,
+        available: false,
+        reason: "Checking...",
+        price: basePrice
+      };
+    });
+
+    setIsDomainSearching(true);
+    setDomainLookupMessage("");
+    setDomainCheckoutPreview(null);
+    setDomainResults(pricedOptions);
+
+    try {
+      const response = await fetch("/api/account/domains/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains: options })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setDomainResults(pricedOptions.map((item) => ({ ...item, reason: "Could not verify" })));
+        setDomainLookupMessage(result?.message ?? "Unable to verify domain availability.");
+        return;
+      }
+
+      const availability = new Map((result.results ?? []).map((item) => [item.domainName, item]));
+      setDomainResults(pricedOptions.map((item) => {
+        const checked = availability.get(item.domainName);
+        return checked
+          ? { ...item, available: checked.available, reason: checked.reason }
+          : { ...item, available: false, reason: "Could not verify" };
+      }));
+      setDomainLookupMessage(result.message);
+    } catch {
+      setDomainResults(pricedOptions.map((item) => ({ ...item, reason: "Could not verify" })));
+      setDomainLookupMessage("Unable to reach domain availability service.");
+    } finally {
+      setIsDomainSearching(false);
+    }
+  }
+
+  function addDomainToCart(result) {
+    if (!result.available || domainCart.some((item) => item.domainName === result.domainName)) return;
+    setDomainCart((items) => [...items, result]);
+  }
+
+  function removeDomainFromCart(domainName) {
+    setDomainCart((items) => items.filter((item) => item.domainName !== domainName));
+  }
+
+  async function checkoutDomains() {
+    setIsDomainCheckingOut(true);
+    setDomainCheckoutMessage("");
+    setDomainCheckoutPreview(null);
+
+    try {
+      const response = await fetch("/api/account/domains/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains: domainCart })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setDomainCheckoutMessage(result?.message ?? "Unable to create domain checkout.");
+        return;
+      }
+
+      setDomainCheckoutPreview(toCheckoutPreview(result.order, domainCart.length));
+      setDomainCheckoutMessage(result.message);
+    } catch {
+      setDomainCheckoutMessage("Unable to reach domain checkout service.");
+    } finally {
+      setIsDomainCheckingOut(false);
+    }
+  }
+
   return (
-    <section className="panel-card">
-      <div className="section-heading">
-        <div>
-          <h2>Search and Buy New Domain Name</h2>
-          <p>Mock search controls for finding a new domain.</p>
+    <section className="domain-section">
+      <article className="panel-card domain-search-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Search and Buy New Domain Name</h2>
+          </div>
         </div>
-      </div>
-      <div className="search-row">
-        <input type="search" placeholder="Search a domain, e.g. mybrand.com" />
-        <select aria-label="Domain extension" defaultValue=".com">
-          <option>.com</option>
-          <option>.net</option>
-          <option>.org</option>
-          <option>.io</option>
-        </select>
-        <button className="primary-button" type="button">Search</button>
-      </div>
-      <DataTable
-        columns={["Domain Name", "Status", "Renewal", "Action"]}
-        rows={domains.map((domain) => [
-          domain.name,
-          domain.status,
-          domain.renewal,
-          <button className="secondary-button compact" type="button">Manage</button>
-        ])}
-      />
+        <form className="search-row" onSubmit={handleDomainSearch}>
+          <input
+            type="search"
+            placeholder="Search a domain, e.g. mybrand.com"
+            value={domainQuery}
+            onChange={(event) => setDomainQuery(event.target.value)}
+          />
+          <div
+            className="extension-picker"
+            onBlur={() => window.setTimeout(() => setIsDomainExtensionOpen(false), 120)}
+          >
+            <button
+              aria-expanded={isDomainExtensionOpen}
+              aria-haspopup="listbox"
+              className="extension-picker-button"
+              type="button"
+              onClick={() => setIsDomainExtensionOpen((open) => !open)}
+            >
+              <span>{domainExtension}</span>
+              <MenuIcon name="chevron-down" />
+            </button>
+            {isDomainExtensionOpen && (
+              <div className="extension-picker-menu">
+                <input
+                  aria-label="Search domain extension"
+                  type="search"
+                  placeholder="Search extension..."
+                  value={domainExtensionFilter}
+                  onChange={(event) => setDomainExtensionFilter(event.target.value)}
+                />
+                <div className="extension-picker-list" role="listbox">
+                  {visibleDomainExtensions.length ? visibleDomainExtensions.map((extension) => (
+                    <button
+                      aria-selected={extension === domainExtension}
+                      className={extension === domainExtension ? "extension-option active" : "extension-option"}
+                      key={extension}
+                      role="option"
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectDomainExtension(extension)}
+                    >
+                      <span>{extension}</span>
+                      <span>{formatMoney(getDomainExtensionPrice(extension))}</span>
+                    </button>
+                  )) : (
+                    <p className="extension-empty">No extension found.</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          <button className="primary-button" type="submit" disabled={isDomainSearching}>
+            {isDomainSearching ? "Searching..." : "Search"}
+          </button>
+        </form>
+        {domainLookupMessage && <p className="renewal-action-message">{domainLookupMessage}</p>}
+        {!!domainResults.length && (
+          <div className="domain-results">
+            {domainResults.map((result) => (
+              <article className="domain-result-row" key={result.domainName}>
+                <div>
+                  <strong>{result.domainName}</strong>
+                  <span className={result.available ? "status-pill" : "status-pill muted"}>{result.reason}</span>
+                </div>
+                <div className="domain-result-action">
+                  <span>{formatMoney(result.price)}</span>
+                  <button
+                    className="secondary-button compact"
+                    type="button"
+                    disabled={!result.available}
+                    onClick={() => addDomainToCart(result)}
+                  >
+                    Add
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+        {!!domainCart.length && (
+          <div className="domain-cart">
+            <div className="domain-cart-header">
+              <span>Domain Cart</span>
+              <strong>{formatMoney(domainCart.reduce((total, item) => total + item.price, 0))}</strong>
+            </div>
+            {domainCart.map((item) => (
+              <div className="domain-cart-item" key={item.domainName}>
+                <span>{item.domainName}</span>
+                <button className="ghost-button compact" type="button" onClick={() => removeDomainFromCart(item.domainName)}>Remove</button>
+              </div>
+            ))}
+            <button className="primary-button" type="button" disabled={isDomainCheckingOut} onClick={checkoutDomains}>
+              {isDomainCheckingOut ? "Checking..." : "Checkout Domains"}
+            </button>
+            {domainCheckoutMessage && <p className="renewal-action-message">{domainCheckoutMessage}</p>}
+            {domainCheckoutPreview && <CheckoutPreviewCard preview={domainCheckoutPreview} onClose={() => setDomainCheckoutPreview(null)} />}
+          </div>
+        )}
+      </article>
+
+      <article className="panel-card domain-live-panel">
+        <div className="domain-live-header">
+          <div>
+            <span className="status-pill blue">Live domains</span>
+            <h2>My Domain Names</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={loadAccountDomains}>Refresh</button>
+        </div>
+        <div className="search-row compact-search">
+          <input
+            type="search"
+            placeholder="Filter my domains..."
+            value={domainSearch}
+            onChange={(event) => setDomainSearch(event.target.value)}
+          />
+        </div>
+        {isLoadingDomains && <p className="empty-state">Loading domains from domain_profile...</p>}
+        {domainError && (
+          <div className="dashboard-error-panel inline-error">
+            <p>{domainError}</p>
+            <button className="secondary-button compact" type="button" onClick={loadAccountDomains}>Retry</button>
+          </div>
+        )}
+        {!isLoadingDomains && !domainError && !filteredDomains.length && (
+          <p className="empty-state">No domains found for this account.</p>
+        )}
+        {!!filteredDomains.length && (
+          <DataTable
+            columns={["Domain Name", "Status", "Expiration", "Days Left", "Action"]}
+            rows={filteredDomains.map((domain) => [
+              domain.domainName,
+              <span className={domain.status === "completed" ? "status-pill" : "status-pill muted"}>{domain.status}</span>,
+              formatDate(domain.expirationDate),
+              domain.daysLeft ?? "N/A",
+              <button className="secondary-button compact" type="button" onClick={() => setSelectedDomain(domain)}>Manage</button>
+            ])}
+          />
+        )}
+        {selectedDomain && (
+          <aside className="billing-detail-card">
+            <div className="billing-detail-header">
+              <span className="status-pill blue">Domain</span>
+              <button className="ghost-button compact" type="button" onClick={() => setSelectedDomain(null)}>Close</button>
+            </div>
+            <h3>{selectedDomain.domainName}</h3>
+            <dl className="card-meta single">
+              <div><dt>Domain Profile ID</dt><dd>{selectedDomain.id}</dd></div>
+              <div><dt>Client Product ID</dt><dd>{selectedDomain.clientProductId || "N/A"}</dd></div>
+              <div><dt>Status</dt><dd>{selectedDomain.status}</dd></div>
+              <div><dt>Registrar Status</dt><dd>{selectedDomain.registerStatus || "N/A"}</dd></div>
+              <div><dt>Expiration</dt><dd>{formatDate(selectedDomain.expirationDate)}</dd></div>
+              <div><dt>Days Left</dt><dd>{selectedDomain.daysLeft ?? "N/A"}</dd></div>
+            </dl>
+            <button className="primary-button" type="button" disabled>Domain management bridge pending</button>
+          </aside>
+        )}
+      </article>
     </section>
   );
 }
 
 function VpnSection() {
+  const [vpn, setVpn] = useState(null);
+  const [isLoadingVpn, setIsLoadingVpn] = useState(true);
+  const [vpnError, setVpnError] = useState("");
+  const [selectedVpn, setSelectedVpn] = useState(null);
+  const [vpnCheckoutPreview, setVpnCheckoutPreview] = useState(null);
+
+  async function loadVpn() {
+    setIsLoadingVpn(true);
+    setVpnError("");
+    try {
+      const response = await fetch("/api/account/vpn");
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setVpnError(result?.message ?? "Unable to load VPN services.");
+        return;
+      }
+
+      setVpn(result.dashboard);
+    } catch {
+      setVpnError("Unable to reach VPN service.");
+    } finally {
+      setIsLoadingVpn(false);
+    }
+  }
+
+  useEffect(() => {
+    loadVpn();
+  }, []);
+
+  const used = vpn?.used ?? 0;
+  const quota = vpn?.quota ?? 0;
+  const quotaLabel = quota > 0 ? `${used} of ${quota} users` : `${used} active users`;
+  const quotaPercent = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+  const services = vpn?.services ?? [];
+
   return (
-    <section className="card-grid">
-      {vpnServices.map((service) => (
-        <article className="service-card" key={service.name}>
-          <span className="status-pill">Active</span>
-          <h2>{service.name}</h2>
-          <p>{service.details}</p>
-          <dl className="card-meta">
-            <div><dt>Billing</dt><dd>{service.billing}</dd></div>
-            <div><dt>Price</dt><dd>{service.price}</dd></div>
-          </dl>
-          <button className="secondary-button" type="button">Manage</button>
+    <section className="vpn-section">
+      <article className="panel-card vpn-summary">
+        <div className="billing-header">
+          <div>
+            <span className="status-pill blue">Live VPN</span>
+            <h2>VPN Services</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={loadVpn}>Refresh</button>
+        </div>
+        <div className="vpn-quota-row">
+          <div>
+            <span>VPN User Quota</span>
+            <strong>{quotaLabel}</strong>
+          </div>
+          <div className="vpn-quota-meter" aria-label={`VPN quota ${quotaPercent}% used`}>
+            <span style={{ width: `${quotaPercent}%` }} />
+          </div>
+        </div>
+      </article>
+
+      {isLoadingVpn && <p className="empty-state">Loading VPN services...</p>}
+      {vpnError && (
+        <div className="dashboard-error-panel inline-error">
+          <p>{vpnError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadVpn}>Retry</button>
+        </div>
+      )}
+
+      {!isLoadingVpn && !vpnError && !services.length && (
+        <article className="panel-card empty-panel">
+          <p>No VPN services found for this account.</p>
         </article>
-      ))}
-      <article className="service-card purchase-card">
+      )}
+
+      {!!services.length && (
+        <section className="card-grid">
+          {services.map((service) => (
+            <article className="service-card" key={service.vpnClientId}>
+              <span className={service.status === "Online" ? "status-pill" : "status-pill muted"}>{service.status}</span>
+              <h2>{service.user || "VPN User"}</h2>
+              <p>{service.host}</p>
+              <dl className="card-meta">
+                <div><dt>Type</dt><dd>{service.type || "VPN"}</dd></div>
+                <div><dt>Location</dt><dd>{[service.area, service.dataCenter].filter(Boolean).join(" · ") || "Not assigned"}</dd></div>
+              </dl>
+              <button className="secondary-button" type="button" onClick={() => setSelectedVpn(service)}>Manage</button>
+            </article>
+          ))}
+        </section>
+      )}
+
+      {selectedVpn && (
+        <aside className="billing-detail-card">
+          <div className="billing-detail-header">
+            <span className="status-pill blue">VPN User</span>
+            <button className="ghost-button compact" type="button" onClick={() => setSelectedVpn(null)}>Close</button>
+          </div>
+          <h3>{selectedVpn.user || "VPN User"}</h3>
+          <dl className="card-meta single">
+            <div><dt>VPN Client ID</dt><dd>{selectedVpn.vpnClientId}</dd></div>
+            <div><dt>Type</dt><dd>{selectedVpn.type || "VPN"}</dd></div>
+            <div><dt>Host</dt><dd>{selectedVpn.host}</dd></div>
+            <div><dt>Location</dt><dd>{[selectedVpn.area, selectedVpn.dataCenter].filter(Boolean).join(" · ") || "Not assigned"}</dd></div>
+            <div><dt>Status</dt><dd>{selectedVpn.status}</dd></div>
+          </dl>
+          <button className="primary-button" type="button" disabled>VPN management bridge pending</button>
+        </aside>
+      )}
+
+      <article className="service-card purchase-card vpn-purchase-card">
         <span className="status-pill blue">New</span>
         <h2>Buy VPN Services</h2>
-        <p>Mock plan cards for new VPN service purchases.</p>
+        <p>Reserve additional VPN seats for remote access.</p>
         <strong>From $9/month</strong>
-        <button className="primary-button" type="button">Buy VPN</button>
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => setVpnCheckoutPreview({
+            checkoutId: `VPN-${Date.now()}`,
+            title: "VPN checkout preview",
+            itemCount: 1,
+            total: 9,
+            currency: "USD",
+            note: "VPN order/provisioning writes are disabled until VpnAccountService is rebuilt."
+          })}
+        >
+          Buy VPN
+        </button>
       </article>
+      {vpnCheckoutPreview && <CheckoutPreviewCard preview={vpnCheckoutPreview} onClose={() => setVpnCheckoutPreview(null)} />}
     </section>
   );
 }
 
 function AddonSection() {
+  const [addonDashboard, setAddonDashboard] = useState(null);
+  const [activeCategory, setActiveCategory] = useState("SSL");
+  const [addonSearch, setAddonSearch] = useState("");
+  const [addonCart, setAddonCart] = useState([]);
+  const [addonSelections, setAddonSelections] = useState({});
+  const [addonCheckoutPreview, setAddonCheckoutPreview] = useState(null);
+  const [addonCheckoutMessage, setAddonCheckoutMessage] = useState("");
+  const [isAddonCheckingOut, setIsAddonCheckingOut] = useState(false);
+  const [selectedAddon, setSelectedAddon] = useState(null);
+  const [isLoadingAddons, setIsLoadingAddons] = useState(true);
+  const [addonError, setAddonError] = useState("");
+
+  async function loadAddons() {
+    setIsLoadingAddons(true);
+    setAddonError("");
+    try {
+      const response = await fetch("/api/account/addons");
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setAddonError(result?.message ?? "Unable to load add-ons.");
+        return;
+      }
+
+      setAddonDashboard(result.dashboard);
+    } catch {
+      setAddonError("Unable to reach add-on service.");
+    } finally {
+      setIsLoadingAddons(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAddons();
+  }, []);
+
+  const catalog = addonDashboard?.catalog ?? [];
+  const activeAddons = addonDashboard?.activeAddons ?? [];
+  const categories = ["All", ...Array.from(new Set(catalog.map((product) => product.category))).sort()];
+  const visibleCatalog = catalog.filter((product) => {
+    const matchesCategory = activeCategory === "All" || product.category === activeCategory;
+    const search = addonSearch.trim().toLowerCase();
+    const matchesSearch = !search || `${product.name} ${product.description}`.toLowerCase().includes(search);
+    return matchesCategory && matchesSearch;
+  });
+
+  function getAddonSelection(addon) {
+    const selected = addonSelections[addon.productId] ?? {};
+    return {
+      priceId: selected.priceId ?? addon.prices[0]?.priceId,
+      quantity: selected.quantity ?? 1
+    };
+  }
+
+  function updateAddonSelection(productId, patch) {
+    setAddonSelections((selections) => ({
+      ...selections,
+      [productId]: {
+        ...(selections[productId] ?? {}),
+        ...patch
+      }
+    }));
+  }
+
+  function addAddonToCart(addon) {
+    const selection = getAddonSelection(addon);
+    const price = addon.prices.find((item) => item.priceId === Number(selection.priceId)) ?? addon.prices[0];
+    if (!price) return;
+    const quantity = Math.max(1, Math.min(99, Number(selection.quantity) || 1));
+    setAddonCart((items) => {
+      const existing = items.find((item) => item.productId === addon.productId && item.priceId === price.priceId);
+      if (existing) {
+        return items.map((item) => item === existing ? { ...item, qty: Math.min(99, item.qty + quantity) } : item);
+      }
+      return [...items, { productId: addon.productId, priceId: price.priceId, name: addon.name, term: price.paymentTerm, amount: price.amount, currency: price.currency, qty: quantity }];
+    });
+  }
+
+  function removeAddonFromCart(productId, priceId) {
+    setAddonCart((items) => items.filter((item) => item.productId !== productId || item.priceId !== priceId));
+  }
+
+  async function checkoutAddons() {
+    setIsAddonCheckingOut(true);
+    setAddonCheckoutMessage("");
+    setAddonCheckoutPreview(null);
+
+    try {
+      const response = await fetch("/api/account/addons/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: addonCart.map((item) => ({ productId: item.productId, priceId: item.priceId, quantity: item.qty })) })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setAddonCheckoutMessage(result?.message ?? "Unable to create add-on checkout.");
+        return;
+      }
+
+      setAddonCheckoutPreview(toCheckoutPreview(result.order, addonCart.length));
+      setAddonCheckoutMessage(result.message);
+    } catch {
+      setAddonCheckoutMessage("Unable to reach add-on checkout service.");
+    } finally {
+      setIsAddonCheckingOut(false);
+    }
+  }
+
+  const addonCartTotal = addonCart.reduce((total, item) => total + (Number(item.amount) * item.qty), 0);
+
   return (
-    <section className="panel-card">
+    <section className="addon-section">
+      <article className="panel-card addon-catalog-panel">
+        <div className="billing-header">
+          <div>
+            <span className="status-pill blue">Live catalog</span>
+            <h2>Available Add-Ons</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={loadAddons}>Refresh</button>
+        </div>
+        <div className="search-row compact-search">
+          <input
+            type="search"
+            placeholder="Search SSL, backup, database, RAM..."
+            value={addonSearch}
+            onChange={(event) => setAddonSearch(event.target.value)}
+          />
+        </div>
+        {!!categories.length && (
+          <div className="addon-category-tabs" role="tablist" aria-label="Add-on categories">
+            {categories.map((category) => (
+              <button
+                aria-selected={category === activeCategory}
+                className={category === activeCategory ? "tab active" : "tab"}
+                key={category}
+                role="tab"
+                type="button"
+                onClick={() => setActiveCategory(category)}
+              >
+                {category}
+              </button>
+            ))}
+          </div>
+        )}
+        {isLoadingAddons && <p className="empty-state">Loading add-on catalog...</p>}
+        {addonError && (
+          <div className="dashboard-error-panel inline-error">
+            <p>{addonError}</p>
+            <button className="secondary-button compact" type="button" onClick={loadAddons}>Retry</button>
+          </div>
+        )}
+        {!isLoadingAddons && !addonError && !visibleCatalog.length && (
+          <p className="empty-state">No add-ons found.</p>
+        )}
+        {!!visibleCatalog.length && (
+          <DataTable
+            columns={["Product Name", "Description", "Billing Terms", "Qty", "Action"]}
+            rows={visibleCatalog.map((addon) => {
+              const selection = getAddonSelection(addon);
+              return [
+                <span className="addon-product-name">{addon.name}</span>,
+                addon.description,
+                <select
+                  className="inline-select"
+                  aria-label={`${addon.name} billing term`}
+                  value={selection.priceId ?? ""}
+                  onChange={(event) => updateAddonSelection(addon.productId, { priceId: Number(event.target.value) })}
+                >
+                  {addon.prices.length ? addon.prices.map((price) => (
+                    <option key={price.priceId} value={price.priceId}>
+                      {formatPaymentTerm(price.paymentTerm)} {formatMoney(price.amount, price.currency)}
+                    </option>
+                  )) : <option value="">No price available</option>}
+                </select>,
+                <input
+                  className="qty-input"
+                  type="number"
+                  min="1"
+                  max="99"
+                  value={selection.quantity}
+                  aria-label={`${addon.name} quantity`}
+                  onChange={(event) => updateAddonSelection(addon.productId, { quantity: event.target.value })}
+                />,
+                <button className="secondary-button compact" type="button" onClick={() => addAddonToCart(addon)}>Add</button>
+              ];
+            })}
+          />
+        )}
+        {!!addonCart.length && (
+          <div className="domain-cart">
+            <div className="domain-cart-header">
+              <span>Add-On Order Summary</span>
+              <strong>{formatMoney(addonCartTotal)}</strong>
+            </div>
+            {addonCart.map((item) => (
+              <div className="domain-cart-item" key={`${item.productId}-${item.priceId}`}>
+                <span>{item.name} · {formatPaymentTerm(item.term)} · Qty {item.qty}</span>
+                <button className="ghost-button compact" type="button" onClick={() => removeAddonFromCart(item.productId, item.priceId)}>Remove</button>
+              </div>
+            ))}
+            <button className="primary-button" type="button" disabled={isAddonCheckingOut} onClick={checkoutAddons}>
+              {isAddonCheckingOut ? "Checking..." : "Checkout Add-Ons"}
+            </button>
+            {addonCheckoutMessage && <p className="renewal-action-message">{addonCheckoutMessage}</p>}
+            {addonCheckoutPreview && <CheckoutPreviewCard preview={addonCheckoutPreview} onClose={() => setAddonCheckoutPreview(null)} />}
+          </div>
+        )}
+      </article>
+
+      <article className="panel-card addon-active-panel">
+        <div className="billing-header">
+          <div>
+            <span className="status-pill">Current</span>
+            <h2>My Active Add-Ons</h2>
+          </div>
+          <span className="muted-count">{activeAddons.length} items</span>
+        </div>
+        {isLoadingAddons && <p className="empty-state">Loading active add-ons...</p>}
+        {!isLoadingAddons && !activeAddons.length && <p className="empty-state">No active add-ons found for this account.</p>}
+        {!!activeAddons.length && (
+          <DataTable
+            columns={["Product", "Status", "Due Date", "Term", "Amount", "Action"]}
+            rows={activeAddons.map((addon) => [
+              addon.name,
+              <span className={addon.status === "Active" ? "status-pill" : "status-pill muted"}>{addon.status}</span>,
+              formatDate(addon.nextDueDate),
+              addon.paymentTerm || "N/A",
+              formatMoney(addon.amount),
+              <button className="secondary-button compact" type="button" onClick={() => setSelectedAddon(addon)}>Manage</button>
+            ])}
+          />
+        )}
+        {selectedAddon && (
+          <aside className="billing-detail-card">
+            <div className="billing-detail-header">
+              <span className="status-pill blue">Add-On</span>
+              <button className="ghost-button compact" type="button" onClick={() => setSelectedAddon(null)}>Close</button>
+            </div>
+            <h3>{selectedAddon.name}</h3>
+            <dl className="card-meta single">
+              <div><dt>Client Product ID</dt><dd>{selectedAddon.clientProductId}</dd></div>
+              <div><dt>Product ID</dt><dd>{selectedAddon.productId}</dd></div>
+              <div><dt>Description</dt><dd>{selectedAddon.description}</dd></div>
+              <div><dt>Status</dt><dd>{selectedAddon.status}</dd></div>
+              <div><dt>Next Due Date</dt><dd>{formatDate(selectedAddon.nextDueDate)}</dd></div>
+              <div><dt>Payment Term</dt><dd>{selectedAddon.paymentTerm || "N/A"}</dd></div>
+              <div><dt>Amount</dt><dd>{formatMoney(selectedAddon.amount)}</dd></div>
+            </dl>
+            <button className="primary-button" type="button" disabled>Add-on management bridge pending</button>
+          </aside>
+        )}
+      </article>
+    </section>
+  );
+}
+
+function BillingSection() {
+  const billingTabsLive = [
+    ["purchases", "My Purchases"],
+    ["active", "Current Active Products"],
+    ["balance", "Account Balance"],
+    ["renewal", "Renewal Notice"]
+  ];
+  const [activeTab, setActiveTab] = useState("purchases");
+  const [billing, setBilling] = useState(null);
+  const [isLoadingBilling, setIsLoadingBilling] = useState(true);
+  const [billingError, setBillingError] = useState("");
+
+  async function loadBilling() {
+    setIsLoadingBilling(true);
+    setBillingError("");
+    try {
+      const response = await fetch("/api/account/billing");
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setBillingError(result?.message ?? "Unable to load billing.");
+        return;
+      }
+
+      setBilling(result.dashboard);
+    } catch {
+      setBillingError("Unable to reach billing service.");
+    } finally {
+      setIsLoadingBilling(false);
+    }
+  }
+
+  useEffect(() => {
+    loadBilling();
+  }, []);
+
+  return (
+    <section className="panel-card billing-panel">
+      <div className="billing-header">
+        <div>
+          <span className="status-pill blue">Live billing</span>
+          <h2>Billing</h2>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={loadBilling}>Refresh</button>
+      </div>
+      <div className="tabs" role="tablist" aria-label="Billing tabs">
+        {billingTabsLive.map(([id, label]) => (
+          <button
+            aria-selected={id === activeTab}
+            className={id === activeTab ? "tab active" : "tab"}
+            key={id}
+            role="tab"
+            type="button"
+            onClick={() => setActiveTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {isLoadingBilling && <p className="empty-state">Loading billing data...</p>}
+      {billingError && (
+        <div className="dashboard-error-panel inline-error">
+          <p>{billingError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadBilling}>Retry</button>
+        </div>
+      )}
+      {!isLoadingBilling && !billingError && (
+        <BillingTabPanel activeTab={activeTab} billing={billing} onReloadBilling={loadBilling} />
+      )}
+    </section>
+  );
+}
+
+function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
+  const [selectedPurchase, setSelectedPurchase] = useState(null);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [renewalPreview, setRenewalPreview] = useState(null);
+  const [renewalMessage, setRenewalMessage] = useState("");
+  const [renewalBusyId, setRenewalBusyId] = useState(null);
+  const [invoiceMessage, setInvoiceMessage] = useState("");
+  const [invoiceBusyId, setInvoiceBusyId] = useState(null);
+  const [balanceActionMessage, setBalanceActionMessage] = useState("");
+  const [productActionMessage, setProductActionMessage] = useState("");
+
+  async function loadInvoice(purchase) {
+    setInvoiceBusyId(purchase.orderId);
+    setInvoiceMessage("");
+    setSelectedPurchase(null);
+
+    try {
+      const response = await fetch(`/api/account/billing/orders/${purchase.orderId}/invoice`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setInvoiceMessage(result?.message ?? "Unable to load invoice.");
+        return;
+      }
+
+      setSelectedPurchase(result.invoice);
+    } catch {
+      setInvoiceMessage("Unable to reach invoice service.");
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  }
+
+  async function runRenewalAction(product, action) {
+    setRenewalBusyId(`${action}-${product.clientProductId}`);
+    setRenewalMessage("");
+
+    try {
+      const response = await fetch(`/api/account/renewals/${product.clientProductId}/${action}`, { method: "POST" });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setRenewalMessage(result?.message ?? `Unable to ${action} renewal.`);
+        return;
+      }
+
+      if (action === "renew") {
+        setRenewalPreview(result.renewal);
+        setRenewalMessage(result.message);
+      } else {
+        setRenewalPreview(null);
+        setRenewalMessage(result.message);
+        await onReloadBilling();
+      }
+    } catch {
+      setRenewalMessage(`Unable to reach the renewal ${action} service.`);
+    } finally {
+      setRenewalBusyId(null);
+    }
+  }
+
+  async function createBillingRenewalCheckout(renewal) {
+    const response = await fetch(`/api/account/renewals/${renewal.clientProductId}/checkout`, { method: "POST" });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.message ?? "Unable to create renewal checkout.");
+    }
+
+    return result.order;
+  }
+
+  if (activeTab === "balance") {
+    return (
+      <div className="billing-balance-layout">
+        <div className="billing-balance-card">
+          <span>Available Balance</span>
+          <strong>{formatMoney(billing?.balance?.amount, billing?.balance?.currency)}</strong>
+          <p>{billing?.balance?.source}</p>
+        </div>
+        <div className="billing-action-card">
+          <h3>Add Funds</h3>
+          <p>Deposit and transfer checks are prepared without creating payment records.</p>
+          <div className="billing-action-row">
+            <button className="primary-button" type="button" onClick={() => setBalanceActionMessage("Deposit checkout bridge pending. Legacy DepositCredit writes are disabled in this preview.")}>Deposit Money</button>
+            <button className="secondary-button" type="button" onClick={() => setBalanceActionMessage("Transfer credit bridge pending. Legacy TransferCredit writes are disabled in this preview.")}>Transfer Credit</button>
+          </div>
+          {balanceActionMessage && <p className="renewal-action-message">{balanceActionMessage}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  if (activeTab === "active") {
+    const products = billing?.activeProducts ?? [];
+    return products.length ? (
+      <div className="billing-detail-layout">
+        {productActionMessage && <p className="renewal-action-message">{productActionMessage}</p>}
+        <DataTable
+          columns={["Product", "Description", "Status", "Due Date", "Amount", "Action"]}
+          rows={products.map((product) => [
+            product.name,
+            product.description,
+            <span className={product.status === "Active" ? "status-pill" : "status-pill muted"}>{product.status}</span>,
+            formatDate(product.nextDueDate),
+            formatMoney(product.amount),
+            <button className="secondary-button compact" type="button" onClick={() => setSelectedProduct(product)}>Details</button>
+          ])}
+        />
+        {selectedProduct && (
+          <BillingProductDetail
+            product={selectedProduct}
+            onClose={() => setSelectedProduct(null)}
+            onManage={() => setProductActionMessage("Product management bridge pending. Use hosting/add-on/domain sections for live read-only detail for now.")}
+            onRenew={() => runRenewalAction(selectedProduct, "renew")}
+          />
+        )}
+        {renewalMessage && <p className="renewal-action-message">{renewalMessage}</p>}
+        {renewalPreview && <RenewalCheckoutPreview renewal={renewalPreview} onClose={() => setRenewalPreview(null)} onCheckout={createBillingRenewalCheckout} />}
+      </div>
+    ) : <p className="empty-state">No active products found.</p>;
+  }
+
+  if (activeTab === "renewal") {
+    const renewals = billing?.renewalNotices ?? [];
+    return renewals.length ? (
+      <div className="billing-detail-layout">
+        {renewalMessage && <p className="renewal-action-message">{renewalMessage}</p>}
+        <DataTable
+          columns={["Product", "Due Date", "Days Left", "Status", "Action"]}
+          rows={renewals.map((product) => [
+            product.name,
+            formatDate(product.nextDueDate),
+            product.daysLeft ?? "N/A",
+            <span className={product.daysLeft < 0 ? "status-pill muted" : "status-pill"}>{product.daysLeft < 0 ? "Past due" : "Upcoming"}</span>,
+            <div className="billing-action-row compact-row">
+              <button
+                className="secondary-button compact"
+                type="button"
+                disabled={renewalBusyId !== null}
+                onClick={() => runRenewalAction(product, "renew")}
+              >
+                {renewalBusyId === `renew-${product.clientProductId}` ? "Checking..." : "Renew"}
+              </button>
+              <button
+                className="ghost-button compact"
+                type="button"
+                disabled={renewalBusyId !== null}
+                onClick={() => runRenewalAction(product, "hide")}
+              >
+                {renewalBusyId === `hide-${product.clientProductId}` ? "Hiding..." : "Hide"}
+              </button>
+            </div>
+          ])}
+        />
+        {renewalPreview && <RenewalCheckoutPreview renewal={renewalPreview} onClose={() => setRenewalPreview(null)} onCheckout={createBillingRenewalCheckout} />}
+      </div>
+    ) : <p className="empty-state">No renewal notices found.</p>;
+  }
+
+  const purchases = billing?.purchases ?? [];
+  return purchases.length ? (
+    <div className="billing-detail-layout">
+      {invoiceMessage && <p className="renewal-action-message">{invoiceMessage}</p>}
       <DataTable
-        columns={["Product Name", "Description", "Billing Terms", "Qty", "Action"]}
-        rows={addons.map((addon) => [
-          addon.name,
-          addon.description,
-          addon.terms,
-          addon.qty,
-          <button className="secondary-button compact" type="button">Add</button>
+        columns={["Date", "Product", "Term", "Amount", "Status", "Action"]}
+        rows={purchases.map((purchase) => [
+          formatDate(purchase.createDate),
+          purchase.name,
+          purchase.paymentTerm,
+          formatMoney(purchase.amount),
+          <span className={purchase.paymentStatus === "completed" ? "status-pill" : "status-pill muted"}>{purchase.paymentStatus}</span>,
+          <button
+            className="secondary-button compact"
+            type="button"
+            disabled={invoiceBusyId !== null}
+            onClick={() => loadInvoice(purchase)}
+          >
+            {invoiceBusyId === purchase.orderId ? "Loading..." : "Invoice"}
+          </button>
         ])}
       />
+      {selectedPurchase && <BillingPurchaseDetail purchase={selectedPurchase} onClose={() => setSelectedPurchase(null)} />}
+    </div>
+  ) : <p className="empty-state">No purchases found.</p>;
+}
+
+function CheckoutPreviewCard({ preview, onClose }) {
+  return (
+    <aside className="billing-detail-card checkout-preview-card">
+      <div className="billing-detail-header">
+        <span className="status-pill blue">{preview.isOrder ? "Checkout Ready" : "Checkout Preview"}</span>
+        <button className="ghost-button compact" type="button" onClick={onClose}>Close</button>
+      </div>
+      <h3>{preview.title}</h3>
+      <dl className="card-meta single">
+        <div><dt>Checkout ID</dt><dd>{preview.checkoutId}</dd></div>
+        <div><dt>Items</dt><dd>{preview.itemCount}</dd></div>
+        <div><dt>Total</dt><dd>{formatMoney(preview.total, preview.currency)}</dd></div>
+      </dl>
+      <p>{preview.note}</p>
+      {preview.checkoutUrl ? (
+        <a className="primary-button as-link" href={preview.checkoutUrl}>Open Checkout</a>
+      ) : (
+        <button className="primary-button" type="button" disabled>Checkout unavailable</button>
+      )}
+    </aside>
+  );
+}
+
+function RenewalCheckoutPreview({ renewal, onClose, onCheckout }) {
+  const [checkoutOrder, setCheckoutOrder] = useState(null);
+  const [checkoutMessage, setCheckoutMessage] = useState("");
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+
+  async function createCheckout() {
+    if (!onCheckout) return;
+    setIsCheckingOut(true);
+    setCheckoutMessage("");
+    setCheckoutOrder(null);
+
+    try {
+      const order = await onCheckout(renewal);
+      setCheckoutOrder(order);
+      setCheckoutMessage("Checkout order created.");
+    } catch (error) {
+      setCheckoutMessage(error.message || "Unable to create checkout order.");
+    } finally {
+      setIsCheckingOut(false);
+    }
+  }
+
+  return (
+    <aside className="billing-detail-card">
+      <div className="billing-detail-header">
+        <span className="status-pill blue">Renewal Preview</span>
+        <button className="ghost-button compact" type="button" onClick={onClose}>Close</button>
+      </div>
+      <h3>{renewal.name}</h3>
+      <dl>
+        <div><dt>Client Product ID</dt><dd>{renewal.clientProductId}</dd></div>
+        <div><dt>Description</dt><dd>{renewal.description}</dd></div>
+        <div><dt>Billing Term</dt><dd>{renewal.paymentTerm}</dd></div>
+        <div><dt>Amount</dt><dd>{formatMoney(renewal.amount, renewal.currency)}</dd></div>
+        <div><dt>Current Due Date</dt><dd>{formatDate(renewal.nextDueDate)}</dd></div>
+      </dl>
+      <p>{renewal.note}</p>
+      {!checkoutOrder && (
+        <button className="primary-button" type="button" disabled={isCheckingOut || !onCheckout} onClick={createCheckout}>
+          {isCheckingOut ? "Creating..." : "Create Checkout"}
+        </button>
+      )}
+      {checkoutMessage && <p className="renewal-action-message">{checkoutMessage}</p>}
+      {checkoutOrder && (
+        <div className="checkout-ready-row">
+          <span>{checkoutOrder.guid}</span>
+          <a className="primary-button as-link" href={checkoutOrder.checkoutUrl}>Open Checkout</a>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function BillingPurchaseDetail({ purchase, onClose }) {
+  return (
+    <aside className="billing-detail-card">
+      <div className="billing-detail-header">
+        <span className="status-pill">Invoice</span>
+        <button className="ghost-button compact" type="button" onClick={onClose}>Close</button>
+      </div>
+      <h3>{purchase.name}</h3>
+      <dl className="card-meta single">
+        <div><dt>Order ID</dt><dd>{purchase.orderId}</dd></div>
+        <div><dt>Product ID</dt><dd>{purchase.productId}</dd></div>
+        <div><dt>Description</dt><dd>{purchase.description}</dd></div>
+        <div><dt>Payment Term</dt><dd>{purchase.paymentTerm}</dd></div>
+        <div><dt>Payment Method</dt><dd>{purchase.paymentMethod}</dd></div>
+        <div><dt>Order Status</dt><dd>{purchase.orderStatus}</dd></div>
+        <div><dt>Payment Status</dt><dd>{purchase.paymentStatus}</dd></div>
+        <div><dt>Amount</dt><dd>{formatMoney(purchase.amount)}</dd></div>
+        <div><dt>Paid Amount</dt><dd>{formatMoney(purchase.paidAmount)}</dd></div>
+        <div><dt>Fees</dt><dd>{formatMoney(purchase.fees)}</dd></div>
+        <div><dt>Transaction</dt><dd>{purchase.transactionCode || "N/A"}</dd></div>
+      </dl>
+      <button className="primary-button" type="button" disabled>Printable invoice pending</button>
+    </aside>
+  );
+}
+
+function BillingProductDetail({ product, onClose, onRenew, onManage }) {
+  return (
+    <aside className="billing-detail-card">
+      <div className="billing-detail-header">
+        <span className="status-pill">Product</span>
+        <button className="ghost-button compact" type="button" onClick={onClose}>Close</button>
+      </div>
+      <h3>{product.name}</h3>
+      <dl className="card-meta single">
+        <div><dt>Client Product ID</dt><dd>{product.clientProductId}</dd></div>
+        <div><dt>Description</dt><dd>{product.description}</dd></div>
+        <div><dt>Type</dt><dd>{product.productType}</dd></div>
+        <div><dt>Status</dt><dd>{product.status}</dd></div>
+        <div><dt>Next Due Date</dt><dd>{formatDate(product.nextDueDate)}</dd></div>
+        <div><dt>Payment Term</dt><dd>{product.paymentTerm || "N/A"}</dd></div>
+      </dl>
+      <div className="billing-action-row">
+        <button className="primary-button" type="button" onClick={onRenew}>Renew</button>
+        <button className="secondary-button" type="button" onClick={onManage}>Manage</button>
+      </div>
+    </aside>
+  );
+}
+
+function formatMoney(amount, currency = "USD") {
+  if (amount === null || amount === undefined || amount === "") return "N/A";
+  const value = Number(amount);
+  if (Number.isNaN(value)) return amount;
+  return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(value);
+}
+
+function formatPaymentTerm(term) {
+  const labels = {
+    annually: "1 Year",
+    "semi-annually": "6 Months",
+    quarterly: "3 Months",
+    monthly: "Monthly",
+    biennially: "2 Years",
+    "3y": "3 Years",
+    none: "One Time"
+  };
+  return labels[term] ?? term;
+}
+
+function AffiliateSection() {
+  const tabs = [
+    ["getting-started", "Getting Started"],
+    ["referrals", "My Referrals"],
+    ["pending", "Pending Commission"],
+    ["current", "Current Commission"],
+    ["withdraw", "Withdraw"],
+    ["pay-log", "Pay Log"],
+    ["promo-assets", "Promo Assets"]
+  ];
+  const [activeTab, setActiveTab] = useState("getting-started");
+  const [affiliate, setAffiliate] = useState(null);
+  const [isLoadingAffiliate, setIsLoadingAffiliate] = useState(true);
+  const [affiliateError, setAffiliateError] = useState("");
+
+  async function loadAffiliate() {
+    setIsLoadingAffiliate(true);
+    setAffiliateError("");
+    try {
+      const response = await fetch("/api/account/affiliate");
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setAffiliateError(result?.message ?? "Unable to load affiliate data.");
+        return;
+      }
+
+      setAffiliate(result.dashboard);
+    } catch {
+      setAffiliateError("Unable to reach affiliate service.");
+    } finally {
+      setIsLoadingAffiliate(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAffiliate();
+  }, []);
+
+  const summary = affiliate?.summary;
+  const commissions = affiliate?.commissions ?? [];
+  const pendingCommissions = commissions.filter((commission) => !commission.isReleased);
+  const currentCommissions = commissions.filter((commission) => commission.isReleased);
+
+  return (
+    <section className="panel-card affiliate-panel">
+      <div className="billing-header">
+        <div>
+          <span className="status-pill blue">Pays 60%</span>
+          <h2>Affiliate Program</h2>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={loadAffiliate}>Refresh</button>
+      </div>
+
+      <div className="affiliate-summary-grid">
+        <AffiliateMetric label="Referrals" value={summary?.totalReferrals ?? "..."} />
+        <AffiliateMetric label="Paid Referrals" value={summary?.paidReferrals ?? "..."} />
+        <AffiliateMetric label="Pending" value={formatMoney(summary?.pendingCommission ?? 0)} />
+        <AffiliateMetric label="Available" value={formatMoney(summary?.availableCommission ?? 0)} />
+      </div>
+
+      <div className="tabs" role="tablist" aria-label="Affiliate tabs">
+        {tabs.map(([id, label]) => (
+          <button
+            aria-selected={id === activeTab}
+            className={id === activeTab ? "tab active" : "tab"}
+            key={id}
+            role="tab"
+            type="button"
+            onClick={() => setActiveTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {isLoadingAffiliate && <p className="empty-state">Loading affiliate data...</p>}
+      {affiliateError && (
+        <div className="dashboard-error-panel inline-error">
+          <p>{affiliateError}</p>
+          <button className="secondary-button compact" type="button" onClick={loadAffiliate}>Retry</button>
+        </div>
+      )}
+      {!isLoadingAffiliate && !affiliateError && (
+        <div className="tab-panel" role="tabpanel">
+          {activeTab === "getting-started" && <AffiliateGettingStarted />}
+          {activeTab === "referrals" && <AffiliateReferrals referrals={affiliate?.referrals ?? []} />}
+          {activeTab === "pending" && <AffiliateCommissions commissions={pendingCommissions} emptyText="No pending commissions found." showRelease />}
+          {activeTab === "current" && <AffiliateCommissions commissions={currentCommissions} emptyText="No released commissions found." />}
+          {activeTab === "withdraw" && <AffiliateWithdraw summary={summary} />}
+          {activeTab === "pay-log" && <AffiliatePayLog payouts={affiliate?.payouts ?? []} />}
+          {activeTab === "promo-assets" && <AffiliatePromoAssets />}
+        </div>
+      )}
     </section>
+  );
+}
+
+function AffiliateMetric({ label, value }) {
+  return (
+    <div className="affiliate-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function AffiliateReferrals({ referrals }) {
+  if (!referrals.length) return <p className="empty-state">No referrals found.</p>;
+  return (
+    <DataTable
+      columns={["Member ID", "Status", "Start Date", "Qualified"]}
+      rows={referrals.map((referral) => [
+        referral.login,
+        <span className={referral.isPaid ? "status-pill" : "status-pill muted"}>{referral.isPaid ? "Converted to Paid" : "Still Trial"}</span>,
+        formatDate(referral.accountStartDate),
+        referral.status || "N/A"
+      ])}
+    />
+  );
+}
+
+function AffiliateCommissions({ commissions, emptyText, showRelease = false }) {
+  if (!commissions.length) return <p className="empty-state">{emptyText}</p>;
+  return (
+    <DataTable
+      columns={showRelease ? ["Date", "Member ID", "Product", "Release Date", "Amount"] : ["Date", "Member ID", "Product", "Description", "Amount"]}
+      rows={commissions.map((commission) => showRelease ? [
+        formatDate(commission.createDate),
+        commission.customerLogin,
+        commission.productName,
+        formatDate(commission.releaseDate),
+        formatMoney(commission.amount)
+      ] : [
+        formatDate(commission.createDate),
+        commission.customerLogin,
+        commission.productName,
+        commission.description,
+        formatMoney(commission.amount)
+      ])}
+    />
+  );
+}
+
+function AffiliateWithdraw({ summary }) {
+  const available = summary?.availableCommission ?? 0;
+  const [creditAmount, setCreditAmount] = useState(available.toFixed(2));
+  const [paypalAmount, setPaypalAmount] = useState(Math.max(available, 0).toFixed(2));
+  const [paypalAccount, setPaypalAccount] = useState("");
+  const [withdrawPreview, setWithdrawPreview] = useState(null);
+  const [withdrawMessage, setWithdrawMessage] = useState("");
+  const [isCheckingWithdraw, setIsCheckingWithdraw] = useState(false);
+
+  useEffect(() => {
+    setCreditAmount(available.toFixed(2));
+    setPaypalAmount(Math.max(available, 0).toFixed(2));
+  }, [available]);
+
+  async function checkWithdraw(method, amountText) {
+    setIsCheckingWithdraw(true);
+    setWithdrawMessage("");
+    setWithdrawPreview(null);
+
+    try {
+      const response = await fetch("/api/account/affiliate/withdraw-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(amountText), method })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setWithdrawMessage(result?.message ?? "Unable to check withdraw.");
+        return;
+      }
+
+      setWithdrawPreview(result.preview);
+      setWithdrawMessage(result.preview?.note ?? result.message);
+    } catch {
+      setWithdrawMessage("Unable to reach affiliate withdraw service.");
+    } finally {
+      setIsCheckingWithdraw(false);
+    }
+  }
+
+  return (
+    <div className="affiliate-withdraw-grid">
+      <article className="affiliate-withdraw-card">
+        <h3>Convert Commission to Account Balance</h3>
+        <p>Convert available affiliate commission into account funds.</p>
+        <label>
+          Amount
+          <input type="number" min="0" step="0.01" value={creditAmount} onChange={(event) => setCreditAmount(event.target.value)} />
+        </label>
+        <button className="primary-button" type="button" disabled={isCheckingWithdraw} onClick={() => checkWithdraw("account-credit", creditAmount)}>
+          {isCheckingWithdraw ? "Checking..." : "Convert to Credit"}
+        </button>
+      </article>
+      <article className="affiliate-withdraw-card">
+        <h3>Withdraw to PayPal</h3>
+        <p>You can withdraw when your earnings reach $100. Payments are sent through PayPal mass payout.</p>
+        <label>
+          PayPal Account
+          <input type="email" placeholder="paypal@example.com" value={paypalAccount} onChange={(event) => setPaypalAccount(event.target.value)} />
+        </label>
+        <label>
+          Amount
+          <input type="number" min="100" step="0.01" value={paypalAmount} onChange={(event) => setPaypalAmount(event.target.value)} />
+        </label>
+        <button className="secondary-button" type="button" disabled={isCheckingWithdraw || !paypalAccount.trim()} onClick={() => checkWithdraw("paypal", paypalAmount)}>
+          {isCheckingWithdraw ? "Checking..." : "Submit Withdraw"}
+        </button>
+      </article>
+      {(withdrawMessage || withdrawPreview) && (
+        <article className="affiliate-withdraw-card withdraw-preview-card">
+          <h3>Withdraw Check</h3>
+          {withdrawMessage && <p>{withdrawMessage}</p>}
+          {withdrawPreview && (
+            <dl className="card-meta single">
+              <div><dt>Requested</dt><dd>{formatMoney(withdrawPreview.amount)}</dd></div>
+              <div><dt>Available</dt><dd>{formatMoney(withdrawPreview.availableCommission)}</dd></div>
+              <div><dt>Minimum</dt><dd>{formatMoney(withdrawPreview.minimumAmount)}</dd></div>
+              <div><dt>Paid referrals this year</dt><dd>{withdrawPreview.paidReferralsThisYear}</dd></div>
+              <div><dt>Status</dt><dd>{withdrawPreview.eligible ? "Eligible" : "Not eligible"}</dd></div>
+            </dl>
+          )}
+        </article>
+      )}
+    </div>
+  );
+}
+
+function AffiliatePayLog({ payouts }) {
+  if (!payouts.length) return <p className="empty-state">No payout history found.</p>;
+  return (
+    <DataTable
+      columns={["Date", "Method", "Description", "Amount", "Status"]}
+      rows={payouts.map((payout) => [
+        formatDate(payout.createDate),
+        payout.method,
+        payout.description,
+        formatMoney(payout.amount),
+        <span className={payout.status ? "status-pill" : "status-pill muted"}>{payout.status || "Recorded"}</span>
+      ])}
+    />
+  );
+}
+
+function AffiliatePromoAssets() {
+  const [copiedSize, setCopiedSize] = useState("");
+
+  async function copyBannerCode(banner) {
+    if (await writeTextToClipboard(banner.code)) {
+      setCopiedSize(banner.size);
+      window.setTimeout(() => setCopiedSize(""), 1600);
+    } else {
+      setCopiedSize("failed");
+      window.setTimeout(() => setCopiedSize(""), 1600);
+    }
+  }
+
+  return (
+    <div className="promo-assets-grid">
+      {affiliateBanners.map((banner) => (
+        <article className="promo-asset-card" key={banner.size}>
+          <span className="status-pill">{banner.size}</span>
+          <p>{banner.url}</p>
+          <textarea readOnly value={banner.code} aria-label={`${banner.size} affiliate banner code`} />
+          <button className="secondary-button compact" type="button" onClick={() => copyBannerCode(banner)}>
+            {copiedSize === banner.size ? "Copied" : copiedSize === "failed" ? "Copy Failed" : "Copy Code"}
+          </button>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -1199,7 +2964,18 @@ function TabbedSection({ title, tabs, showHeading = true }) {
 }
 
 function AffiliateGettingStarted() {
-  const bannerCode = '<a href="https://www.SmarterASP.NET/index?r=openreward"><img src="https://www.SmarterASP.NET/affiliate/728X90.gif" border="0"></a>';
+  const [activeBanner, setActiveBanner] = useState(affiliateBanners[0]);
+  const [copiedBanner, setCopiedBanner] = useState("");
+
+  async function copyActiveBanner() {
+    if (await writeTextToClipboard(activeBanner.code)) {
+      setCopiedBanner(activeBanner.size);
+      window.setTimeout(() => setCopiedBanner(""), 1600);
+    } else {
+      setCopiedBanner("failed");
+      window.setTimeout(() => setCopiedBanner(""), 1600);
+    }
+  }
 
   return (
     <div className="affiliate-start">
@@ -1227,23 +3003,27 @@ function AffiliateGettingStarted() {
           </p>
           <p>You can also use the following banners we provide:</p>
           <div className="banner-tabs" aria-label="Banner sizes">
-            <button className="active" type="button">728X90</button>
-            <button type="button">468x60</button>
-            <button type="button">300x250</button>
-            <button type="button">234x60</button>
+            {affiliateBanners.map((banner) => (
+              <button
+                className={activeBanner.size === banner.size ? "active" : ""}
+                key={banner.size}
+                type="button"
+                onClick={() => setActiveBanner(banner)}
+              >
+                {banner.size}
+              </button>
+            ))}
           </div>
           <div className="affiliate-code-row">
             <span>Code:</span>
-            <button type="button">Copy</button>
+            <button type="button" onClick={copyActiveBanner}>
+              {copiedBanner === activeBanner.size ? "Copied" : copiedBanner === "failed" ? "Copy Failed" : "Copy"}
+            </button>
           </div>
-          <textarea readOnly value={bannerCode} aria-label="Affiliate banner code" />
+          <textarea readOnly value={activeBanner.code} aria-label="Affiliate banner code" />
           <p>Example:</p>
-          <div className="affiliate-banner-preview">
-            <div>
-              <span>SmarterASP.NET</span>
-              <strong>Looking for fast and affordable ASP.NET hosting?</strong>
-            </div>
-            <div className="trial-pill">60-Day Free Trial</div>
+          <div className="affiliate-real-banner-preview">
+            <img src={activeBanner.url} alt={`${activeBanner.size} affiliate banner preview`} />
           </div>
         </div>
         <a className="affiliate-terms" href="#affiliate-terms">*Click here to see our Affiliate Terms and Condition</a>
