@@ -89,6 +89,12 @@ Shared API behavior:
 - `RemoteCommandGateway`: wraps old `remote_cmd2` and scheduled-task host calls. It must expose only whitelisted operations.
 - `WorkqueueRepository`: inserts and reads legacy `workqueue` rows exactly as legacy workers expect.
 
+Agent transport rule:
+
+- When encrypted values are stored in legacy database columns, match the exact Classic ASP/Persits output before writing.
+- When encrypted values are only short-lived server-to-server request parameters, use rebuilt encryption instead of Persits, decrypt immediately in the Classic ASP agent, then validate ownership/path/domain rules before running the action.
+- Port `830` agents are assumed to be reachable only from whitelisted ASP.NET server IPs; never expose those agent URLs directly to browser JavaScript.
+
 ### Shared Workqueue Contract
 
 Keep compatibility with observed legacy `workqueue` columns:
@@ -131,7 +137,7 @@ Known queue types:
 | `Run MSSQL File` | Execute SQL file through MSSQL worker. |
 | `scanvirus` | Virus scan job. |
 | `nodejs` | Node.js setup/config job. |
-| `deploy` | Git/ZIP/WebDeploy-style deployment job. |
+| `deploy` | GitHub/Node deployment job from `nodejs_action.asp`; not VS WebDeploy / Remote IIS. |
 
 ## Databases
 
@@ -185,6 +191,15 @@ Known queue types:
 | Deleted DBs | `databases_mssql_deleted.asp`, `databases_mysql_deleted.asp` | deleted/status rows | `GET /api/hosting/databases/deleted` |
 | MSSQL report users | `database_mssqlreport.asp`, `mssqlreportusers_action.asp` | Reporting SQL server | `GET/POST /api/hosting/databases/mssql-report-users` |
 | Scheduled backups | `database_custombackup*.asp` | `customDBBackup` | `GET/POST/PUT/DELETE /api/hosting/databases/backups/schedules` |
+
+Current rebuild status:
+
+- `GET /api/hosting/databases`, deleted database inventory, connection-string templates, backup schedules, backup queue, restore queue, and MSSQL run-SQL queue endpoints are implemented.
+- `DELETE /api/hosting/databases/{engine}/{id}` is implemented with strict ownership checks and a disposable database-name guard. It refuses existing customer databases and only allows `codex-test` style database names before calling the exact legacy delete actions from `fn_db.inc`.
+- Live smoke test confirmed an existing database such as `DB_9E47E1_openreward` returns a protected failure before any remote delete or DB-row update.
+- Database create still calls the legacy create agent but does not write local DB-user rows until the original DB password encryption compatibility is completed.
+- `GET /api/hosting/databases/mssql-report-users` is implemented from `database_mssqlreport.asp`, `mssqlreportusers.asp`, and `cp_config_site_users`; it returns SSRS account enabled/server state plus reporting site-user inventory.
+- MSSQL Reporting Service user add/update/delete routes are present but blocked before write until `encryptpwd` site-user password storage and Windows local-user RPCs are ported and disposable-user tested.
 
 ### Behavior Requirements
 
@@ -289,7 +304,8 @@ Known queue types:
 
 ### Tables And Systems
 
-- Remote file manager API
+- JSON browse agent at `/new/getFilesFolder.asp`
+- Legacy remote file manager actions under `/newfileman/*`
 - `ehbconfig.dbo.workqueue`
 - `audit.dbo.siteSecurity`
 - `cp_config_Sites` for root path/site mapping
@@ -299,17 +315,17 @@ Known queue types:
 
 | UI Function | Legacy File/Action | Tables/Gateways | Rebuilt Endpoint |
 |---|---|---|---|
-| Browse folder | `filemanager.asp`, `newfileman/managernew.asp` | FileManagerGateway | `GET /api/hosting/files/browse?path=...` |
+| Browse folder | `filemanager.asp`, rebuilt `legacy-agents/getFilesFolder.asp` | JSON FileManagerAgent | `GET /api/hosting/files/browse?path=...` |
 | Create folder | `filemanager.asp?action=c`, `newfileman/makedir.asp` | FileManagerGateway | `POST /api/hosting/files/action`, `action=new-folder` |
-| Create file | `popupbox/newfile.asp` | FileManagerGateway | `POST /api/hosting/files/files` |
-| Edit text file | `editor.asp`, `editorsave.asp` | FileManagerGateway, `/newfileman/save.asp` | `GET/PUT /api/hosting/files/content` |
+| Create file | `popupbox/newfile.asp`, `newfileman/save.asp` | FileManagerGateway | `POST /api/hosting/files/action`, `action=new-file/save-file` |
+| Edit text file | `editor.asp`, `newfileman/editnew.asp`, `editorsave.asp`, `newfileman/save.asp` | FileManagerGateway | `POST /api/hosting/files/action`, `action=read-file/save-file` |
 | Rename | `filemanager.asp`, `newfileman/rename.asp` | FileManagerGateway | `POST /api/hosting/files/action`, `action=rename` |
 | Move/copy | `filemanager.asp`, `newfileman/move.asp` | FileManagerGateway | `POST /api/hosting/files/action`, `action=move/copy` |
 | Delete | `filemanager.asp`, `newfileman/delete.asp` | FileManagerGateway | `POST /api/hosting/files/action`, `action=delete`, guarded to `codex-test-*` |
 | Upload | `includes/uploadfile.asp` | chunk upload + FileManagerGateway | `POST /api/hosting/files/upload` |
 | Download | `download.asp`, `download_action.asp` | FileManagerGateway | `GET /api/hosting/files/download` |
-| Zip | `popupbox/pack.asp` | `workqueue type=zip` | `POST /api/hosting/files/zip` |
-| Unzip | newfileman actions | `workqueue type=Unzip` | `POST /api/hosting/files/unzip` |
+| Zip | `popupbox/pack.asp` | `workqueue type=zip` | `POST /api/hosting/files/action`, `action=zip` |
+| Unzip | `newfileman/unzip.asp` | FileManagerGateway, may queue `workqueue type=Unzip` | `POST /api/hosting/files/action`, `action=unzip` |
 | Permissions | `fileperm_action.asp` | `workqueue type=perm`, `/acl_api_2.asp` | `POST /api/hosting/files/permissions` |
 | Site lock/unlock | `locksite.asp` | `audit.dbo.siteSecurity`, `workqueue type=perm` | `POST /api/hosting/files/site-lock` |
 | Raw logs | `rawlog*` | raw log export/download | `GET /api/hosting/files/raw-logs` |
@@ -366,12 +382,22 @@ Known queue types:
 
 | UI Function | Legacy File/Action | Tables/Gateways | Rebuilt Endpoint |
 |---|---|---|---|
-| Plugin catalog | `apps.asp`, `plugin_list_*` | `plugins` DB | `GET /api/hosting/apps/catalog` |
+| Plugin catalog | `apps.asp`, `plugin_list_*` | `plugins.dbo.plugins`, `plugins.dbo.categories` | `GET /api/hosting/apps` |
+| Requirement check | `fn_plugin.inc:getPluginParas`, `fn_plugin.inc:getPluginConfigFiles`, `fn_plugin.inc:getPluginPermissions` | `plugins.dbo.parameters`, `plugins.dbo.config`, `plugins.dbo.permissions` | `GET /api/hosting/apps/{pluginId}/requirements` |
 | App install preview | `plugin_process_1.asp` | plugin catalog, entitlement checks | `POST /api/hosting/apps/install-preview` |
 | Select site/path | `plugin_process_2_site.asp` | sites, file path validation | `POST /api/hosting/apps/install/site` |
 | Select/create DB | `plugin_process_2_db.asp` | DB APIs, DB tables | `POST /api/hosting/apps/install/database` |
 | Install app | `plugin_process_3_action.asp` | DB/file/workqueue/helpers | `POST /api/hosting/apps/install` |
 | Install status | new job metadata + workqueue | job rows | `GET /api/hosting/apps/install/{jobId}` |
+
+Current rebuild status:
+
+- `GET /api/hosting/apps` is implemented and tested against live plugin catalog rows.
+- `GET /api/hosting/apps/{pluginId}/requirements` is implemented and tested against live `parameters`, `config`, and `permissions` rows.
+- `POST /api/hosting/apps/install-preview` is implemented. It validates plugin ownership, selected site ownership, optional selected database ownership, and target path containment under `h:\root\home\{cpLogin}` before returning a no-write install plan.
+- `POST /api/hosting/apps/install` is implemented as a guarded route. It returns the same validated plan, then blocks before writes until the exact `plugin_process_3_action.asp` side effects are ported and tested on disposable resources.
+- `GET /api/hosting/apps/install/{jobId}` is implemented for owned `workqueue` job status lookup.
+- Full install execution remains blocked until `plugin_process_3_action.asp` is ported end-to-end and a disposable target site/database plus reachable file-manager/database/IIS agents are confirmed; see `REBUILD_BLOCKERS.md`.
 
 ### Behavior Requirements
 
@@ -421,27 +447,26 @@ Known queue types:
 | List FTP users | `ftp.asp`, `boxinfo_ftp.asp` | `cp_config_FTP` | `GET /api/hosting/ftp` |
 | Create FTP user | `ftp_action.asp`, `functions.inc:createFTPSingle` | `cp_config_FTP`, `encryptpwd`, `encryptFTPpwd` | `POST /api/hosting/ftp/users` |
 | Update FTP password | `functions.inc:updateFtpUserPassword` | `cp_config_FTP`, `encryptpwd`, `encryptFTPpwd` | `PUT /api/hosting/ftp/users/{login}` |
-| Edit FTP path/quota/permission | `ftp_action.asp`, disabled `functions.inc:edit_ftp_user` | Disabled inside `if 1 = 2` | Disabled until exact active reference is found |
-| Enable/disable user | `ftp_action.asp`, disabled `functions.inc:enable_ftp_user` / `stop_FTP` | Disabled inside `if 1 = 2` | Disabled until exact active reference is found |
 | Delete user | `ftp_action.asp`, `functions.inc:deleteFTP` | `cp_config_FTP` | `DELETE /api/hosting/ftp/users/{login}` |
-| Reset permission | `ftp_action.asp`, disabled permission reset code | Disabled inside `if 1 = 2` | Disabled until exact active reference is found |
-| Import FTP users | `ftpimport.asp` | CSV/parser, `cp_config_FTP`, `encryptpwd`, `encryptFTPpwd` | `POST /api/hosting/ftp/import` |
+| Edit FTP path/quota/permission | `ftp_action.asp`, disabled `functions.inc:edit_ftp_user` | Disabled inside `if 1 = 2` | Do not expose in UI |
+| Enable/disable user | `ftp_action.asp`, disabled `functions.inc:enable_ftp_user` / `stop_FTP` | Disabled inside `if 1 = 2` | Do not expose in UI |
+| Reset permission | `ftp_action.asp`, disabled permission reset code | Disabled inside `if 1 = 2` | Do not expose in UI |
+| Import FTP users | `ftpimport.asp`, no active `addFTPUserBulk` case found in current `ftp_action.asp` | Missing active action | Do not expose until exact active action is found |
 
 ### Behavior Requirements
 
 - Root FTP user requires extra protection and must not be deleted casually.
 - Login must be unique within CP.
 - Path must belong to CP.
-- Quota must respect product/add-on limits.
-- Create/edit/delete must call FTP agent first; update local DB only after agent success.
-- If agent fails, do not insert/update/delete local row.
+- Create uses disk quota from product/add-on quota mapping, matching `createFTPSingle(...)`; quota/permission are not user-editable in active `ftp.asp`.
+- Ignore `/ftp_api.asp` paths that are inside `if 1 = 2`.
+- Active create/edit/delete are DB-driven through `cp_config_FTP`; do not invent FTP-agent-first behavior unless a current active ASP reference requires it.
 - Password values must never be returned in list responses.
 
 ### Speed Notes
 
 - Load FTP list from `cp_config_FTP`.
-- Agent writes can be synchronous with clear timeout, because they are usually short.
-- Imports should run as a background job if many users are uploaded.
+- Create/password update remain blocked until Persits-compatible `encryptpwd` / `encryptFTPpwd` output is reproduced exactly.
 
 ## CDN
 
@@ -467,17 +492,16 @@ Known queue types:
 |---|---|---|---|
 | CDN domain list | `cloudflare.asp` | domains, Cloudflare rows | `GET /api/hosting/cdn` |
 | Create tenant/account | `cloudflare_tenant_action.asp` | Cloudflare tenant API, `cloudflare` | `POST /api/hosting/cdn/tenant` |
-| Add zone | `cloudflare_action.asp` | Cloudflare API, DNS | `POST /api/hosting/cdn/zones` |
-| Delete zone | `cloudflare_action.asp` | Cloudflare API, domain flags | `DELETE /api/hosting/cdn/zones/{zoneId}` |
-| Scan records | `cloudflare_action.asp` | Cloudflare API, DNS | `POST /api/hosting/cdn/zones/{zoneId}/scan` |
-| Enable/disable CDN | `cloudflare_action.asp` | Cloudflare, `cp_config_Domains.cdn` | `POST /api/hosting/cdn/domains/{domainUid}/status` |
-| Purge cache | `cloudflare_action.asp` | Cloudflare API | `POST /api/hosting/cdn/zones/{zoneId}/purge` |
-| SSL mode | `cloudflare_action.asp` | Cloudflare API | `PUT /api/hosting/cdn/zones/{zoneId}/ssl-mode` |
-| WWW redirect | `cloudflare_action.asp` | Cloudflare/DNS/domain flags | `PUT /api/hosting/cdn/domains/{domainUid}/www-redirect` |
+| Resend invite | `cloudflare_tenant_action.asp?action=invite` | Cloudflare tenant API | `POST /api/hosting/cdn/tenant/invite` |
+| Enable/disable CDN | `cloudflare_tenant_action.asp?action=enable_zone` / `cloudflare_action.asp?action=enable_zone` | Cloudflare zone API, `cp_config_Domains.cdn` | `POST /api/hosting/cdn/domains/{domainUid}/status` |
+| Purge cache | `cloudflare_tenant_action.asp?action=purge` / `cloudflare_action.asp?action=purge` | Cloudflare API | `POST /api/hosting/cdn/zones/{zoneId}/purge` |
+| SSL full/flexible mode | `cloudflare_tenant_action.asp?action=ssl_mode_on/off` | Cloudflare API | Staff-only; do not expose to normal customer UI |
+| WWW redirect | Present but commented out in active `cloudflare*.asp` page | Cloudflare/DNS/domain flags | Do not expose in UI |
+| Scan records | Internal after zone creation only | Cloudflare API | Do not expose as standalone UI action |
 
 ### Behavior Requirements
 
-- Prefer newer tenant flow over old user-key flow.
+- Prefer current tenant flow in `cloudflare_tenant.asp`; use older `cloudflare.asp` only where the account is not on tenant flow.
 - Do not display raw Cloudflare credentials.
 - Domain must belong to selected CP.
 - Zone state and `cp_config_Domains.cdn` must stay consistent.
@@ -487,7 +511,7 @@ Known queue types:
 ### Speed Notes
 
 - Cache Cloudflare zone lookups briefly.
-- Use background jobs for zone creation/deletion/scans.
+- Do not show standalone add-zone/delete-zone/scan buttons; active customer UI is per-domain CDN on/off plus purge.
 - Purge cache can be synchronous with a short timeout and structured error.
 
 ## DNS
@@ -517,8 +541,8 @@ Known queue types:
 | Add record | `dns_action.asp` | DnsGateway | `POST /api/hosting/dns/zones/{zone}/records` |
 | Edit record | `dns_action.asp` | DnsGateway | `PUT /api/hosting/dns/zones/{zone}/records/{recordId}` |
 | Delete record | `dns_action.asp` | DnsGateway | `DELETE /api/hosting/dns/zones/{zone}/records/{recordId}` |
-| Reset default records | DNS helpers | DnsGateway | `POST /api/hosting/dns/zones/{zone}/defaults` |
-| Punycode preview | `domainPunyCode.asp` | IDN converter | `POST /api/hosting/dns/punycode-preview` |
+| Reset default records | Not present in active `editdns.asp` / `dns_action.asp` UI | DnsGateway | Do not expose in UI |
+| Punycode decode | `domainPunyCode.asp` | IDN converter | Internal helper for ownership/display |
 
 ### Behavior Requirements
 
@@ -534,7 +558,8 @@ Known queue types:
   - MX priority and host
   - TXT length/escaping
   - SRV priority/weight/port/target
-- Show propagation note after writes.
+- Display the active Google Mail MX KB link from `editdns.asp`.
+- Do not show import/scan/publish/default-reset controls unless an exact active ASP page exposes them.
 
 ### Speed Notes
 

@@ -15,6 +15,7 @@ using System.Net.Mail;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 
@@ -25,6 +26,7 @@ namespace controlpanel
     public class Startup
     {
         private const int ConstPageTypeNewCp = 1;
+        private const int ConstPageTypeNewSite = 2;
         private const int ConstPageTypeBuyDomain = 3;
         private const int ConstPageTypeTransferDomain = 4;
         private const int ConstPageTypeCpRenew = 5;
@@ -35,19 +37,27 @@ namespace controlpanel
         private const int ConstPageTypeMysqlQuota = 10;
         private const int ConstPageTypeIp = 12;
         private const int ConstPageTypeSsl = 13;
+        private const int ConstPageTypeFullRestore = 14;
         private const int ConstPageTypeEmailQuota = 17;
+        private const int ConstPageTypeWhoisPrivacy = 19;
         private const int ConstPageTypeGeneral = 22;
+        private const int ConstPageTypeWebUser = 23;
+        private const int ConstPageTypeDailySentLimit = 24;
         private const int ConstPageTypeCustomBackup = 26;
+        private const int ConstPageTypeMailingList = 27;
         private const int ConstPageTypeSsrs = 28;
         private const int ConstPageTypeTasks = 29;
+        private const int ConstPageTypeHourlySentLimit = 30;
         private const int ConstPageTypeSqlJob = 31;
         private const int ConstPageTypeRam = 32;
         private const int ConstPageTypeWebsiteFirewall = 33;
         private const int ConstPageTypeWindowsTask = 34;
+        private const int ConstPageTypeCorpEmailQuota = 35;
         private const int ConstPageTypeFileCountLimit = 36;
         private const int ConstPageTypeVpn = 37;
         private const int ConstPageTypeCloudBackup = 38;
         private const int ConstPageTypeDataBackup = 39;
+        private const string FileManagerEditAllowlist = ".json|.js|.cshtml|.htaccess|.ashx|.cer|.asax|.pl|.asp|.ascx|.aspx|.php|.asa|.config|.bas|.vbs|.xml|.htm|.html|.txt|.sql|.css|.tar|.url|.cfm|.shtml|.shtm|.ssi|.cs|.vb|.xaml|.master|.inc|.sitemap|";
         private const int ConstPageTypeServerBackup = 40;
 
         private readonly IConfiguration _configuration;
@@ -93,6 +103,7 @@ namespace controlpanel
                 endpoints.MapGet("/api/account/dashboard", HandleAccountDashboardAsync);
                 endpoints.MapPost("/api/account/urgent-logs/{logId:int}/hide", HandleHideUrgentLogAsync);
                 endpoints.MapGet("/api/account/domains", HandleAccountDomainsAsync);
+                endpoints.MapGet("/api/account/domains/{domainId:int}/profile", HandleDomainProfileAsync);
                 endpoints.MapPost("/api/account/domains/search", HandleDomainAvailabilitySearchAsync);
                 endpoints.MapPost("/api/account/domains/checkout-preview", HandleDomainCheckoutPreviewAsync);
                 endpoints.MapPost("/api/account/domains/checkout", HandleDomainCheckoutAsync);
@@ -100,7 +111,6 @@ namespace controlpanel
                 endpoints.MapPost("/api/account/domains/{domainId:int}/registrar-action", HandleDomainRegistrarActionAsync);
                 endpoints.MapGet("/api/account/billing", HandleAccountBillingAsync);
                 endpoints.MapPost("/api/account/billing/deposit", HandleBillingDepositAsync);
-                endpoints.MapPost("/api/account/billing/transfer-preview", HandleBillingTransferPreviewAsync);
                 endpoints.MapGet("/api/account/billing/orders/{orderId:int}/invoice", HandleBillingInvoiceAsync);
                 endpoints.MapGet("/api/account/renewals", HandleAccountRenewalsAsync);
                 endpoints.MapPost("/api/account/renewals/{clientProductId:int}/hide", HandleHideRenewalNoticeAsync);
@@ -130,6 +140,10 @@ namespace controlpanel
                 endpoints.MapPost("/api/account/checkout-temp/{guid}/pay-with-balance", HandleCheckoutPayWithBalanceAsync);
                 endpoints.MapGet("/api/account/renew-temp/{guid}", HandleRenewTempOrderAsync);
                 endpoints.MapPost("/api/account/renew-temp/{guid}/pay-with-balance", HandleRenewTempPayWithBalanceAsync);
+                endpoints.MapGet("/checkout", HandleLegacyCheckoutRedirectAsync);
+                endpoints.MapGet("/checkout/{**path}", HandleLegacyCheckoutRedirectAsync);
+                endpoints.MapMethods("/checkout", new[] { "HEAD" }, HandleLegacyCheckoutRedirectAsync);
+                endpoints.MapMethods("/checkout/{**path}", new[] { "HEAD" }, HandleLegacyCheckoutRedirectAsync);
                 endpoints.MapGet("/api/hosting/dashboard", HandleHostingDashboardAsync);
                 endpoints.MapGet("/api/hosting/sites", HandleHostingSitesAsync);
                 endpoints.MapGet("/api/hosting/sites/{siteUid:int}/functions/{functionKey}", HandleHostingSiteFunctionGetAsync);
@@ -140,9 +154,14 @@ namespace controlpanel
                 endpoints.MapPost("/api/hosting/databases/{engine}/{id:long}/backup", HandleHostingDatabaseBackupAsync);
                 endpoints.MapPost("/api/hosting/databases/{engine}/{id:long}/restore", HandleHostingDatabaseRestoreAsync);
                 endpoints.MapPost("/api/hosting/databases/mssql/{id:long}/run-sql-file", HandleHostingDatabaseRunSqlFileAsync);
+                endpoints.MapDelete("/api/hosting/databases/{engine}/{id:long}", HandleHostingDatabaseDeleteAsync);
                 endpoints.MapPost("/api/hosting/databases/{engine}/{id:long}/backup-schedules", HandleHostingDatabaseBackupScheduleCreateAsync);
                 endpoints.MapDelete("/api/hosting/databases/backup-schedules/{id:long}", HandleHostingDatabaseBackupScheduleDeleteAsync);
                 endpoints.MapGet("/api/hosting/databases/{engine}/{id:long}/connection-string", HandleHostingDatabaseConnectionStringAsync);
+                endpoints.MapGet("/api/hosting/databases/mssql-report-users", HandleHostingMssqlReportUsersAsync);
+                endpoints.MapPost("/api/hosting/databases/mssql-report-users", HandleHostingMssqlReportUserMutationAsync);
+                endpoints.MapPut("/api/hosting/databases/mssql-report-users/{login}", HandleHostingMssqlReportUserMutationAsync);
+                endpoints.MapDelete("/api/hosting/databases/mssql-report-users/{login}", HandleHostingMssqlReportUserMutationAsync);
                 endpoints.MapGet("/api/hosting/emails", HandleHostingEmailsAsync);
                 endpoints.MapPost("/api/hosting/emails/{domain}/password-reset", HandleHostingEmailPasswordResetAsync);
                 endpoints.MapPut("/api/hosting/emails/{domain}/quota", HandleHostingEmailQuotaUpdateAsync);
@@ -154,6 +173,7 @@ namespace controlpanel
                 endpoints.MapPost("/api/hosting/ftp/users/{login}/permissions/reset", HandleHostingFtpUserPermissionResetAsync);
                 endpoints.MapDelete("/api/hosting/ftp/users/{login}", HandleHostingFtpUserDeleteAsync);
                 endpoints.MapGet("/api/hosting/files/browse", HandleHostingFilesBrowseAsync);
+                endpoints.MapGet("/api/hosting/files/agent-health", HandleHostingFileAgentHealthAsync);
                 endpoints.MapPost("/api/hosting/files/action", HandleHostingFileActionAsync);
                 endpoints.MapGet("/api/hosting/runtime", HandleHostingRuntimeAsync);
                 endpoints.MapGet("/api/hosting/security", HandleHostingSecurityAsync);
@@ -173,6 +193,9 @@ namespace controlpanel
                 endpoints.MapPost("/api/hosting/emails/provision", HandleHostingEmailProvisionAsync);
                 endpoints.MapPost("/api/hosting/ftp/provision", HandleHostingFtpProvisionAsync);
                 endpoints.MapGet("/api/hosting/apps", HandleHostingAppsAsync);
+                endpoints.MapPost("/api/hosting/apps/install-preview", HandleHostingAppInstallPreviewAsync);
+                endpoints.MapPost("/api/hosting/apps/install", HandleHostingAppInstallAsync);
+                endpoints.MapGet("/api/hosting/apps/install/{jobId:long}", HandleHostingAppInstallStatusAsync);
                 endpoints.MapGet("/api/hosting/apps/{pluginId:int}/requirements", HandleHostingAppRequirementsAsync);
                 endpoints.MapFallbackToFile("index.html");
             });
@@ -349,6 +372,38 @@ WHERE customer_urgent_log_id = @logId
             await Results.Ok(new AccountDomainsResponse(true, "Domains loaded.", domains)).ExecuteAsync(context);
         }
 
+        private async Task HandleDomainProfileAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new DomainProfileResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (!int.TryParse(Convert.ToString(context.Request.RouteValues["domainId"]), out var domainId) || domainId <= 0)
+            {
+                await Results.BadRequest(new DomainProfileResponse(false, "Invalid domain id.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var profile = await LoadDomainProfileAsync(connection, sessionUser.CustomerId, domainId);
+            if (profile == null)
+            {
+                await Results.NotFound(new DomainProfileResponse(false, "Domain profile was not found for this account.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            await Results.Ok(new DomainProfileResponse(true, "Domain profile loaded.", profile)).ExecuteAsync(context);
+        }
+
         private async Task HandleDomainAvailabilitySearchAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -461,16 +516,16 @@ WHERE customer_urgent_log_id = @logId
 
             var preview = new CheckoutPreview(
                 $"DOMAIN-{Guid.NewGuid():N}",
-                "Domain checkout preview",
+                "Domain checkout check",
                 normalized.Count,
                 total,
                 "USD",
                 "/checkout/domain-preview",
-                "Validated cart input. Use checkout to create the live legacy domain order bridge.",
+                "Validated cart input. Continue checkout to create the domain temp order.",
                 normalized
             );
 
-            await Results.Ok(new CheckoutPreviewResponse(true, "Domain checkout preview ready.", preview)).ExecuteAsync(context);
+            await Results.Ok(new CheckoutPreviewResponse(true, "Domain checkout check ready.", preview)).ExecuteAsync(context);
         }
 
         private async Task HandleDomainCheckoutAsync(HttpContext context)
@@ -744,8 +799,17 @@ WHERE customer_urgent_log_id = @logId
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
 
+            var defaultStart = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(-1));
+            var defaultEnd = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(1));
+            var purchaseStart = ReadQueryDate(context, "purchaseStart", defaultStart);
+            var purchaseEnd = ReadQueryDate(context, "purchaseEnd", defaultEnd);
+            if (purchaseEnd < purchaseStart)
+            {
+                (purchaseStart, purchaseEnd) = (purchaseEnd, purchaseStart);
+            }
+
             var activeProducts = await LoadActiveProductsAsync(connection, sessionUser.CustomerId);
-            var purchases = await LoadRecentPurchasesAsync(connection, sessionUser.CustomerId);
+            var purchases = await LoadRecentPurchasesAsync(connection, sessionUser.CustomerId, purchaseStart, purchaseEnd);
             var renewalNotices = await LoadProductRenewalsAsync(connection, sessionUser.CustomerId, 30);
             var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
             var creditTransactions = await LoadCreditTransactionsAsync(connection, sessionUser.CustomerId);
@@ -843,7 +907,7 @@ WHERE customer_urgent_log_id = @logId
                 return;
             }
 
-            var checkoutUrl = $"/checkout/deposit_v2?amount={Uri.EscapeDataString(amount.ToString("0.00", CultureInfo.InvariantCulture))}";
+            var checkoutUrl = $"{GetLegacyCheckoutBaseUrl()}/checkout/deposit_v2?amount={Uri.EscapeDataString(amount.ToString("0.00", CultureInfo.InvariantCulture))}";
             var order = new CheckoutOrder(
                 $"DEPOSIT-{Guid.NewGuid():N}",
                 checkoutUrl,
@@ -855,63 +919,6 @@ WHERE customer_urgent_log_id = @logId
             );
 
             await Results.Ok(new CheckoutCreateResponse(true, "Deposit checkout ready.", order)).ExecuteAsync(context);
-        }
-
-        private async Task HandleBillingTransferPreviewAsync(HttpContext context)
-        {
-            var sessionUser = GetSessionUser(context);
-            if (sessionUser == null)
-            {
-                await Results.Json(
-                    new BillingTransferPreviewResponse(false, "Not signed in.", null),
-                    statusCode: StatusCodes.Status401Unauthorized
-                ).ExecuteAsync(context);
-                return;
-            }
-
-            var request = await context.Request.ReadFromJsonAsync<BillingTransferRequest>();
-            var targetLogin = request?.TargetLogin?.Trim() ?? "";
-            var amount = Math.Round(Math.Max(0m, request?.Amount ?? 0m), 2);
-            if (string.IsNullOrWhiteSpace(targetLogin) || amount < 1m)
-            {
-                await Results.BadRequest(new BillingTransferPreviewResponse(false, "Enter a target account and at least $1.00.", null)).ExecuteAsync(context);
-                return;
-            }
-
-            var connectionString = GetEhbConfigConnectionString();
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
-                return;
-            }
-
-            await using var connection = new SqlConnection(connectionString);
-            await connection.OpenAsync();
-
-            var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
-            var targetCustomerId = await LoadCustomerIdByLoginAsync(connection, targetLogin);
-            var eligible = targetCustomerId != null
-                && targetCustomerId != sessionUser.CustomerId
-                && amount <= balance;
-
-            var message = eligible
-                ? "Transfer preview ready. This validates the target and balance before submitting a transfer request."
-                : targetCustomerId == null
-                    ? "Target account was not found."
-                    : targetCustomerId == sessionUser.CustomerId
-                        ? "You cannot transfer credit to the same account."
-                        : "Not enough account balance for this transfer.";
-
-            var preview = new BillingTransferPreview(
-                targetLogin,
-                targetCustomerId,
-                amount,
-                balance,
-                eligible,
-                message
-            );
-
-            await Results.Ok(new BillingTransferPreviewResponse(true, "Transfer checked.", preview)).ExecuteAsync(context);
         }
 
         private async Task HandleAccountRenewalsAsync(HttpContext context)
@@ -1030,7 +1037,7 @@ WHERE client_product_id = @clientProductId
                 return;
             }
 
-            await Results.Ok(new RenewalCheckoutResponse(true, "Renewal checkout preview ready.", renewal)).ExecuteAsync(context);
+            await Results.Ok(new RenewalCheckoutResponse(true, "Renewal checkout check ready.", renewal)).ExecuteAsync(context);
         }
 
         private async Task HandleRenewalCheckoutAsync(HttpContext context)
@@ -1543,16 +1550,16 @@ WHERE client_product_id = @clientProductId
 
             var preview = new CheckoutPreview(
                 $"ADDON-{Guid.NewGuid():N}",
-                "Add-on checkout preview",
+                "Add-on checkout check",
                 validated.Count,
                 total,
                 "USD",
                 "/checkout/addon-preview",
-                "Validated catalog prices. Use checkout to create the live legacy add-on order bridge.",
+                "Validated catalog prices. Continue checkout to create the add-on temp order.",
                 validated
             );
 
-            await Results.Ok(new CheckoutPreviewResponse(true, "Add-on checkout preview ready.", preview)).ExecuteAsync(context);
+            await Results.Ok(new CheckoutPreviewResponse(true, "Add-on checkout check ready.", preview)).ExecuteAsync(context);
         }
 
         private async Task HandleAddonCheckoutAsync(HttpContext context)
@@ -1678,7 +1685,14 @@ WHERE client_product_id = @clientProductId
             var commissions = await LoadAffiliateCommissionsAsync(connection, sessionUser.CustomerId);
             var payouts = await LoadAffiliatePayoutsAsync(connection, sessionUser.CustomerId);
             var summary = BuildAffiliateSummary(referrals, commissions, payouts);
-            var dashboard = new AccountAffiliateDashboard(summary, referrals, commissions, payouts);
+            var dashboard = new AccountAffiliateDashboard(
+                sessionUser.CustomerId,
+                sessionUser.Login,
+                summary,
+                referrals,
+                commissions,
+                payouts
+            );
 
             await Results.Ok(new AccountAffiliateResponse(true, "Affiliate data loaded.", dashboard)).ExecuteAsync(context);
         }
@@ -1735,13 +1749,17 @@ WHERE client_product_id = @clientProductId
             var method = request?.Method?.Trim() ?? "paypal";
             var paypal = request?.Paypal?.Trim() ?? "";
 
-            if (!method.Equals("paypal", StringComparison.OrdinalIgnoreCase))
+            var isPaypal = method.Equals("paypal", StringComparison.OrdinalIgnoreCase)
+                || method.Equals("cash", StringComparison.OrdinalIgnoreCase);
+            var isCredit = method.Equals("account-credit", StringComparison.OrdinalIgnoreCase)
+                || method.Equals("credit", StringComparison.OrdinalIgnoreCase);
+            if (!isPaypal && !isCredit)
             {
-                await Results.BadRequest(new AffiliateWithdrawResponse(false, "Only PayPal payout requests are enabled here. Credit conversion still needs the legacy WithdrawCommission ledger helper.", null)).ExecuteAsync(context);
+                await Results.BadRequest(new AffiliateWithdrawResponse(false, "Select account credit or PayPal payout.", null)).ExecuteAsync(context);
                 return;
             }
 
-            if (!IsValidEmail(paypal))
+            if (isPaypal && !IsValidEmail(paypal))
             {
                 await Results.BadRequest(new AffiliateWithdrawResponse(false, "Enter a valid PayPal email address.", null)).ExecuteAsync(context);
                 return;
@@ -1765,6 +1783,41 @@ WHERE client_product_id = @clientProductId
             if (!preview.Eligible)
             {
                 await Results.BadRequest(new AffiliateWithdrawResponse(false, preview.Note, preview)).ExecuteAsync(context);
+                return;
+            }
+
+            if (isCredit)
+            {
+                var oms = GetLegacyOmsSettings();
+                if (!oms.IsConfigured)
+                {
+                    await Results.BadRequest(new AffiliateWithdrawResponse(false, oms.MissingMessage, preview)).ExecuteAsync(context);
+                    return;
+                }
+
+                var call = await PostLegacyOmsOperationAsync(
+                    oms,
+                    "WithdrawCommission",
+                    new Dictionary<string, string>
+                    {
+                        ["clientid"] = sessionUser.CustomerId.ToString(CultureInfo.InvariantCulture),
+                        ["credit"] = amount.ToString("0.00", CultureInfo.InvariantCulture),
+                        ["cashoutmethod"] = "credit"
+                    });
+                if (!call.Success)
+                {
+                    await Results.Json(
+                        new AffiliateWithdrawResponse(false, call.Message, preview with { Note = call.Message }),
+                        statusCode: StatusCodes.Status502BadGateway
+                    ).ExecuteAsync(context);
+                    return;
+                }
+
+                await Results.Ok(new AffiliateWithdrawResponse(
+                    true,
+                    "Affiliate commission converted to account balance.",
+                    preview with { Note = call.Message }
+                )).ExecuteAsync(context);
                 return;
             }
 
@@ -1929,6 +1982,12 @@ WHERE client_product_id = @clientProductId
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
 
+            if (await DomainTransferExistsAsync(connection, domainName))
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "This domain is already in the domain transfer or domain profile system.", null)).ExecuteAsync(context);
+                return;
+            }
+
             var quote = await LoadDomainTransferQuoteAsync(connection, tld);
             if (quote == null)
             {
@@ -2006,9 +2065,20 @@ WHERE client_product_id = @clientProductId
             var request = await context.Request.ReadFromJsonAsync<AccountProfileUpdateRequest>();
             var name = NormalizeAccountText(request?.Name, 120);
             var companyName = NormalizeAccountText(request?.CompanyName, 120);
-            var mobileNumber = NormalizeAccountText(request?.MobileNumber, 40);
             var browserLanguage = NormalizeAccountText(request?.BrowserLanguage, 120);
             var vat = NormalizeAccountText(request?.Vat, 60);
+            var contactCountry = NormalizeAccountText(request?.ContactCountry, 120);
+            var contactProvince = NormalizeAccountText(request?.ContactProvince, 120);
+            var contactCity = NormalizeAccountText(request?.ContactCity, 120);
+            var contactArea = NormalizeAccountText(request?.ContactArea, 120);
+            var contactAddress = NormalizeAccountText(request?.ContactAddress, 250);
+            var contactPostcode = NormalizeAccountText(request?.ContactPostcode, 40);
+            var billingCountry = NormalizeAccountText(request?.BillingCountry, 120);
+            var billingProvince = NormalizeAccountText(request?.BillingProvince, 120);
+            var billingCity = NormalizeAccountText(request?.BillingCity, 120);
+            var billingArea = NormalizeAccountText(request?.BillingArea, 120);
+            var billingAddress = NormalizeAccountText(request?.BillingAddress, 250);
+            var billingPostcode = NormalizeAccountText(request?.BillingPostcode, 40);
 
             if (string.IsNullOrWhiteSpace(name))
             {
@@ -2030,17 +2100,39 @@ WHERE client_product_id = @clientProductId
 UPDATE dbo.customer_profile
 SET name_en = @name,
     company_name_en = @companyName,
-    mobile_number = @mobileNumber,
     browserlang = @browserLanguage,
-    vat = @vat
+    vat = @vat,
+    country_zh_cn = @contactCountry,
+    province_zh_cn = @contactProvince,
+    city_zh_cn = @contactCity,
+    area_zh_cn = @contactArea,
+    address_zh_cn = @contactAddress,
+    postcodestr = @contactPostcode,
+    billing_country = @billingCountry,
+    billing_province = @billingProvince,
+    billing_city = @billingCity,
+    billing_area = @billingArea,
+    billing_address = @billingAddress,
+    billing_postcodestr = @billingPostcode
 WHERE customerID = @customerId";
 
             await using var command = new SqlCommand(sql, connection);
             command.Parameters.AddWithValue("@name", string.IsNullOrWhiteSpace(name) ? "NA" : name);
             command.Parameters.AddWithValue("@companyName", string.IsNullOrWhiteSpace(companyName) ? "NA" : companyName);
-            command.Parameters.AddWithValue("@mobileNumber", string.IsNullOrWhiteSpace(mobileNumber) ? "NA" : mobileNumber);
             command.Parameters.AddWithValue("@browserLanguage", string.IsNullOrWhiteSpace(browserLanguage) ? "NA" : browserLanguage);
             command.Parameters.AddWithValue("@vat", string.IsNullOrWhiteSpace(vat) ? "NA" : vat);
+            command.Parameters.AddWithValue("@contactCountry", string.IsNullOrWhiteSpace(contactCountry) ? "NA" : contactCountry);
+            command.Parameters.AddWithValue("@contactProvince", string.IsNullOrWhiteSpace(contactProvince) ? "NA" : contactProvince);
+            command.Parameters.AddWithValue("@contactCity", string.IsNullOrWhiteSpace(contactCity) ? "NA" : contactCity);
+            command.Parameters.AddWithValue("@contactArea", string.IsNullOrWhiteSpace(contactArea) ? "NA" : contactArea);
+            command.Parameters.AddWithValue("@contactAddress", string.IsNullOrWhiteSpace(contactAddress) ? "NA" : contactAddress);
+            command.Parameters.AddWithValue("@contactPostcode", string.IsNullOrWhiteSpace(contactPostcode) ? "00000" : contactPostcode);
+            command.Parameters.AddWithValue("@billingCountry", string.IsNullOrWhiteSpace(billingCountry) ? "NA" : billingCountry);
+            command.Parameters.AddWithValue("@billingProvince", string.IsNullOrWhiteSpace(billingProvince) ? "NA" : billingProvince);
+            command.Parameters.AddWithValue("@billingCity", string.IsNullOrWhiteSpace(billingCity) ? "NA" : billingCity);
+            command.Parameters.AddWithValue("@billingArea", string.IsNullOrWhiteSpace(billingArea) ? "NA" : billingArea);
+            command.Parameters.AddWithValue("@billingAddress", string.IsNullOrWhiteSpace(billingAddress) ? "NA" : billingAddress);
+            command.Parameters.AddWithValue("@billingPostcode", string.IsNullOrWhiteSpace(billingPostcode) ? "00000" : billingPostcode);
             command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
             await command.ExecuteNonQueryAsync();
 
@@ -2548,6 +2640,38 @@ WHERE customerID = @customerId";
                         "database-manager"));
                 });
 
+        private async Task HandleHostingDatabaseDeleteAsync(HttpContext context, string engine, long id)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingProvisionResponse(false, "Not signed in.", "database", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var cpId = GetRequestedCpId(context);
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, cpId);
+            var database = await LoadOwnedDatabaseAsync(connection, sessionUser.CustomerId, cpId, engine, id, includeDeleted: false);
+            if (cp.CpId == 0 || database == null)
+            {
+                await Results.Json(new HostingProvisionResponse(false, "Database was not found on this hosting plan.", "database", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var result = await DeleteHostingDatabaseAsync(connection, cp, database);
+            await Results.Json(result, statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+        }
+
         private async Task HandleHostingDatabaseBackupScheduleCreateAsync(HttpContext context, string engine, long id)
         {
             var sessionUser = GetSessionUser(context);
@@ -2765,6 +2889,89 @@ VALUES ({values})";
 
             var details = new HostingDatabaseConnectionString(database.Engine, database.Id, database.Name, host, database.Login, snippets);
             await Results.Ok(new HostingDatabaseConnectionStringResponse(true, "Connection strings loaded.", details)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingMssqlReportUsersAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingMssqlReportUsersResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, GetRequestedCpId(context));
+            if (cp.CpId == 0)
+            {
+                await Results.Json(new HostingMssqlReportUsersResponse(false, "Hosting plan not found.", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var dashboard = await LoadHostingMssqlReportUsersAsync(connection, cp);
+            await Results.Ok(new HostingMssqlReportUsersResponse(true, "MSSQL Reporting Service users loaded.", dashboard)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingMssqlReportUserMutationAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingProvisionResponse(false, "Not signed in.", "database", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var cpId = GetRequestedCpId(context);
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, cpId);
+            if (cp.CpId == 0)
+            {
+                await Results.Json(new HostingProvisionResponse(false, "Hosting plan not found.", "database", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var method = context.Request.Method.ToUpperInvariant();
+            var action = method switch
+            {
+                "POST" => "addftpuser",
+                "PUT" => "updateftpuser",
+                "DELETE" => "delftpuser",
+                _ => "unknown"
+            };
+
+            await Results.Json(new HostingProvisionResponse(
+                false,
+                "MSSQL Reporting Service user writes are paused until encryptpwd-compatible site-user password storage and Windows local-user RPC calls are ported and tested with a disposable user.",
+                "database",
+                new
+                {
+                    action,
+                    cp.CpLogin,
+                    legacySources = new[]
+                    {
+                        "/Users/erwinyu/Downloads/hosting/cp8/cp/mssqlreportusers_action.asp",
+                        "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:AddSiteUserDB/DeleteSiteUserDB",
+                        "/Users/erwinyu/Downloads/hosting/cp8/functions/fn_db.inc:GetSSRSServerID"
+                    }
+                }),
+                statusCode: StatusCodes.Status400BadRequest).ExecuteAsync(context);
         }
 
         private async Task HandleHostingEmailsAsync(HttpContext context)
@@ -3579,6 +3786,43 @@ VALUES ({values})";
             await Results.Json(result, statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
         }
 
+        private async Task HandleHostingFileAgentHealthAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingFileAgentHealthResponse(false, "Not signed in.", null, null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var cpId = GetRequestedCpId(context);
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, cpId);
+            if (cp.CpId == 0)
+            {
+                await Results.Json(new HostingFileAgentHealthResponse(false, "Hosting plan not found.", null, null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var legacy = GetLegacyAgentSettings();
+            var fileAgent = GetFileManagerAgentSettings();
+            var browse = await GetLegacyAgentHealthAsync(legacy, cp.ServerId, fileAgent.Path);
+            var action = await GetLegacyAgentHealthAsync(legacy, cp.ServerId, fileAgent.ActionPath);
+            var success = browse.Success && action.Success;
+            await Results.Json(
+                new HostingFileAgentHealthResponse(success, success ? "File manager agents are reachable." : "One or more file manager agents are not healthy.", browse, action),
+                statusCode: success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+        }
+
         private async Task HandleHostingFileActionAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -3606,7 +3850,7 @@ VALUES ({values})";
                 return;
             }
 
-            var result = await RunFileManagerActionAsync(cp, request);
+            var result = await RunFileManagerActionAsync(connection, cp, request);
             await Results.Json(result, statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
         }
 
@@ -3715,6 +3959,91 @@ VALUES ({values})";
             }
 
             await Results.Ok(new HostingAppRequirementsResponse(true, "Plugin requirements loaded from the legacy installer tables.", requirements)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingAppInstallPreviewAsync(HttpContext context)
+        {
+            var result = await BuildHostingAppInstallPlanFromRequestAsync(context);
+            await Results.Json(result, statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingAppInstallAsync(HttpContext context)
+        {
+            var result = await BuildHostingAppInstallPlanFromRequestAsync(context);
+            if (!result.Success)
+            {
+                await Results.Json(result, statusCode: StatusCodes.Status400BadRequest).ExecuteAsync(context);
+                return;
+            }
+
+            await Results.Json(
+                result with
+                {
+                    Success = false,
+                    Message = "Full app install is still blocked until plugin_process_3_action.asp is ported end-to-end against a disposable site/database and reachable file, database, and IIS agents. No files, databases, or workqueue rows were changed."
+                },
+                statusCode: StatusCodes.Status409Conflict).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingAppInstallStatusAsync(HttpContext context, long jobId)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingAppInstallStatusResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, GetRequestedCpId(context));
+            if (cp.CpId == 0)
+            {
+                await Results.Json(new HostingAppInstallStatusResponse(false, "Hosting plan not found.", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            const string sql = @"
+SELECT TOP 1 id, type, ISNULL(status, 0) AS status, zipfile, dstfolder, serverid, data1, siteowner, notifyemail, errormessage, enterdate
+FROM dbo.workqueue
+WHERE id = @jobId
+  AND cplogin = @cpLogin";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@jobId", jobId);
+            command.Parameters.AddWithValue("@cpLogin", cp.CpLogin);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                await Results.Json(new HostingAppInstallStatusResponse(false, "Install job was not found for this hosting plan.", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var statusCode = reader.IsDBNull(2) ? 0 : Convert.ToInt32(reader.GetValue(2), CultureInfo.InvariantCulture);
+            var job = new HostingActivitySummary(
+                Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture),
+                reader.IsDBNull(1) ? "" : reader.GetString(1).Trim(),
+                WorkqueueStatusLabel(statusCode),
+                statusCode,
+                SimplifyHostingPath(reader.IsDBNull(3) ? "" : reader.GetString(3).Trim(), cp.CpLogin),
+                SimplifyHostingPath(reader.IsDBNull(4) ? "" : reader.GetString(4).Trim(), cp.CpLogin),
+                reader.IsDBNull(5) ? "" : reader.GetString(5).Trim(),
+                reader.IsDBNull(6) ? "" : Convert.ToString(reader.GetValue(6), CultureInfo.InvariantCulture)?.Trim() ?? "",
+                reader.IsDBNull(7) ? "" : reader.GetString(7).Trim(),
+                reader.IsDBNull(8) ? "" : reader.GetString(8).Trim(),
+                reader.IsDBNull(9) ? "" : reader.GetString(9).Trim(),
+                reader.IsDBNull(10) ? null : reader.GetDateTime(10)
+            );
+
+            await Results.Ok(new HostingAppInstallStatusResponse(true, "Install job status loaded.", job)).ExecuteAsync(context);
         }
 
         private static long GetRequestedCpId(HttpContext context)
@@ -3857,7 +4186,7 @@ WHERE id = @id
             await command.ExecuteNonQueryAsync();
 
             var updated = await LoadCheckoutTempOrderAsync(connection, sessionUser.CustomerId, guid);
-            await Results.Ok(new CheckoutTempOrderResponse(true, "Account balance covers this checkout. The temp order is now marked paid and ready for the legacy fulfillment step.", updated)).ExecuteAsync(context);
+            await Results.Ok(new CheckoutTempOrderResponse(true, "Account balance covers this checkout. The temp order is marked paid; continue to the matching account fulfillment page.", updated)).ExecuteAsync(context);
         }
 
         private async Task HandleRenewTempOrderAsync(HttpContext context)
@@ -4039,6 +4368,12 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
             context.Session.SetString("customerType", customerType);
 
             await Results.Ok(new LoginResponse(true, "Login successful.", new LoginUser(customerId, customerLogin, customerType))).ExecuteAsync(context);
+        }
+
+        private async Task HandleLegacyCheckoutRedirectAsync(HttpContext context)
+        {
+            var target = $"{GetLegacyCheckoutBaseUrl()}{context.Request.Path}{context.Request.QueryString}";
+            await Results.Redirect(target, permanent: false).ExecuteAsync(context);
         }
 
         private async Task HandlePasswordResetRequestAsync(HttpContext context)
@@ -4560,6 +4895,7 @@ ORDER BY adddate DESC";
             ConstPageTypeBuyDomain => "/account/checkoutDomainBuy",
             ConstPageTypeTransferDomain => "/account/transfer_domain_step2",
             ConstPageTypeCpRenew => "/account/cp_renew_action",
+            ConstPageTypeNewSite => "/account/addon_purchase_detail?type=2",
             ConstPageTypeWebQuota => "/account/addon_purchase_detail?type=6",
             ConstPageTypeMssqlDb => "/account/addon_purchase_detail?type=7",
             ConstPageTypeMssqlQuota => "/account/addon_purchase_detail?type=8",
@@ -4567,15 +4903,22 @@ ORDER BY adddate DESC";
             ConstPageTypeMysqlQuota => "/account/addon_purchase_detail?type=10",
             ConstPageTypeIp => "/account/addon_purchase_detail?type=12",
             ConstPageTypeSsl => "/account/addon_purchase_ssl",
+            ConstPageTypeFullRestore => "/account/addon_purchase_detail?type=14",
             ConstPageTypeEmailQuota => "/account/addon_purchase_detail?type=17",
+            ConstPageTypeWhoisPrivacy => "/account/addon_purchase_detail?type=19",
             ConstPageTypeGeneral => "/account/addon_purchase_detail?type=22",
+            ConstPageTypeWebUser => "/account/addon_purchase_detail?type=23",
+            ConstPageTypeDailySentLimit => "/account/addon_purchase_detail?type=24",
             ConstPageTypeCustomBackup => "/account/addon_purchase_detail?type=26",
+            ConstPageTypeMailingList => "/account/addon_purchase_detail?type=27",
             ConstPageTypeSsrs => "/account/addon_purchase_detail?type=28",
             ConstPageTypeTasks => "/account/addon_purchase_detail?type=29",
+            ConstPageTypeHourlySentLimit => "/account/addon_purchase_detail?type=30",
             ConstPageTypeSqlJob => "/account/addon_purchase_detail?type=31",
             ConstPageTypeRam => "/account/addon_purchase_detail?type=32",
             ConstPageTypeWebsiteFirewall => "/account/addon_purchase_detail?type=33",
             ConstPageTypeWindowsTask => "/account/addon_purchase_detail?type=34",
+            ConstPageTypeCorpEmailQuota => "/account/addon_purchase_detail?type=35",
             ConstPageTypeFileCountLimit => "/account/addon_purchase_detail?type=36",
             ConstPageTypeVpn => "/account/addon_purchase_vpn_action",
             ConstPageTypeCloudBackup => "/account/addon_purchase_detail?type=38",
@@ -5647,7 +5990,88 @@ WHERE id = @registerInfoId
             return "";
         }
 
-        private static string BuildLegacyCheckoutUrl(string guid) => $"/checkout/account_screen?guid={Uri.EscapeDataString(guid)}";
+        private string BuildLegacyCheckoutUrl(string guid) => $"{GetLegacyCheckoutBaseUrl()}/checkout/checkout_overview?guid={Uri.EscapeDataString(guid)}";
+
+        private string GetLegacyCheckoutBaseUrl()
+        {
+            return ConfigOrEnv("LegacyCheckout:BaseUrl", "LEGACY_CHECKOUT_BASE_URL", "https://member3.smarterasp.net").TrimEnd('/');
+        }
+
+        private LegacyOmsSettings GetLegacyOmsSettings()
+        {
+            var baseUrl = ConfigOrEnv("LegacyOms:BaseUrl", "LEGACY_OMS_BASE_URL", "http://member.smarterasp.net/WebServices/omsAdmin/").Trim();
+            return new LegacyOmsSettings(baseUrl);
+        }
+
+        private static async Task<LegacyAgentCallResult> PostLegacyOmsOperationAsync(LegacyOmsSettings settings, string methodName, Dictionary<string, string> parameters)
+        {
+            if (!settings.IsConfigured)
+            {
+                return new LegacyAgentCallResult(false, settings.MissingMessage, "", "", null);
+            }
+
+            var url = $"{settings.BaseUrl.TrimEnd('/')}/OperationAdmin.svc";
+            var body = BuildSoapEnvelope(methodName, parameters);
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+                using var request = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "text/xml")
+                };
+                request.Headers.TryAddWithoutValidation("SOAPAction", $"http://tempuri.org/IOperationAdmin/{methodName}");
+
+                var response = await httpClient.SendAsync(request);
+                var responseText = await response.Content.ReadAsStringAsync();
+                var parsed = ParseLegacySoapGenericResult(responseText);
+                var accepted = response.IsSuccessStatusCode && parsed.Success;
+                return accepted
+                    ? new LegacyAgentCallResult(true, string.IsNullOrWhiteSpace(parsed.Message) ? $"{methodName} completed." : parsed.Message, url, Preview(responseText), new { status = (int)response.StatusCode, parsed.Result })
+                    : new LegacyAgentCallResult(false, string.IsNullOrWhiteSpace(parsed.Message) ? $"{methodName} was rejected: {Preview(responseText)}" : parsed.Message, url, Preview(responseText), new { status = (int)response.StatusCode, parsed.Result });
+            }
+            catch (Exception ex)
+            {
+                return new LegacyAgentCallResult(false, $"{methodName} call failed: {ex.Message}", url, "", null);
+            }
+        }
+
+        private static string BuildSoapEnvelope(string methodName, Dictionary<string, string> parameters)
+        {
+            var parameterXml = new StringBuilder();
+            foreach (var (key, value) in parameters)
+            {
+                parameterXml
+                    .Append('<').Append(key).Append('>')
+                    .Append(System.Security.SecurityElement.Escape(value) ?? "")
+                    .Append("</").Append(key).Append('>');
+            }
+
+            return $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"">
+  <soap:Body>
+    <{methodName} xmlns=""http://tempuri.org/"">
+      {parameterXml}
+    </{methodName}>
+  </soap:Body>
+</soap:Envelope>";
+        }
+
+        private static (bool Success, string Result, string Message) ParseLegacySoapGenericResult(string responseText)
+        {
+            try
+            {
+                var document = XDocument.Parse(responseText);
+                var result = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "Result")?.Value?.Trim() ?? "";
+                var message = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "Message")?.Value?.Trim() ?? "";
+                var success = result.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    || result.Equals("1", StringComparison.OrdinalIgnoreCase);
+                return (success, result, string.IsNullOrWhiteSpace(message) ? result : message);
+            }
+            catch
+            {
+                return (false, "", "");
+            }
+        }
 
         private static int DetermineAddonPageType(string productName)
         {
@@ -5665,10 +6089,18 @@ WHERE id = @registerInfoId
             if (name.StartsWith("DataBackup", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeDataBackup;
             if (name.StartsWith("ServerBackup", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeServerBackup;
             if (name.StartsWith("CustomBackup", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeCustomBackup;
-            if (name.StartsWith("Site Guard", StringComparison.OrdinalIgnoreCase) || name.StartsWith("SITE", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeWebsiteFirewall;
+            if (name.StartsWith("Site Guard", StringComparison.OrdinalIgnoreCase) || name.StartsWith("WebsiteFirewall", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeWebsiteFirewall;
+            if (name.StartsWith("SITE", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeNewSite;
             if (name.StartsWith("SQLJOB", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeSqlJob;
             if (name.StartsWith("SSRS", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeSsrs;
             if (name.StartsWith("SCHTASK", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeWindowsTask;
+            if (name.StartsWith("WEBUSER", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeWebUser;
+            if (name.StartsWith("DailySentLimit", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeDailySentLimit;
+            if (name.StartsWith("HourlySentLimit", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Sent-Limit100", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeHourlySentLimit;
+            if (name.StartsWith("MailingList", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeMailingList;
+            if (name.StartsWith("CORPEMAIL", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeCorpEmailQuota;
+            if (name.StartsWith("WHOIS", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeWhoisPrivacy;
+            if (name.StartsWith("Recovery", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeFullRestore;
             if (name.StartsWith("TASK", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeTasks;
             if (name.StartsWith("File-Limit100k", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeFileCountLimit;
             if (name.Contains("VPN", StringComparison.OrdinalIgnoreCase)) return ConstPageTypeVpn;
@@ -5894,18 +6326,22 @@ ORDER BY CASE WHEN cp.next_due_date IS NULL THEN 1 ELSE 0 END, cp.next_due_date,
             return rows;
         }
 
-        private static async Task<List<AccountPurchaseSummary>> LoadRecentPurchasesAsync(SqlConnection connection, long customerId)
+        private static async Task<List<AccountPurchaseSummary>> LoadRecentPurchasesAsync(SqlConnection connection, long customerId, DateOnly startDate, DateOnly endDate)
         {
             const string sql = @"
-SELECT TOP 25 o.order_id, o.client_product_id, o.name, o.description, o.payment_term,
+SELECT o.order_id, o.client_product_id, o.name, o.description, o.payment_term,
        o.payment_method, o.amount, o.order_status, o.payment_status, o.create_date
 FROM oms.dbo.[order] o
 INNER JOIN oms.dbo.client_product cp ON cp.client_product_id = o.client_product_id
 WHERE cp.client_id = @customerId
+  AND o.create_date >= @startDate
+  AND o.create_date < DATEADD(day, 1, @endDate)
 ORDER BY o.create_date DESC, o.order_id DESC";
 
             await using var command = new SqlCommand(sql, connection);
             command.Parameters.AddWithValue("@customerId", customerId);
+            command.Parameters.AddWithValue("@startDate", startDate.ToDateTime(TimeOnly.MinValue));
+            command.Parameters.AddWithValue("@endDate", endDate.ToDateTime(TimeOnly.MinValue));
 
             var rows = new List<AccountPurchaseSummary>();
             await using var reader = await command.ExecuteReaderAsync();
@@ -5926,6 +6362,30 @@ ORDER BY o.create_date DESC, o.order_id DESC";
             }
 
             return rows;
+        }
+
+        private static async Task<bool> DomainTransferExistsAsync(SqlConnection connection, string domainName)
+        {
+            const string sql = @"
+SELECT TOP 1 1
+FROM domaincontroller.dbo.domain_profile
+WHERE LOWER(domain_name) = LOWER(@domainName)";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@domainName", domainName);
+            var value = await command.ExecuteScalarAsync();
+            return value != null;
+        }
+
+        private static DateOnly ReadQueryDate(HttpContext context, string key, DateOnly fallback)
+        {
+            var value = context.Request.Query[key].ToString();
+            if (DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            {
+                return parsed;
+            }
+
+            return fallback;
         }
 
         private static async Task<List<AccountCreditTransactionSummary>> LoadCreditTransactionsAsync(SqlConnection connection, long customerId)
@@ -5970,10 +6430,17 @@ ORDER BY tv.create_date DESC";
 SELECT TOP 1 o.order_id, o.client_product_id, o.name, o.description, o.payment_term,
        o.payment_method, o.amount, o.order_status, o.payment_status, o.create_date,
        cp.product_id, p.name AS product_name, ot.transaction_code, ot.amount AS paid_amount,
-       ot.fees, ot.create_date AS paid_date
+       ot.fees, ot.create_date AS paid_date,
+       COALESCE(hostcp.cpLogin, addoncp.cpLogin, cust.customerLogin) AS account_name,
+       cust.name_zh_cn, cust.company_name_zh_cn, cust.address_zh_cn, cust.city_zh_cn,
+       cust.province_zh_cn, cust.postcodestr, cust.country_zh_cn, cust.VAT
 FROM oms.dbo.[order] o
 INNER JOIN oms.dbo.client_product cp ON cp.client_product_id = o.client_product_id
 INNER JOIN oms.dbo.product p ON p.product_id = cp.product_id
+INNER JOIN dbo.customer_profile cust ON cust.customerID = cp.client_id
+LEFT JOIN dbo.cp_config hostcp ON hostcp.client_product_id = o.client_product_id
+LEFT JOIN oms.dbo.addon_client_product_to_cpid addonmap ON addonmap.client_product_id = o.client_product_id
+LEFT JOIN dbo.cp_config addoncp ON addoncp.cpID = addonmap.cpid
 LEFT JOIN oms.dbo.order_transaction ot ON ot.order_id = o.order_id
 WHERE cp.client_id = @customerId
   AND o.order_id = @orderId
@@ -6008,8 +6475,31 @@ ORDER BY ot.create_date DESC";
                 reader.GetString(8),
                 DateOnly.FromDateTime(reader.GetDateTime(9)),
                 reader.IsDBNull(15) ? (DateOnly?)null : DateOnly.FromDateTime(reader.GetDateTime(15)),
-                reader.IsDBNull(12) ? "" : reader.GetString(12)
+                reader.IsDBNull(12) ? "" : reader.GetString(12),
+                ReadTrimmed(reader, 16),
+                ResolveReceiptName(ReadTrimmed(reader, 17), ReadTrimmed(reader, 18)),
+                ReadTrimmed(reader, 19),
+                ReadTrimmed(reader, 20),
+                ReadTrimmed(reader, 21),
+                ReadTrimmed(reader, 22),
+                ReadTrimmed(reader, 23),
+                ReadTrimmed(reader, 24)
             );
+        }
+
+        private static string ResolveReceiptName(string customerName, string companyName)
+        {
+            if (!string.IsNullOrWhiteSpace(companyName) && !companyName.Equals("NA", StringComparison.OrdinalIgnoreCase))
+            {
+                return companyName;
+            }
+
+            return customerName;
+        }
+
+        private static string ReadTrimmed(SqlDataReader reader, int index)
+        {
+            return reader.IsDBNull(index) ? "" : Convert.ToString(reader.GetValue(index))?.Trim() ?? "";
         }
 
         private static async Task<DepositEligibility> LoadDepositEligibilityAsync(SqlConnection connection, long customerId)
@@ -6238,7 +6728,7 @@ WHERE cp.client_id = @customerId
                 "USD",
                 product.NextDueDate,
                 "/checkout/renewal-preview",
-                "Validated account ownership. Continue to checkout to create the renewal order."
+                "Validated account ownership. Continue checkout to create the renewal temp order."
             );
         }
 
@@ -6362,7 +6852,6 @@ OUTER APPLY (
 WHERE cp.client_id = @customerId
   AND cp.status = 1
   AND (
-       EXISTS (SELECT 1 FROM oms.dbo.product_ext px WHERE px.product_id = p.product_id AND px.isOptional = 1) OR
        p.name LIKE 'SSL%' OR
        p.name LIKE 'SPACEMSSQL%' OR
        p.name LIKE 'SPACEMYSQL%' OR
@@ -6532,7 +7021,9 @@ VALUES
             const string sql = @"
 SELECT TOP 1 customerID, customerLogin, customer_type, status, name_en, company_name_en,
        account_start_date, reVerify, reVerifySkip, securityversion, email, mobile_number,
-       browserlang, vat
+       browserlang, vat,
+       country_zh_cn, province_zh_cn, city_zh_cn, area_zh_cn, address_zh_cn, postcodestr,
+       billing_country, billing_province, billing_city, billing_area, billing_address, billing_postcodestr
 FROM dbo.customer_profile
 WHERE customerID = @customerId";
 
@@ -6544,7 +7035,7 @@ WHERE customerID = @customerId";
             {
                 if (!await reader.ReadAsync())
                 {
-                    profile = new AccountSettingsProfile(customerId, "", "", "Unknown", "", "", null, false, false, 0, "", "", "", "");
+                    profile = new AccountSettingsProfile(customerId, "", "", "Unknown", "", "", null, false, false, 0, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "");
                 }
                 else
                 {
@@ -6562,7 +7053,19 @@ WHERE customerID = @customerId";
                         MaskStoredSecret(reader.IsDBNull(10) ? "" : reader.GetString(10)),
                         reader.IsDBNull(11) ? "" : reader.GetString(11).Trim(),
                         reader.IsDBNull(12) ? "" : reader.GetString(12).Trim(),
-                        reader.IsDBNull(13) ? "" : reader.GetString(13).Trim()
+                        reader.IsDBNull(13) ? "" : reader.GetString(13).Trim(),
+                        reader.IsDBNull(14) ? "" : reader.GetString(14).Trim(),
+                        reader.IsDBNull(15) ? "" : reader.GetString(15).Trim(),
+                        reader.IsDBNull(16) ? "" : reader.GetString(16).Trim(),
+                        reader.IsDBNull(17) ? "" : reader.GetString(17).Trim(),
+                        reader.IsDBNull(18) ? "" : reader.GetString(18).Trim(),
+                        reader.IsDBNull(19) ? "" : reader.GetString(19).Trim(),
+                        reader.IsDBNull(20) ? "" : reader.GetString(20).Trim(),
+                        reader.IsDBNull(21) ? "" : reader.GetString(21).Trim(),
+                        reader.IsDBNull(22) ? "" : reader.GetString(22).Trim(),
+                        reader.IsDBNull(23) ? "" : reader.GetString(23).Trim(),
+                        reader.IsDBNull(24) ? "" : reader.GetString(24).Trim(),
+                        reader.IsDBNull(25) ? "" : reader.GetString(25).Trim()
                     );
                 }
             }
@@ -6892,7 +7395,13 @@ ORDER BY
 
         private static string NormalizeNewOrderType(string type)
         {
-            return (type ?? "").Trim().ToLowerInvariant().Replace("_", "-", StringComparison.Ordinal);
+            var normalized = (type ?? "").Trim().ToLowerInvariant().Replace("_", "-", StringComparison.Ordinal);
+            return normalized switch
+            {
+                "cloud-server" => "cloud",
+                "dedicated-server" => "dedicated",
+                _ => normalized
+            };
         }
 
         private static bool IsCatalogNewOrderType(string type)
@@ -6980,9 +7489,30 @@ ORDER BY
         {
             const string sql = @"
 SELECT dp.id, dp.domain_name, dp.client_product_id, dp.status, dp.StartDate, dp.BuyYear,
-       dp.RegisterStatus, dp.RegisterInfoID, dp.AddDate, cp.next_due_date, cp.status AS product_status
+       dp.RegisterStatus, dp.RegisterInfoID, dp.AddDate, cp.next_due_date, cp.status AS product_status,
+       CASE WHEN privacyTld.tld IS NULL THEN 0 ELSE 1 END AS whois_privacy_supported,
+       CASE WHEN privacy.client_product_id IS NULL THEN 0 ELSE 1 END AS whois_privacy_purchased,
+       privacy.turnOnDate,
+       ISNULL(grace.graceperiod, 0) AS grace_period_days
 FROM domaincontroller.dbo.domain_profile dp
 LEFT JOIN oms.dbo.client_product cp ON cp.client_product_id = dp.client_product_id
+OUTER APPLY (
+    SELECT TOP 1 tld
+    FROM domaincontroller.dbo.domain_privacy_tld
+    WHERE SUBSTRING(dp.domain_name, CHARINDEX('.', dp.domain_name), LEN(dp.domain_name)) = tld
+) privacyTld
+OUTER APPLY (
+    SELECT TOP 1 p.client_product_id, p.turnOnDate
+    FROM domaincontroller.dbo.domain_privacy p
+    INNER JOIN oms.dbo.client_product privacyCp ON privacyCp.client_product_id = p.client_product_id
+    WHERE LOWER(p.domain) = LOWER(dp.domain_name)
+      AND privacyCp.status = 1
+) privacy
+OUTER APPLY (
+    SELECT TOP 1 graceperiod
+    FROM domaincontroller.dbo.domain_graceperiod_tld
+    WHERE SUBSTRING(dp.domain_name, CHARINDEX('.', dp.domain_name), LEN(dp.domain_name)) = tld
+) grace
 WHERE dp.customer_profile_id = @customerId
 ORDER BY dp.domain_name";
 
@@ -7024,11 +7554,101 @@ ORDER BY dp.domain_name";
                     reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
                     reader.IsDBNull(8) ? null : DateOnly.FromDateTime(reader.GetDateTime(8)),
                     reader.IsDBNull(9) ? null : DateOnly.FromDateTime(reader.GetDateTime(9)),
-                    reader.IsDBNull(10) ? "Unknown" : StatusLabel(reader.GetInt32(10))
+                    reader.IsDBNull(10) ? "Unknown" : StatusLabel(reader.GetInt32(10)),
+                    ReadBoolean(reader, 11),
+                    ReadBoolean(reader, 12),
+                    reader.IsDBNull(13) ? null : DateOnly.FromDateTime(reader.GetDateTime(13)),
+                    ReadInt32(reader, 14)
                 ));
             }
 
             return rows;
+        }
+
+        private static async Task<DomainProfileDetail?> LoadDomainProfileAsync(SqlConnection connection, long customerId, int domainId)
+        {
+            const string sql = @"
+SELECT TOP 1
+       dp.id, dp.domain_name, dp.RegisterInfoID, dp.RegisterStatus, dp.StartDate, dp.BuyYear,
+       CASE WHEN privacyTld.tld IS NULL THEN 0 ELSE 1 END AS whois_privacy_supported,
+       CASE WHEN privacy.client_product_id IS NULL THEN 0 ELSE 1 END AS whois_privacy_purchased,
+       privacy.turnOnDate,
+       ISNULL(grace.graceperiod, 0) AS grace_period_days,
+       dr.firstname, dr.lastname, dr.organization, dr.email, dr.phone, dr.fax, dr.street, dr.street1, dr.city, dr.state, dr.province, dr.country, dr.zip,
+       dr.firstnamea, dr.lastnamea, dr.organizationa, dr.emaila, dr.phonea, dr.faxa, dr.streeta, dr.street1a, dr.citya, dr.statea, dr.provincea, dr.countrya, dr.zipa,
+       dr.firstnameb, dr.lastnameb, dr.organizationb, dr.emailb, dr.phoneb, dr.faxb, dr.streetb, dr.street1b, dr.cityb, dr.stateb, dr.provinceb, dr.countryb, dr.zipb,
+       dr.firstnamet, dr.lastnamet, dr.organizationt, dr.emailt, dr.phonet, dr.faxt, dr.streett, dr.street1t, dr.cityt, dr.statet, dr.provincet, dr.countryt, dr.zipt
+FROM domaincontroller.dbo.domain_profile dp
+INNER JOIN domaincontroller.dbo.DomainRegisterInfo dr ON dr.id = dp.RegisterInfoID
+OUTER APPLY (
+    SELECT TOP 1 tld
+    FROM domaincontroller.dbo.domain_privacy_tld
+    WHERE SUBSTRING(dp.domain_name, CHARINDEX('.', dp.domain_name), LEN(dp.domain_name)) = tld
+) privacyTld
+OUTER APPLY (
+    SELECT TOP 1 p.client_product_id, p.turnOnDate
+    FROM domaincontroller.dbo.domain_privacy p
+    INNER JOIN oms.dbo.client_product privacyCp ON privacyCp.client_product_id = p.client_product_id
+    WHERE LOWER(p.domain) = LOWER(dp.domain_name)
+      AND privacyCp.status = 1
+) privacy
+OUTER APPLY (
+    SELECT TOP 1 graceperiod
+    FROM domaincontroller.dbo.domain_graceperiod_tld
+    WHERE SUBSTRING(dp.domain_name, CHARINDEX('.', dp.domain_name), LEN(dp.domain_name)) = tld
+) grace
+WHERE dp.id = @domainId
+  AND dp.customer_profile_id = @customerId
+  AND dr.sponsorid = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@domainId", domainId);
+            command.Parameters.AddWithValue("@customerId", customerId);
+
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            string Field(int index) => reader.IsDBNull(index) ? "" : Convert.ToString(reader.GetValue(index))?.Trim() ?? "";
+            DomainContactDetail Contact(int offset) => new(
+                Field(offset),
+                Field(offset + 1),
+                Field(offset + 2),
+                Field(offset + 3),
+                Field(offset + 4),
+                Field(offset + 5),
+                Field(offset + 6),
+                Field(offset + 7),
+                Field(offset + 8),
+                Field(offset + 9),
+                Field(offset + 10),
+                Field(offset + 11),
+                Field(offset + 12)
+            );
+
+            var startDate = reader.IsDBNull(4) ? (DateOnly?)null : DateOnly.FromDateTime(reader.GetDateTime(4));
+            var buyYear = reader.IsDBNull(5) ? 1 : reader.GetInt32(5);
+            var expirationDate = CalculateDomainExpiration(startDate, buyYear);
+            var daysLeft = expirationDate == null ? (int?)null : expirationDate.Value.DayNumber - DateOnly.FromDateTime(DateTime.UtcNow).DayNumber;
+
+            return new DomainProfileDetail(
+                reader.GetInt32(0),
+                Field(1),
+                reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                Field(3),
+                expirationDate,
+                daysLeft,
+                ReadBoolean(reader, 6),
+                ReadBoolean(reader, 7),
+                reader.IsDBNull(8) ? null : DateOnly.FromDateTime(reader.GetDateTime(8)),
+                ReadInt32(reader, 9),
+                Contact(10),
+                Contact(23),
+                Contact(36),
+                Contact(49)
+            );
         }
 
         private static DateOnly? CalculateDomainExpiration(DateOnly? startDate, int buyYear)
@@ -7181,6 +7801,81 @@ ORDER BY ftp_login",
                     command => command.Parameters.AddWithValue("@cpId", site.CpId));
             }
 
+            if (normalizedKey == "visitor-stats")
+            {
+                var statsRows = await TryLoadFunctionRowsAsync(
+                    connection,
+                    warnings,
+                    "visitor stats",
+                    @"
+SELECT TOP 1 ISNULL(Stats_enabled, 0) AS stats_enabled, ISNULL(Stats_mainDomain, '') AS stats_domain
+FROM dbo.cp_config_Sites
+WHERE site_Uid = @siteUid AND cpID = @cpId",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                        command.Parameters.AddWithValue("@cpId", site.CpId);
+                    });
+                var formattedIisId = FormatIisId(site.IisId);
+                var hash = HashHex(MD5.HashData(Encoding.UTF8.GetBytes($"abcde12345{site.CpId}{formattedIisId}")));
+                functionData["visitorStats"] = new Dictionary<string, object?>
+                {
+                    ["rows"] = statsRows,
+                    ["available"] = !site.IsSubdomain,
+                    ["statsUrl"] = $"https://{site.ServerId}.site4now.net/stats/awstats.pl?config={site.CpId}{formattedIisId}&h={hash}",
+                    ["login"] = site.CpLogin,
+                    ["notice"] = "Stats take about 24 hours before the first update."
+                };
+            }
+
+            if (normalizedKey == "iis-log-manager")
+            {
+                var w3svcId = $"{site.CpId}{FormatIisId(site.IisId)}";
+                functionData["iisLogs"] = new Dictionary<string, object?>
+                {
+                    ["w3svcId"] = w3svcId,
+                    ["source"] = $@"c:\logfiles\W3SVC{w3svcId}\*.log",
+                    ["destination"] = $@"/www/db/{w3svcId}",
+                    ["note"] = "Classic download copies raw logs into the hosting account /db folder."
+                };
+            }
+
+            if (normalizedKey is "vs-webdeploy" or "remote-iis-manager")
+            {
+                var siteFullName = $"{site.CpLogin}-{site.SiteName}";
+                var webDeployUser = normalizedKey == "remote-iis-manager"
+                    ? $"ifc\\{site.CpLogin}"
+                    : site.CpLogin;
+                var serviceHost = BuildLegacyHost(GetLegacyAgentSettings(), site.ServerId);
+                var checkCall = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "CheckIISManagerUser",
+                    ["sitename"] = siteFullName,
+                    ["user"] = webDeployUser
+                });
+
+                var isEnabled = checkCall.Success && checkCall.Preview.Trim().Equals("1", StringComparison.OrdinalIgnoreCase);
+                functionData["webDeploy"] = new Dictionary<string, object?>
+                {
+                    ["enabled"] = isEnabled,
+                    ["status"] = isEnabled ? "On" : "Off",
+                    ["serviceUrl"] = $"https://{serviceHost}:8172/MsDeploy.axd?site={siteFullName}",
+                    ["serverName"] = serviceHost,
+                    ["siteName"] = siteFullName,
+                    ["username"] = webDeployUser,
+                    ["password"] = "Stored securely",
+                    ["publishSettings"] = "Server-side generation pending legacy password decrypt compatibility",
+                    ["classicCheckResponse"] = checkCall.Preview
+                };
+
+                if (!checkCall.Success)
+                {
+                    warnings.Add(checkCall.Message);
+                }
+
+                warnings.Add("Enable/disable still needs Persits-compatible decryptpwd for cpPasswordHash because the classic action hashes the decrypted hosting password before calling SetIISManagerUser.");
+            }
+
             if (normalizedKey is "site-guard" or "force-https" or "ip-deny" or "cdn" or "domain-manager")
             {
                 functionData["security"] = await TryLoadFunctionRowsAsync(
@@ -7195,10 +7890,69 @@ WHERE s.site_Uid = @siteUid",
                     command => command.Parameters.AddWithValue("@siteUid", site.SiteUid));
             }
 
+            if (normalizedKey is "default-doc" or "custom-errors" or "mime-type" or "script-map")
+            {
+                var appPath = "/";
+                var readForm = normalizedKey switch
+                {
+                    "default-doc" => new Dictionary<string, string>
+                    {
+                        ["action"] = "IIS_Member_DefaultPage_Get",
+                        ["IIS_ID"] = FullIisId(site)
+                    },
+                    "custom-errors" => new Dictionary<string, string>
+                    {
+                        ["action"] = "IIS_Member_ErrorPage_Get",
+                        ["IIS_ID"] = FullIisId(site)
+                    },
+                    "mime-type" => new Dictionary<string, string>
+                    {
+                        ["action"] = "get_mimeMap",
+                        ["IIS_ID"] = FullIisId(site),
+                        ["apppath"] = appPath
+                    },
+                    "script-map" => new Dictionary<string, string>
+                    {
+                        ["action"] = "IIS_Member_IISEntry_CustomScriptMap_Get",
+                        ["IIS_ID"] = FullIisId(site)
+                    },
+                    _ => new Dictionary<string, string>()
+                };
+
+                var readCall = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", readForm);
+                functionData["iisCurrent"] = new Dictionary<string, object?>
+                {
+                    ["success"] = readCall.Success,
+                    ["action"] = readForm.TryGetValue("action", out var readAction) ? readAction : "",
+                    ["appPath"] = appPath,
+                    ["preview"] = readCall.Preview,
+                    ["url"] = readCall.Url
+                };
+
+                if (!readCall.Success)
+                {
+                    warnings.Add(readCall.Message);
+                }
+            }
+
             if (normalizedKey is "schedule-tasks")
             {
                 warnings.Add("Scheduled tasks use the legacy scheduletask connection; live task inventory needs that connection before this drawer can read task rows.");
                 functionData["scheduledTasks"] = new List<Dictionary<string, object?>>();
+            }
+
+            if (normalizedKey is "outgoing-port")
+            {
+                functionData["outgoingPorts"] = await TryLoadFunctionRowsAsync(
+                    connection,
+                    warnings,
+                    "outgoing port rules",
+                    @"
+SELECT TOP 100 ipid, remoteip, port, adddate, rulename
+FROM dbo.cp_config_db_out_ip
+WHERE cpID = @cpId
+ORDER BY adddate DESC, ipid DESC",
+                    command => command.Parameters.AddWithValue("@cpId", site.CpId));
             }
 
             functionData["agent"] = new Dictionary<string, object?>
@@ -7287,16 +8041,53 @@ WHERE s.site_Uid = @siteUid",
                 return new HostingSiteFunctionMutationResponse(true, $"Site {nextState} request completed.", call);
             }
 
-            if (normalizedKey is "application-pool" or "github-deploy" or "vs-webdeploy" or "nodejs-app" or "mapped-path")
+            if (normalizedKey is "vs-webdeploy" or "remote-iis-manager")
             {
-                var type = normalizedKey switch
+                return await RunWebDeployMutationAsync(site, action);
+            }
+
+            if (normalizedKey == "application-pool")
+            {
+                return await RunApplicationPoolMutationAsync(connection, site, action, fields);
+            }
+
+            if (normalizedKey == "mapped-path")
+            {
+                return await RunMappedPathMutationAsync(connection, site, fields);
+            }
+
+            if (normalizedKey is "github-deploy" or "nodejs-app")
+            {
+                var type = "";
+                if (normalizedKey == "github-deploy" && action.Equals("deploy", StringComparison.OrdinalIgnoreCase))
                 {
-                    "application-pool" => action.Equals("create", StringComparison.OrdinalIgnoreCase) ? "createpool" : "changepool",
-                    "github-deploy" => "deploy",
-                    "vs-webdeploy" => "deploy",
-                    "nodejs-app" => "nodejs",
-                    _ => "changepool"
-                };
+                    type = "deploy";
+                }
+                else if (normalizedKey == "nodejs-app" &&
+                    (action.Equals("setup", StringComparison.OrdinalIgnoreCase) ||
+                     action.Equals("enable", StringComparison.OrdinalIgnoreCase) ||
+                     action.Equals("save", StringComparison.OrdinalIgnoreCase) ||
+                     action.Equals("nodejs", StringComparison.OrdinalIgnoreCase)))
+                {
+                    type = "nodejs";
+                }
+
+                if (string.IsNullOrWhiteSpace(type))
+                {
+                    return new HostingSiteFunctionMutationResponse(
+                        false,
+                        $"{spec.Label} only queues explicit legacy worker actions. Choose a supported action instead of running a generic queue job.",
+                        new
+                        {
+                            supportedActions = normalizedKey switch
+                            {
+                                "github-deploy" => new[] { "deploy" },
+                                "nodejs-app" => new[] { "setup", "enable", "save" },
+                                _ => Array.Empty<string>()
+                            }
+                        });
+                }
+
                 var queueRequest = new HostingWorkqueueRequest(
                     site.CpId,
                     type,
@@ -7304,6 +8095,22 @@ WHERE s.site_Uid = @siteUid",
                     fields.TryGetValue("target", out var target) ? target : site.SitePath,
                     site.ServerId,
                     string.IsNullOrWhiteSpace(action) ? spec.Label : action,
+                    site.SiteName,
+                    "website-more-functions"
+                );
+                var result = await CreateHostingWorkqueueAsync(connection, new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType), queueRequest);
+                return new HostingSiteFunctionMutationResponse(result.Success, result.Message, result);
+            }
+
+            if (normalizedKey == "scan-virus")
+            {
+                var queueRequest = new HostingWorkqueueRequest(
+                    site.CpId,
+                    "scanvirus",
+                    site.SitePath,
+                    site.SitePath,
+                    site.ServerId,
+                    fields.TryGetValue("command", out var command) ? command : "",
                     site.SiteName,
                     "website-more-functions"
                 );
@@ -7324,6 +8131,82 @@ WHERE s.site_Uid = @siteUid",
                     });
             }
 
+            if (normalizedKey == "outgoing-port")
+            {
+                return await RunOutgoingPortMutationAsync(connection, site, action, fields);
+            }
+
+            if (normalizedKey == "force-https")
+            {
+                return await RunForceHttpsMutationAsync(connection, site, action, fields);
+            }
+
+            if (normalizedKey == "ip-deny")
+            {
+                return await RunIpDenyMutationAsync(site, action, fields);
+            }
+
+            if (normalizedKey == "create-net-app")
+            {
+                return await RunCreateNetAppMutationAsync(connection, site, action, fields);
+            }
+
+            if (normalizedKey == "virtual-dir")
+            {
+                return await RunVirtualDirMutationAsync(connection, site, action, fields);
+            }
+
+            if (normalizedKey == "custom-errors")
+            {
+                return await RunCustomErrorsMutationAsync(site, action, fields);
+            }
+
+            if (normalizedKey == "aspnet-version")
+            {
+                return await RunAspNetVersionMutationAsync(connection, site, fields);
+            }
+
+            if (normalizedKey == "php-version")
+            {
+                return await RunPhpVersionMutationAsync(connection, site, fields);
+            }
+
+            if (normalizedKey == "php-settings")
+            {
+                return await RunPhpSettingsMutationAsync(connection, site, fields);
+            }
+
+            if (normalizedKey == "visitor-stats")
+            {
+                return await RunVisitorStatsMutationAsync(connection, site, action, fields);
+            }
+
+            if (normalizedKey == "iis-log-manager")
+            {
+                return await RunIisLogManagerMutationAsync(connection, site, action);
+            }
+
+            if (normalizedKey == "domain-manager")
+            {
+                return new HostingSiteFunctionMutationResponse(
+                    false,
+                    "Domain Manager writes are paused until the full classic DNS, mail cleanup, SSL cleanup, quota, and IIS binding chain is ported. No partial domain binding was attempted.",
+                    new { legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/domainbind_actions.asp" });
+            }
+
+            if (normalizedKey == "schedule-tasks")
+            {
+                return new HostingSiteFunctionMutationResponse(
+                    false,
+                    "Schedule Tasks are paused until the exact scheduletask connection string is available.",
+                    new { legacySources = new[] { "/Users/erwinyu/Downloads/hosting/cp8/cp/task.asp", "/Users/erwinyu/Downloads/hosting/cp8/cp/task_action.asp", "/Users/erwinyu/Downloads/hosting/cp8/cp/taskremove.asp" } });
+            }
+
+            if (normalizedKey is "core-mode" or "detail-error" or "site-guard")
+            {
+                return await RunAspNetAppMutationAsync(connection, site, normalizedKey, action, fields);
+            }
+
             var remote = BuildWebsiteFunctionRemoteAction(normalizedKey, site, action, fields);
             if (remote != null)
             {
@@ -7332,6 +8215,906 @@ WHERE s.site_Uid = @siteUid",
             }
 
             return new HostingSiteFunctionMutationResponse(false, $"{spec.Label} still needs a whitelisted legacy action before it can write safely.", null);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunForceHttpsMutationAsync(SqlConnection connection, OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            var normalizedAction = NormalizeWebsiteAction(action);
+            if (normalizedAction is not ("create" or "enable" or "delete" or "remove" or "disable"))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Force HTTPS supports only create/enable or delete/remove actions.", null);
+            }
+
+            var serverId = site.ServerId;
+            var webConfigPath = (site.SitePath ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(serverId) || string.IsNullOrWhiteSpace(webConfigPath))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Server ID or site path is missing for this website.", null);
+            }
+
+            var ruleName = SafeRewriteRuleName(FieldValue(fields, "ruleName", "httpTohttps"));
+            if (string.IsNullOrWhiteSpace(ruleName))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Enter a safe redirect rule name.", null);
+            }
+
+            var sharedApi = GetLegacySharedApiSettings();
+            var form = new Dictionary<string, string>
+            {
+                ["action"] = normalizedAction is "delete" or "remove" or "disable" ? "delete" : "create",
+                ["webconfigPath"] = webConfigPath,
+                ["rulename"] = ruleName,
+                ["serverid"] = serverId
+            };
+
+            if (form["action"] == "create")
+            {
+                var fromDomain = FieldValue(fields, "fromDomain", FieldValue(fields, "domain", ""));
+                var toDomain = FieldValue(fields, "toDomain", FieldValue(fields, "destination", ""));
+                if (!IsSafeDomainForRewrite(fromDomain) || !IsSafeDomainForRewrite(toDomain))
+                {
+                    return new HostingSiteFunctionMutationResponse(false, "Enter safe source and destination domains for the redirect rule.", null);
+                }
+
+                var escapedFrom = fromDomain.Replace(".", "\\.", StringComparison.Ordinal);
+                var httpValue = FieldBool(fields, "isSSL", false) ? "https://" : "http://";
+                var ruleString = ruleName.Equals("httpTohttps", StringComparison.OrdinalIgnoreCase)
+                    ? "<rule name=\"httpTohttps\" stopProcessing=\"true\"><match url=\"^(.*)$\" /><conditions><add input=\"{HTTPS}\" pattern=\"off\" ignoreCase=\"true\" /></conditions><action type=\"Redirect\" url=\"https://{HTTP_HOST}/{R:1}\" redirectType=\"Permanent\"  /></rule>"
+                    : $"<rule name=\"{ruleName}\" stopProcessing=\"true\"><match url=\"^(.*)$\" /><conditions><add input=\"{{HTTP_HOST}}\" pattern=\"^{escapedFrom}$\" /></conditions><action type=\"Redirect\" url=\"{httpValue}{toDomain}/{{R:1}}\" redirectType=\"Permanent\"  /></rule>";
+
+                form["ruleString"] = ruleString;
+
+                var duplicate = await ExecuteScalarAsync<int>(connection, @"
+SELECT COUNT(1)
+FROM dbo.cp_config_redirect
+WHERE site_uid = @siteUid AND rulename = @ruleName",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                        command.Parameters.AddWithValue("@ruleName", ruleName);
+                    });
+                if (duplicate > 0)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, $"Redirect rule {ruleName} already exists for this site.", null);
+                }
+
+                var call = await PostLegacySharedApiAsync(sharedApi, "/api/redirect_api.asp", form);
+                if (!call.Success || !call.Preview.Contains("Done.", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+                }
+
+                await ExecuteNonQueryAsync(connection, @"
+INSERT INTO dbo.cp_config_redirect (site_uid, domain, destination, rulename)
+VALUES (@siteUid, @domain, @destination, @ruleName)",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                        command.Parameters.AddWithValue("@domain", fromDomain);
+                        command.Parameters.AddWithValue("@destination", toDomain);
+                        command.Parameters.AddWithValue("@ruleName", ruleName);
+                    });
+
+                return new HostingSiteFunctionMutationResponse(true, "Force HTTPS redirect rule created with the legacy shared redirect API.", call);
+            }
+
+            var deleteCall = await PostLegacySharedApiAsync(sharedApi, "/api/redirect_api.asp", form);
+            var acceptedDelete = deleteCall.Success
+                || deleteCall.Preview.Contains("Done.", StringComparison.OrdinalIgnoreCase)
+                || deleteCall.Preview.Contains("a null-valued expression", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(deleteCall.Preview);
+            if (!acceptedDelete)
+            {
+                return new HostingSiteFunctionMutationResponse(false, deleteCall.Message, deleteCall);
+            }
+
+            await ExecuteNonQueryAsync(connection, @"
+DELETE FROM dbo.cp_config_redirect
+WHERE site_uid = @siteUid AND rulename = @ruleName",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                    command.Parameters.AddWithValue("@ruleName", ruleName);
+                });
+
+            return new HostingSiteFunctionMutationResponse(true, "Force HTTPS redirect rule removed with the legacy shared redirect API.", deleteCall);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunIpDenyMutationAsync(OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            var normalizedAction = NormalizeWebsiteAction(action);
+            var ipAddress = FieldValue(fields, "ipAddress", FieldValue(fields, "ip", ""));
+            var subnetMask = FieldValue(fields, "subnetMask", FieldValue(fields, "mask", "255.255.255.255"));
+            if (!IPAddress.TryParse(ipAddress, out _) || !IPAddress.TryParse(subnetMask, out _))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Enter a valid IP address and subnet mask.", null);
+            }
+
+            if (normalizedAction is "create" or "add" or "deny")
+            {
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "set_ipSecurity_deny",
+                    ["IIS_ID"] = FullIisId(site),
+                    ["ipAddress"] = ipAddress,
+                    ["subnetMask"] = subnetMask
+                });
+                return new HostingSiteFunctionMutationResponse(call.Success, call.Message, call);
+            }
+
+            if (normalizedAction is "remove" or "delete" or "allow")
+            {
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "set_ipSecurity_remove",
+                    ["IIS_ID"] = FullIisId(site),
+                    ["ipAddress"] = ipAddress,
+                    ["subnetMask"] = subnetMask
+                });
+                return new HostingSiteFunctionMutationResponse(call.Success, call.Message, call);
+            }
+
+            if (normalizedAction == "dynamicip")
+            {
+                return new HostingSiteFunctionMutationResponse(
+                    false,
+                    "Dynamic IP restriction settings are documented but paused until the exact active IIS API parameters are verified from the latest ASP source.",
+                    new { legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/ip_deny_action.asp" });
+            }
+
+            return new HostingSiteFunctionMutationResponse(false, "IP Deny supports add/create, remove/delete, or dynamicip actions.", null);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunCreateNetAppMutationAsync(SqlConnection connection, OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            var normalizedAction = NormalizeWebsiteAction(action);
+            var appPath = NormalizeLegacyAppPath(FieldValue(fields, "appPath", ""));
+            if (string.IsNullOrWhiteSpace(appPath))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Enter a safe application path under this website.", null);
+            }
+
+            if (normalizedAction is "delete" or "remove")
+            {
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Member_App_Delete",
+                    ["IIS_ID"] = FullIisId(site),
+                    ["apppath"] = appPath
+                });
+                if (!call.Success)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+                }
+
+                await DeleteSubAppInfoAsync(connection, site.SiteUid, appPath);
+                return new HostingSiteFunctionMutationResponse(true, ".NET application removed and sub-application metadata cleaned.", call);
+            }
+
+            if (normalizedAction is not ("create" or "add"))
+            {
+                return new HostingSiteFunctionMutationResponse(false, ".NET App supports only create/add or delete/remove actions.", null);
+            }
+
+            var createCall = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Member_App_Create",
+                ["IIS_ID"] = FullIisId(site),
+                ["apppath"] = appPath
+            });
+            if (!createCall.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, createCall.Message, createCall);
+            }
+
+            var version = FieldValue(fields, "pDotNetVersion", FieldValue(fields, "version", "4.x"));
+            await SetSubAppInfoAsync(connection, site.SiteUid, appPath, "version", version);
+            return new HostingSiteFunctionMutationResponse(true, ".NET application created and sub-application metadata updated.", createCall);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunVirtualDirMutationAsync(SqlConnection connection, OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            var normalizedAction = NormalizeWebsiteAction(action);
+            var vdirName = NormalizeVirtualDirName(FieldValue(fields, "vdirname", FieldValue(fields, "virtualPath", "")));
+            if (string.IsNullOrWhiteSpace(vdirName))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Enter a safe virtual directory name without slashes.", null);
+            }
+
+            if (normalizedAction is "delete" or "remove")
+            {
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Member_VD_Delete",
+                    ["IIS_ID"] = FullIisId(site),
+                    ["vdirName"] = vdirName
+                });
+                if (!call.Success)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+                }
+
+                await DeleteSubAppInfoAsync(connection, site.SiteUid, vdirName);
+                return new HostingSiteFunctionMutationResponse(true, "Virtual directory removed and metadata cleaned.", call);
+            }
+
+            if (normalizedAction is not ("create" or "add"))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Virtual Dir supports only create/add or delete/remove actions.", null);
+            }
+
+            var customerRoot = $@"h:\root\home\{site.CpLogin}\www";
+            var requestedPath = FieldValue(fields, "physicalPath", FieldValue(fields, "vdpath", customerRoot));
+            var path = NormalizeOwnedHostingAbsolutePath(requestedPath, site.CpLogin);
+            if (!path.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, path.Message, null);
+            }
+
+            var isApp = FieldBool(fields, "isapp", false);
+            var callCreate = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Member_VD_Create",
+                ["isapp"] = isApp ? "1" : "0",
+                ["IIS_ID"] = FullIisId(site),
+                ["vdirName"] = vdirName,
+                ["vdpath"] = path.Path
+            });
+            if (!callCreate.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, callCreate.Message, callCreate);
+            }
+
+            if (isApp)
+            {
+                await SetSubAppInfoAsync(connection, site.SiteUid, vdirName, "version", "4.x");
+            }
+
+            return new HostingSiteFunctionMutationResponse(true, "Virtual directory created with the legacy IIS API.", callCreate);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunCustomErrorsMutationAsync(OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            var statusCode = FieldValue(fields, "errorType", FieldValue(fields, "statusCode", "404"));
+            if (!int.TryParse(statusCode, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code) || code is < 400 or > 599)
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Enter a valid HTTP error status code between 400 and 599.", null);
+            }
+
+            var useDefault = NormalizeWebsiteAction(action) is "default" or "reset" || FieldBool(fields, "defaultError", false);
+            var filePath = NormalizeIisAppPath(FieldValue(fields, "filepath", FieldValue(fields, "path", "/404.html")));
+            if (!useDefault && !IsSafeIisRelativeFilePath(filePath))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Enter a safe website-relative error page path.", null);
+            }
+
+            var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Member_ErrorPage_Edit",
+                ["IIS_ID"] = FullIisId(site),
+                ["errorType"] = code.ToString(CultureInfo.InvariantCulture),
+                ["filepath"] = useDefault ? "" : filePath,
+                ["defaultError"] = useDefault ? "1" : "0"
+            });
+
+            return new HostingSiteFunctionMutationResponse(call.Success, call.Success ? "Custom error page setting updated with the legacy IIS API." : call.Message, call);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunAspNetVersionMutationAsync(SqlConnection connection, OwnedHostingSite site, Dictionary<string, string> fields)
+        {
+            var appPath = NormalizeIisAppPath(FieldValue(fields, "appPath", "/"));
+            var version = NormalizeAspNetVersion(FieldValue(fields, "version", FieldValue(fields, "newversion", "v4.0")));
+            var pipeline = NormalizePipelineMode(FieldValue(fields, "pipeline", FieldValue(fields, "Classicmode", "Integrated")));
+            if (string.IsNullOrWhiteSpace(version))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Choose a supported ASP.NET version.", null);
+            }
+
+            var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Member_DotNetVersion_Edit_No_Mapping",
+                ["IIS_ID"] = FullIisId(site),
+                ["AppPath"] = appPath,
+                ["newversion"] = version,
+                ["Classicmode"] = pipeline
+            });
+            if (!call.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+            }
+
+            if (appPath == "/")
+            {
+                var display = version.Contains("2", StringComparison.OrdinalIgnoreCase) ? "2/3.5" : version.Contains("1", StringComparison.OrdinalIgnoreCase) ? "1.x" : "4.x";
+                display += pipeline.Equals("Classic", StringComparison.OrdinalIgnoreCase) ? "(c)" : "(i)";
+                await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_sites SET version = @version WHERE site_uid = @siteUid AND cpID = @cpId", command =>
+                {
+                    command.Parameters.AddWithValue("@version", display);
+                    command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                    command.Parameters.AddWithValue("@cpId", site.CpId);
+                });
+            }
+            else
+            {
+                await SetSubAppInfoAsync(connection, site.SiteUid, appPath, "version", version);
+            }
+
+            return new HostingSiteFunctionMutationResponse(true, "ASP.NET version updated with the legacy IIS API.", call);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunPhpVersionMutationAsync(SqlConnection connection, OwnedHostingSite site, Dictionary<string, string> fields)
+        {
+            var phpVersionIndex = NormalizePhpVersionIndex(FieldValue(fields, "phpversion", FieldValue(fields, "phpVersion", "")));
+            if (phpVersionIndex <= 0)
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Choose a supported PHP version.", null);
+            }
+
+            var removeCall = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Member_IISEntry_CustomScriptMap_Remove",
+                ["IIS_ID"] = FullIisId(site),
+                ["TagName"] = "Custom-PHP5-FastCGI-php"
+            });
+            if (!removeCall.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, removeCall.Message, removeCall);
+            }
+
+            var addCall = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Member_IISEntry_CustomScriptMap_Add",
+                ["IIS_ID"] = FullIisId(site),
+                ["scriptTypeIndex"] = phpVersionIndex.ToString(CultureInfo.InvariantCulture),
+                ["extension"] = "php"
+            });
+            if (!addCall.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, addCall.Message, addCall);
+            }
+
+            await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_sites SET version = 'v1.x(i)', phpversion = @phpVersion WHERE site_uid = @siteUid AND cpID = @cpId", command =>
+            {
+                command.Parameters.AddWithValue("@phpVersion", PhpDisplayVersion(phpVersionIndex));
+                command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                command.Parameters.AddWithValue("@cpId", site.CpId);
+            });
+
+            return new HostingSiteFunctionMutationResponse(true, "PHP version updated with the legacy ScriptMap API.", new { remove = removeCall, add = addCall });
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunPhpSettingsMutationAsync(SqlConnection connection, OwnedHostingSite site, Dictionary<string, string> fields)
+        {
+            var settings = FieldValue(fields, "phpsettings", FieldValue(fields, "settings", ""));
+            if (string.IsNullOrWhiteSpace(settings) || settings.Length > 12000)
+            {
+                return new HostingSiteFunctionMutationResponse(false, "PHP settings content is empty or too large.", null);
+            }
+
+            var cp = new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType);
+            var path = NormalizeOwnedFileManagerPath(site.SitePath, BuildHostingHomePath(cp));
+            if (!path.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, path.Message, null);
+            }
+
+            var fileRequest = new HostingFileManagerActionRequest(site.CpId, "save-file", path.Path, ".user.ini", "", ".user.ini", true, settings, "utf-8");
+            var result = await RunFileManagerActionAsync(connection, cp, fileRequest);
+            return new HostingSiteFunctionMutationResponse(result.Success, result.Success ? "PHP settings saved to .user.ini." : result.Message, result);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunVisitorStatsMutationAsync(SqlConnection connection, OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            if (site.IsSubdomain)
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Visitor stats are not available for sub-sites in the classic panel.", null);
+            }
+
+            var normalizedAction = NormalizeWebsiteAction(action);
+            var enable = normalizedAction is "enable" or "on";
+            var disable = normalizedAction is "disable" or "off";
+            if (!enable && !disable)
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Visitor Stats supports only enable/on or disable/off actions.", null);
+            }
+
+            var mainDomain = FieldValue(fields, "mainDomain", FieldValue(fields, "domain", ""));
+            if (!IsSafeDomainForRewrite(mainDomain))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Choose a safe primary domain for visitor stats.", null);
+            }
+
+            var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/WebStats_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = enable ? "Enable" : "Disable",
+                ["serverID"] = site.ServerId,
+                ["cpID"] = site.CpId.ToString(CultureInfo.InvariantCulture),
+                ["iis_ID"] = site.IisId,
+                ["Domain"] = mainDomain,
+                ["cpLogin"] = site.CpLogin,
+                ["pwd"] = "",
+                ["path"] = ""
+            });
+            if (!call.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+            }
+
+            await ExecuteNonQueryAsync(connection, @"
+UPDATE dbo.cp_config_sites
+SET Stats_enabled = @enabled, Stats_mainDomain = @mainDomain
+WHERE site_uid = @siteUid AND cpID = @cpId",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@enabled", enable);
+                    command.Parameters.AddWithValue("@mainDomain", mainDomain);
+                    command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                    command.Parameters.AddWithValue("@cpId", site.CpId);
+                });
+
+            LegacyAgentCallResult? mkdirCall = null;
+            if (enable)
+            {
+                var statsPath = $@"H:\root\home\{site.CpLogin}\stats\{site.SiteName}";
+                mkdirCall = await PostLegacyRemoteCommandAsync(
+                    GetLegacyAgentSettings(),
+                    GetLegacyRemoteCommandSettings(),
+                    site.ServerId,
+                    await LoadCustomerIdForCpAsync(connection, site.CpId),
+                    $"cmd /c mkdir {statsPath}");
+            }
+
+            return new HostingSiteFunctionMutationResponse(true, enable ? "Visitor stats enabled." : "Visitor stats disabled.", new { stats = call, statsFolder = mkdirCall });
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunIisLogManagerMutationAsync(SqlConnection connection, OwnedHostingSite site, string action)
+        {
+            var normalizedAction = NormalizeWebsiteAction(action);
+            if (normalizedAction is not ("download" or "copy" or "export"))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "IIS Log Manager supports only the classic download/export action.", null);
+            }
+
+            var customerId = await LoadCustomerIdForCpAsync(connection, site.CpId);
+            var w3svcId = $"{site.CpId}{FormatIisId(site.IisId)}";
+            var command = $@"xcopy c:\logfiles\W3SVC{w3svcId}\*.log h:\root\home\{site.CpLogin}\www\db\{w3svcId}\ /y";
+            var call = await PostLegacyRemoteCommandAsync(GetLegacyAgentSettings(), GetLegacyRemoteCommandSettings(), site.ServerId, customerId, command);
+            return new HostingSiteFunctionMutationResponse(
+                call.Success,
+                call.Success ? $"All IIS Raw Log files were moved to /db/{w3svcId}." : call.Message,
+                new { w3svcId, command, call });
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunAspNetAppMutationAsync(SqlConnection connection, OwnedHostingSite site, string key, string action, Dictionary<string, string> fields)
+        {
+            var appPath = NormalizeIisAppPath(FieldValue(fields, "appPath", "/"));
+            if (appPath == "/")
+            {
+                appPath = "";
+            }
+
+            if (key == "core-mode")
+            {
+                var mode = FieldValue(fields, "hostingModel", FieldValue(fields, "mode", "OutOfProcess"));
+                mode = mode.Equals("InProcess", StringComparison.OrdinalIgnoreCase) ? "InProcess" : "OutOfProcess";
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "set_HostingModel",
+                    ["IIS_ID"] = FullIisId(site),
+                    ["Mode"] = mode,
+                    ["apppath"] = appPath
+                });
+
+                if (!call.Success)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+                }
+
+                var restart = await RestartSitePoolViaRemoteCommandAsync(connection, site);
+                return new HostingSiteFunctionMutationResponse(true, $"Core hosting model set to {mode}.", new { legacy = call, restart });
+            }
+
+            if (key == "detail-error")
+            {
+                var enabled = FieldBool(fields, "enabled", !action.Equals("disable", StringComparison.OrdinalIgnoreCase));
+                var mode = enabled ? "Off" : "On";
+                var settingBit = enabled ? 1 : 0;
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "set_customErrors_Mode",
+                    ["IIS_ID"] = FullIisId(site),
+                    ["Mode"] = mode,
+                    ["apppath"] = appPath
+                });
+                if (!call.Success)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+                }
+
+                if (string.IsNullOrWhiteSpace(appPath))
+                {
+                    await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Sites SET detailerror = @enabled WHERE cpID = @cpId AND site_Uid = @siteUid", command =>
+                    {
+                        command.Parameters.AddWithValue("@enabled", settingBit);
+                        command.Parameters.AddWithValue("@cpId", site.CpId);
+                        command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                    });
+                }
+
+                var restart = await RestartSitePoolViaRemoteCommandAsync(connection, site);
+                return new HostingSiteFunctionMutationResponse(true, enabled ? "Detailed errors enabled." : "Detailed errors disabled.", new { legacy = call, restart });
+            }
+
+            if (key == "site-guard")
+            {
+                var enabled = FieldBool(fields, "enabled", !action.Equals("disable", StringComparison.OrdinalIgnoreCase));
+                var fwAction = enabled ? "enableFW" : "disableFW";
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Filter_webknight",
+                    ["IIS_ID"] = FullIisId(site),
+                    ["FW_Action"] = fwAction
+                });
+                if (!call.Success || !call.Preview.Trim().Equals("OK", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Success ? $"Site Guard agent returned unexpected response: {call.Preview}" : call.Message, call);
+                }
+
+                if (string.IsNullOrWhiteSpace(appPath))
+                {
+                    await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Sites SET webknight = @enabled WHERE cpID = @cpId AND site_Uid = @siteUid", command =>
+                    {
+                        command.Parameters.AddWithValue("@enabled", enabled ? 1 : 0);
+                        command.Parameters.AddWithValue("@cpId", site.CpId);
+                        command.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                    });
+                }
+
+                return new HostingSiteFunctionMutationResponse(true, enabled ? "Site Guard enabled." : "Site Guard disabled.", call);
+            }
+
+            return new HostingSiteFunctionMutationResponse(false, "Unsupported ASP.NET app action.", null);
+        }
+
+        private async Task<LegacyAgentCallResult> RestartSitePoolViaRemoteCommandAsync(SqlConnection connection, OwnedHostingSite site)
+        {
+            var poolName = await LoadPoolNameAsync(connection, site.CpId, ParseInt(site.PoolId));
+            if (string.IsNullOrWhiteSpace(poolName))
+            {
+                return new LegacyAgentCallResult(false, "No application pool is assigned to this site.", "", "", null);
+            }
+
+            var customerId = await LoadCustomerIdByCpIdAsync(connection, site.CpId);
+            if (customerId <= 0)
+            {
+                return new LegacyAgentCallResult(false, "Unable to resolve customer ID for remote command token.", "", "", null);
+            }
+
+            var command = $"powershell Get-Process -IncludeUserName | Where UserName -like '*{poolName}' | Stop-Process -force";
+            return await PostLegacyRemoteCommandAsync(GetLegacyAgentSettings(), GetLegacyRemoteCommandSettings(), site.ServerId, customerId, command);
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunMappedPathMutationAsync(SqlConnection connection, OwnedHostingSite site, Dictionary<string, string> fields)
+        {
+            var requestedPath = FieldValue(fields, "target", FieldValue(fields, "sitePath", FieldValue(fields, "path", "")));
+            var normalizedPath = NormalizeOwnedHostingAbsolutePath(requestedPath, site.CpLogin);
+            if (!normalizedPath.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, normalizedPath.Message, null);
+            }
+
+            if (normalizedPath.Path.Contains(@"\ ", StringComparison.Ordinal) || normalizedPath.Path.Contains(@" \", StringComparison.Ordinal))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Mapped path cannot contain leading or trailing spaces around folder separators.", null);
+            }
+
+            var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Member_Binding_Path_Change",
+                ["IIS_ID"] = FullIisId(site),
+                ["site_path"] = normalizedPath.Path
+            });
+
+            if (!call.Success || !call.Preview.Trim().Equals("OK", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HostingSiteFunctionMutationResponse(false, call.Success ? $"Legacy IIS path change returned unexpected response: {call.Preview}" : call.Message, call);
+            }
+
+            await using (var updateCommand = new SqlCommand(@"
+UPDATE dbo.cp_config_Sites
+SET site_path = @sitePath
+WHERE site_Uid = @siteUid AND cpID = @cpId", connection))
+            {
+                updateCommand.Parameters.AddWithValue("@sitePath", normalizedPath.Path);
+                updateCommand.Parameters.AddWithValue("@siteUid", site.SiteUid);
+                updateCommand.Parameters.AddWithValue("@cpId", site.CpId);
+                await updateCommand.ExecuteNonQueryAsync();
+            }
+
+            var poolName = await LoadPoolNameAsync(connection, site.CpId, ParseInt(site.PoolId));
+            HostingWorkqueueResponse? poolQueue = null;
+            if (!string.IsNullOrWhiteSpace(poolName))
+            {
+                await DeletePendingPoolChangeAsync(connection, site.CpLogin, site.SiteName);
+                poolQueue = await CreateHostingWorkqueueAsync(connection, new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType), new HostingWorkqueueRequest(
+                    site.CpId,
+                    "changepool",
+                    normalizedPath.Path,
+                    poolName,
+                    site.ServerId,
+                    site.PoolId,
+                    site.SiteName,
+                    poolName));
+            }
+
+            return new HostingSiteFunctionMutationResponse(true, "Mapped path updated in IIS and account data.", new
+            {
+                site.SiteUid,
+                sitePath = normalizedPath.Path,
+                legacy = call,
+                poolQueue
+            });
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunApplicationPoolMutationAsync(SqlConnection connection, OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            var normalizedAction = NormalizeWebsiteAction(action);
+            var poolId = ParseInt(FieldValue(fields, "poolId", site.PoolId));
+            if (poolId <= 0)
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Application Pool needs a valid poolId.", null);
+            }
+
+            var pool = await LoadOwnedPoolAsync(connection, site.CpId, poolId);
+            if (pool == null)
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Application Pool not found for this hosting plan.", null);
+            }
+
+            if (normalizedAction is "create" or "createpool")
+            {
+                var queue = await CreateHostingWorkqueueAsync(connection, new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType), new HostingWorkqueueRequest(
+                    site.CpId,
+                    "createpool",
+                    "createpool",
+                    pool.Name,
+                    site.ServerId,
+                    "",
+                    site.SiteName,
+                    "application-pool"));
+                return new HostingSiteFunctionMutationResponse(queue.Success, queue.Message, queue);
+            }
+
+            if (normalizedAction is "change" or "changepool")
+            {
+                await DeletePendingPoolChangeAsync(connection, site.CpLogin, site.SiteName);
+                var queue = await CreateHostingWorkqueueAsync(connection, new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType), new HostingWorkqueueRequest(
+                    site.CpId,
+                    "changepool",
+                    site.SitePath,
+                    pool.Name,
+                    site.ServerId,
+                    pool.Id.ToString(CultureInfo.InvariantCulture),
+                    site.SiteName,
+                    await LoadPoolNameAsync(connection, site.CpId, ParseInt(site.PoolId))));
+                return new HostingSiteFunctionMutationResponse(queue.Success, queue.Message, queue);
+            }
+
+            if (normalizedAction is "start" or "stop" or "restart" or "recycle")
+            {
+                var agentAction = normalizedAction switch
+                {
+                    "start" => "IIS_Pools_AppPool_Start",
+                    "stop" => "IIS_Pools_AppPool_Stop",
+                    _ => "IIS_Pools_AppPool_Recycle"
+                };
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = agentAction,
+                    ["AppPoolName"] = pool.Name
+                });
+                if (!call.Success || !call.Preview.Contains("OK", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Success ? $"Application Pool agent returned unexpected response: {call.Preview}" : call.Message, call);
+                }
+
+                HostingWorkqueueResponse? repairQueue = null;
+                if (normalizedAction == "start")
+                {
+                    await DeletePendingCreatePoolAsync(connection, site.CpLogin, pool.Name);
+                    repairQueue = await CreateHostingWorkqueueAsync(connection, new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType), new HostingWorkqueueRequest(
+                        site.CpId,
+                        "createpool",
+                        "createpool",
+                        pool.Name,
+                        site.ServerId,
+                        "",
+                        site.SiteName,
+                        "application-pool"));
+                }
+
+                return new HostingSiteFunctionMutationResponse(true, $"Application Pool {normalizedAction} completed.", new { legacy = call, repairQueue });
+            }
+
+            if (normalizedAction is "update-pool-ram" or "memory" or "ram")
+            {
+                var memory = ClampInt(FieldValue(fields, "memory", FieldValue(fields, "newspace", pool.PrivateMemoryMb.ToString(CultureInfo.InvariantCulture))), 256, 40960, pool.PrivateMemoryMb);
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Pools_AppPool_Memory",
+                    ["AppPoolName"] = pool.Name,
+                    ["memory"] = memory.ToString(CultureInfo.InvariantCulture),
+                    ["privateMemory"] = memory.ToString(CultureInfo.InvariantCulture)
+                });
+                if (!call.Success)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+                }
+
+                await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Pools SET privateMemory = @memory WHERE cpID = @cpId AND pool_id = @poolId", command =>
+                {
+                    command.Parameters.AddWithValue("@memory", memory);
+                    command.Parameters.AddWithValue("@cpId", site.CpId);
+                    command.Parameters.AddWithValue("@poolId", pool.Id);
+                });
+                return new HostingSiteFunctionMutationResponse(true, "Application Pool RAM updated.", new { legacy = call, memory });
+            }
+
+            if (normalizedAction is "32-bit" or "enable-32-bit" or "64-bit" or "disable-32-bit")
+            {
+                var enable32Bit = normalizedAction is "32-bit" or "enable-32-bit";
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Pools_AppPool_Edit",
+                    ["AppPoolName"] = pool.Name,
+                    ["Properties"] = "enable32BitAppOnWin64",
+                    ["Value"] = enable32Bit ? "True" : "False"
+                });
+                if (!call.Success)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+                }
+
+                await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Pools SET enable32BitAppOnWin64 = @enabled WHERE cpID = @cpId AND pool_id = @poolId", command =>
+                {
+                    command.Parameters.AddWithValue("@enabled", enable32Bit);
+                    command.Parameters.AddWithValue("@cpId", site.CpId);
+                    command.Parameters.AddWithValue("@poolId", pool.Id);
+                });
+                return new HostingSiteFunctionMutationResponse(true, enable32Bit ? "Application Pool changed to 32-bit." : "Application Pool changed to 64-bit.", call);
+            }
+
+            if (normalizedAction is "enable-load-user-profile" or "disable-load-user-profile")
+            {
+                var enabled = normalizedAction == "enable-load-user-profile";
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Pools_AppPool_processModel_Edit",
+                    ["AppPoolName"] = pool.Name,
+                    ["Properties"] = "loadUserProfile",
+                    ["Value"] = enabled ? "True" : "False"
+                });
+                if (!call.Success)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, call.Message, call);
+                }
+
+                await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Pools SET loadUserProfile = @enabled WHERE cpID = @cpId AND pool_id = @poolId", command =>
+                {
+                    command.Parameters.AddWithValue("@enabled", enabled);
+                    command.Parameters.AddWithValue("@cpId", site.CpId);
+                    command.Parameters.AddWithValue("@poolId", pool.Id);
+                });
+                return new HostingSiteFunctionMutationResponse(true, enabled ? "Load User Profile enabled." : "Load User Profile disabled.", call);
+            }
+
+            return new HostingSiteFunctionMutationResponse(false, "Unsupported Application Pool action.", new
+            {
+                supportedActions = new[] { "create", "change", "start", "stop", "recycle", "ram", "enable-32-bit", "disable-32-bit", "enable-load-user-profile", "disable-load-user-profile" }
+            });
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunWebDeployMutationAsync(OwnedHostingSite site, string action)
+        {
+            if (action.Equals("fix-acl", StringComparison.OrdinalIgnoreCase) || action.Equals("fixacl", StringComparison.OrdinalIgnoreCase))
+            {
+                var call = await PostLegacySharedApiAsync(GetLegacySharedApiSettings(), "/tools/resetDefaultPermissionsBySiteUid.asp", new Dictionary<string, string>
+                {
+                    ["site_Uid"] = site.SiteUid.ToString(CultureInfo.InvariantCulture)
+                });
+
+                return new HostingSiteFunctionMutationResponse(call.Success, call.Success ? "Fix ACL request submitted." : call.Message, call);
+            }
+
+            return new HostingSiteFunctionMutationResponse(
+                false,
+                "WebDeploy/Remote IIS enable and disable are paused until Persits-compatible decryptpwd is implemented for cpPasswordHash. The classic action needs the decrypted hosting password before calling SetIISManagerUser.",
+                new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/iis_manager_webdeploy_action.asp",
+                    site.SiteUid,
+                    siteName = $"{site.CpLogin}-{site.SiteName}"
+                });
+        }
+
+        private async Task<HostingSiteFunctionMutationResponse> RunOutgoingPortMutationAsync(SqlConnection connection, OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            var remove = action.Equals("remove", StringComparison.OrdinalIgnoreCase) || action.Equals("delete", StringComparison.OrdinalIgnoreCase);
+            var ip = FieldValue(fields, "ip", "");
+            var portText = FieldValue(fields, "port", "");
+            if (!IPAddress.TryParse(ip, out _) || !int.TryParse(portText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) || port is < 1 or > 65535)
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Enter a valid remote IP address and TCP port.", null);
+            }
+
+            if (remove)
+            {
+                if (!long.TryParse(FieldValue(fields, "ipid", "0"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var ipId) || ipId <= 0)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, "Outgoing port delete needs the ipid from the existing rule row.", null);
+                }
+
+                var ruleName = FieldValue(fields, "rulename", "");
+                if (!ruleName.Contains(site.CpLogin, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HostingSiteFunctionMutationResponse(false, "Outgoing port rule name does not belong to this hosting account.", null);
+                }
+
+                var deleteCall = await PostLegacySharedApiAsync(GetLegacySharedApiSettings(), "/api/firewall_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "del_rule",
+                    ["ServerID"] = site.ServerId,
+                    ["IP"] = ip,
+                    ["port"] = port.ToString(CultureInfo.InvariantCulture),
+                    ["rulename"] = ruleName
+                });
+                if (!deleteCall.Success)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, deleteCall.Message, deleteCall);
+                }
+
+                await using var deleteCommand = new SqlCommand("DELETE FROM dbo.cp_config_db_out_ip WHERE ipid = @ipId AND cpID = @cpId", connection);
+                deleteCommand.Parameters.AddWithValue("@ipId", ipId);
+                deleteCommand.Parameters.AddWithValue("@cpId", site.CpId);
+                await deleteCommand.ExecuteNonQueryAsync();
+                return new HostingSiteFunctionMutationResponse(true, "Outgoing port rule deleted.", deleteCall);
+            }
+
+            await using var quotaCommand = new SqlCommand(@"
+SELECT COUNT(1)
+FROM dbo.cp_config_db_out_ip
+WHERE cpID = @cpId", connection);
+            quotaCommand.Parameters.AddWithValue("@cpId", site.CpId);
+            var existingCount = Convert.ToInt32(await quotaCommand.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+            var quota = site.CpLogin.Equals("hiemedia-001", StringComparison.OrdinalIgnoreCase) ? 200 : 100;
+            if (existingCount >= quota)
+            {
+                return new HostingSiteFunctionMutationResponse(false, $"Outgoing port quota reached ({quota}).", null);
+            }
+
+            var ruleNameToAdd = $"{site.CpLogin}-{GenerateResetToken()[..4].ToLowerInvariant()}";
+            var addCall = await PostLegacySharedApiAsync(GetLegacySharedApiSettings(), "/api/firewall_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "add_rule",
+                ["ServerID"] = site.ServerId,
+                ["IP"] = ip,
+                ["port"] = port.ToString(CultureInfo.InvariantCulture),
+                ["rulename"] = ruleNameToAdd
+            });
+            if (!addCall.Success)
+            {
+                return new HostingSiteFunctionMutationResponse(false, addCall.Message, addCall);
+            }
+
+            await using var insertCommand = new SqlCommand(@"
+INSERT INTO dbo.cp_config_db_out_ip (cpid, remoteip, port, adddate, rulename)
+VALUES (@cpId, @ip, @port, GETDATE(), @ruleName)", connection);
+            insertCommand.Parameters.AddWithValue("@cpId", site.CpId);
+            insertCommand.Parameters.AddWithValue("@ip", ip);
+            insertCommand.Parameters.AddWithValue("@port", port);
+            insertCommand.Parameters.AddWithValue("@ruleName", ruleNameToAdd);
+            await insertCommand.ExecuteNonQueryAsync();
+            return new HostingSiteFunctionMutationResponse(true, "Outgoing port rule added.", addCall);
         }
 
         private static async Task<List<Dictionary<string, object?>>> TryLoadFunctionRowsAsync(SqlConnection connection, List<string> warnings, string label, string sql, Action<SqlCommand> addParameters)
@@ -7358,6 +9141,82 @@ WHERE s.site_Uid = @siteUid",
             }
 
             return rows;
+        }
+
+        private static async Task<string> LoadPoolNameAsync(SqlConnection connection, long cpId, int poolId)
+        {
+            if (poolId <= 0)
+            {
+                return "";
+            }
+
+            await using var command = new SqlCommand(@"
+SELECT TOP 1 pool_name
+FROM dbo.cp_config_Pools
+WHERE cpID = @cpId AND pool_id = @poolId", connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            command.Parameters.AddWithValue("@poolId", poolId);
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? "" : Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim() ?? "";
+        }
+
+        private static async Task<OwnedApplicationPool?> LoadOwnedPoolAsync(SqlConnection connection, long cpId, int poolId)
+        {
+            if (poolId <= 0)
+            {
+                return null;
+            }
+
+            await using var command = new SqlCommand(@"
+SELECT TOP 1 pool_id,
+       ISNULL(pool_name, ''),
+       ISNULL(privateMemory, 0),
+       ISNULL(pool_version, ''),
+       ISNULL(enable32BitAppOnWin64, 0),
+       ISNULL(loadUserProfile, 0)
+FROM dbo.cp_config_Pools
+WHERE cpID = @cpId AND pool_id = @poolId", connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            command.Parameters.AddWithValue("@poolId", poolId);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new OwnedApplicationPool(
+                reader.GetInt32(0),
+                reader.GetString(1).Trim(),
+                reader.GetInt32(2),
+                reader.GetString(3).Trim(),
+                reader.GetBoolean(4),
+                reader.GetBoolean(5));
+        }
+
+        private static async Task DeletePendingPoolChangeAsync(SqlConnection connection, string cpLogin, string siteName)
+        {
+            await using var command = new SqlCommand(@"
+DELETE FROM dbo.workqueue
+WHERE type = 'changepool'
+  AND ISNULL(status, 0) = 0
+  AND siteowner = @siteName
+  AND cplogin = @cpLogin", connection);
+            command.Parameters.AddWithValue("@siteName", siteName);
+            command.Parameters.AddWithValue("@cpLogin", cpLogin);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task DeletePendingCreatePoolAsync(SqlConnection connection, string cpLogin, string poolName)
+        {
+            await using var command = new SqlCommand(@"
+DELETE FROM dbo.workqueue
+WHERE type = 'createpool'
+  AND ISNULL(status, 0) = 0
+  AND dstfolder = @poolName
+  AND cplogin = @cpLogin", connection);
+            command.Parameters.AddWithValue("@poolName", poolName);
+            command.Parameters.AddWithValue("@cpLogin", cpLogin);
+            await command.ExecuteNonQueryAsync();
         }
 
         private static string NormalizeWebsiteFunctionKey(string value)
@@ -7405,7 +9264,7 @@ WHERE s.site_Uid = @siteUid",
             var map = new Dictionary<string, WebsiteFunctionSpec>(StringComparer.OrdinalIgnoreCase)
             {
                 ["site-name"] = new("Site Name", "Settings", "includes/website_name_edit.asp", "/iis_api.asp action=IIS_Member_IISEntry_SITENAME_EDIT", "Edit the IIS website display name and the account-panel display name.", true, true, new List<string> { "siteName" }),
-                ["mapped-path"] = new("Mapped Path", "Settings", "treepick.asp + domainbind_actions.asp?action=updatesitepath", "workqueue type=changepool / IIS path binding", "Change the website physical path inside this hosting account.", true, true, new List<string> { "source", "target" }),
+                ["mapped-path"] = new("Mapped Path", "Settings", "treepick.asp + domainbind_actions.asp?action=updatesitepath", "direct site path update; changepool only as specific legacy side effect", "Change the website physical path inside this hosting account.", true, true, new List<string> { "source", "target" }),
                 ["aspnet-version"] = new("ASP.NET Version", "Settings", "domainbind_version_change.asp", "aspnetapp_action.asp", "Review or change ASP.NET runtime settings.", true, true, new List<string> { "version", "pipeline" }),
                 ["core-mode"] = new(".NET Core Mode", "Settings", "boxinfo_core_mode.asp", "aspnetapp_action.asp?action=set_HostingModel", "Review or change .NET Core hosting model.", true, true, new List<string> { "hostingModel" }),
                 ["nodejs-app"] = new("Node.js App", "Settings", "boxinfo_nodejs.asp", "nodejs_action.asp + workqueue type=nodejs", "Configure Node.js worker and rewrite settings.", true, true, new List<string> { "entryPoint", "port" }),
@@ -7417,13 +9276,13 @@ WHERE s.site_Uid = @siteUid",
                 ["domain-manager"] = new("Domain Manager", "Basic", "boxinfo_mapdomain.asp", "domainbind_actions.asp", "Add, move, and remove mapped domains.", true, true, new List<string> { "domain", "mode" }),
                 ["visitor-stats"] = new("Visitor Stats", "Basic", "boxinfo_webstats.asp", "AWStats setup tied to WebDeploy/Remote IIS user", "Review visitor statistics setup.", true, true, new List<string> { "enabled" }),
                 ["ftp-access"] = new("FTP Access", "Basic", "boxinfo_ftp.asp", "cp_config_FTP + encryptpwd/encryptFTPpwd", "Create or edit FTP access for this site.", true, true, new List<string> { "login", "password", "path", "permission" }),
-                ["vs-webdeploy"] = new("VS Webdeploy", "Basic", "boxinfo_webdeploy.asp", "iis_manager_webdeploy_action.asp + workqueue deploy", "Configure Visual Studio/Web Deploy publishing.", true, true, new List<string> { "source", "target" }),
+                ["vs-webdeploy"] = new("VS Webdeploy", "Basic", "boxinfo_webdeploy.asp", "iis_manager_webdeploy_action.asp + direct IIS API", "Configure Visual Studio/Web Deploy publishing.", true, true, new List<string>()),
                 ["github-deploy"] = new("Github Deploy", "Basic", "boxinfo_nodejs_deploy.asp", "nodejs_action.asp deploy fields + workqueue deploy", "Configure GitHub deployment for this site.", true, true, new List<string> { "source", "target" }),
                 ["smtp-sample-code"] = new("SMTP Sample Code", "Basic", "boxinfo_smtp_code.asp", "setupOtherPlugins/smtpscriptsamples_action", "Show SMTP sample code and related plugin metadata.", false, false, new List<string>()),
                 ["ip-deny"] = new("IP Deny", "Basic", "IP deny actions", "IIS/server firewall rules", "Manage denied IP rules for this site.", true, true, new List<string> { "ip", "mask" }),
-                ["iis-log-manager"] = new("IIS Log Manager", "Basic", "rawlog_download.asp", "rawlog_download_action.asp", "Review raw IIS log export options.", false, true, new List<string>()),
+                ["iis-log-manager"] = new("IIS Log Manager", "Basic", "rawlog_download.asp", "rawlog_download_action.asp + remote_cmd2 xcopy", "Copy raw IIS logs into this hosting account's /db folder.", true, true, new List<string> { "action" }),
                 ["application-pool"] = new("Application Pool", "Basic", "boxinfo_pool.asp", "apppoolmgr_action.asp + workqueue createpool/changepool", "Create, assign, recycle, start, or stop application pools.", true, true, new List<string> { "action", "source", "target" }),
-                ["outgoing-port"] = new("Outgoing Port", "Basic", "/cp/remoteip", "sqlremoteip_action.asp + set_Firewall_rpc", "Manage outgoing port/firewall exceptions.", true, true, new List<string> { "port", "ip" }),
+                ["outgoing-port"] = new("Outgoing Port", "Basic", "/cp/remoteip", "sqlremoteip_action.asp + set_Firewall_rpc", "Manage outgoing port/firewall exceptions.", true, true, new List<string> { "port", "ip", "ipid", "rulename" }),
                 ["create-net-app"] = new("Create .Net App", "Advanced Features", "boxinfo_aspnetapp.asp", "aspnetapp_action.asp createIISApp/deleteIISApp", "Create or delete IIS applications below this site.", true, true, new List<string> { "appPath" }),
                 ["virtual-dir"] = new("Create Virtual Dir", "Advanced Features", "boxinfo_virtualdir.asp", "virtualdir_action.asp createIISVD/deleteIISVD", "Create or delete IIS virtual directories.", true, true, new List<string> { "virtualPath", "physicalPath" }),
                 ["force-https"] = new("Force HTTPS", "Advanced Features", "boxinfo_redirect.asp", "redirect_action.asp + URL Rewrite API", "Enable or disable HTTPS redirect rules.", true, true, new List<string> { "enabled" }),
@@ -7465,13 +9324,15 @@ WHERE s.site_Uid = @siteUid",
 
             if (key == "mime-type")
             {
-                var extension = NormalizeExtension(FieldValue(fields, "extension", ""));
+                var remove = action.Equals("remove", StringComparison.OrdinalIgnoreCase) || action.Equals("delete", StringComparison.OrdinalIgnoreCase);
+                var extension = remove
+                    ? NormalizeExtensionWithoutDot(FieldValue(fields, "extension", ""))
+                    : NormalizeExtension(FieldValue(fields, "extension", ""));
                 if (string.IsNullOrWhiteSpace(extension))
                 {
                     return null;
                 }
 
-                var remove = action.Equals("remove", StringComparison.OrdinalIgnoreCase) || action.Equals("delete", StringComparison.OrdinalIgnoreCase);
                 var form = new Dictionary<string, string>
                 {
                     ["action"] = remove ? "del_mimeMap" : "add_mimeMap",
@@ -7506,7 +9367,7 @@ WHERE s.site_Uid = @siteUid",
                     });
                 }
 
-                var extension = NormalizeExtension(FieldValue(fields, "extension", ""));
+                var extension = NormalizeScriptMapExtension(FieldValue(fields, "extension", ""));
                 var scriptTypeIndex = FieldValue(fields, "scriptTypeIndex", FieldValue(fields, "processor", "1"));
                 if (string.IsNullOrWhiteSpace(extension) || !int.TryParse(scriptTypeIndex, NumberStyles.Integer, CultureInfo.InvariantCulture, out var scriptIndex) || scriptIndex <= 0)
                 {
@@ -7630,6 +9491,9 @@ WHERE s.site_Uid = @siteUid",
                 || value.Equals("yes", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static string NormalizeWebsiteAction(string action) =>
+            (action ?? "").Trim().ToLowerInvariant().Replace(" ", "-", StringComparison.Ordinal).Replace("_", "-", StringComparison.Ordinal);
+
         private static string NormalizeIisAppPath(string value)
         {
             var path = (value ?? "").Trim().Replace('\\', '/');
@@ -7643,18 +9507,25 @@ WHERE s.site_Uid = @siteUid",
 
         private static string NormalizeExtension(string value)
         {
-            var extension = (value ?? "").Trim().ToLowerInvariant();
+            var extension = NormalizeExtensionWithoutDot(value);
+            return string.IsNullOrWhiteSpace(extension) ? "" : $".{extension}";
+        }
+
+        private static string NormalizeExtensionWithoutDot(string value)
+        {
+            var extension = (value ?? "").Trim().TrimStart('.').ToLowerInvariant();
             if (extension.Length > 16)
             {
                 extension = extension[..16];
             }
 
-            if (string.IsNullOrWhiteSpace(extension))
-            {
-                return "";
-            }
+            return new string(extension.Where(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_').ToArray());
+        }
 
-            return extension.StartsWith(".", StringComparison.Ordinal) ? extension : $".{extension}";
+        private static string NormalizeScriptMapExtension(string value)
+        {
+            var extension = new string((value ?? "").Trim().TrimStart('.').Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+            return extension.Length > 4 ? "" : extension;
         }
 
         private static string NormalizeDefaultDocs(string value)
@@ -7666,6 +9537,135 @@ WHERE s.site_Uid = @siteUid",
                 .ToList();
 
             return string.Join(",", docs);
+        }
+
+        private static string SafeRewriteRuleName(string value)
+        {
+            var cleaned = new string((value ?? "").Trim().Where(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.').ToArray());
+            return cleaned.Length > 64 ? cleaned[..64] : cleaned;
+        }
+
+        private static string NormalizeLegacyAppPath(string value)
+        {
+            var path = (value ?? "").Trim().Replace('\\', '/').Trim('/');
+            if (string.IsNullOrWhiteSpace(path) || path.Contains("..", StringComparison.Ordinal) || path.Length > 180)
+            {
+                return "";
+            }
+
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (segments.Length == 0 || segments.Any(segment => segment.Length > 60 || !segment.All(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.')))
+            {
+                return "";
+            }
+
+            return string.Join('/', segments);
+        }
+
+        private static string NormalizeVirtualDirName(string value)
+        {
+            var name = (value ?? "").Trim().Replace('\\', '/').Trim('/');
+            if (string.IsNullOrWhiteSpace(name) || name.Contains('/', StringComparison.Ordinal) || name.Contains("..", StringComparison.Ordinal) || name.Length > 60)
+            {
+                return "";
+            }
+
+            return name.All(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.') ? name : "";
+        }
+
+        private static bool IsSafeIisRelativeFilePath(string value)
+        {
+            var path = (value ?? "").Trim().Replace('\\', '/');
+            if (string.IsNullOrWhiteSpace(path) || path.Length > 180 || path.Contains("..", StringComparison.Ordinal) || path.Contains(':', StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!path.StartsWith("/", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return segments.Length > 0 && segments.All(segment => segment.Length <= 80 && segment.All(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.' or ' '));
+        }
+
+        private static string NormalizeAspNetVersion(string value)
+        {
+            var normalized = (value ?? "").Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "4" or "4.x" or "v4" or "v4.0" or "aspnet4" => "v4.0",
+                "2" or "2/3.5" or "3.5" or "v2" or "v2.0" or "aspnet2" => "v2.0",
+                "1" or "1.x" or "v1" or "v1.1" => "v1.1",
+                "0" or "none" or "no-managed-code" => "",
+                _ => ""
+            };
+        }
+
+        private static string NormalizePipelineMode(string value)
+        {
+            var normalized = (value ?? "").Trim().ToLowerInvariant();
+            return normalized.StartsWith("classic", StringComparison.Ordinal) || normalized is "c" or "1"
+                ? "Classic"
+                : "Integrated";
+        }
+
+        private static int NormalizePhpVersionIndex(string value)
+        {
+            var normalized = (value ?? "").Trim().ToLowerInvariant();
+            if (int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return PhpDisplayVersion(parsed) == "" ? 0 : parsed;
+            }
+
+            return normalized switch
+            {
+                "5.2" or "5.2.x" => 1,
+                "5.4" or "5.4.x" => 3,
+                "5.5" or "5.5.x" => 4,
+                "5.6" or "5.6.x" => 8,
+                "7.0" or "7.0.x" => 9,
+                "7.2" or "7.2.x" => 10,
+                "7.3" or "7.3.x" => 11,
+                "7.4" or "7.4.x" => 12,
+                _ => 0
+            };
+        }
+
+        private static string PhpDisplayVersion(int versionIndex) => versionIndex switch
+        {
+            1 => "5.2.x",
+            3 => "5.4.x",
+            4 => "5.5.x",
+            8 => "5.6.x",
+            9 => "7.0.x",
+            10 => "7.2.x",
+            11 => "7.3.x",
+            12 => "7.4.x",
+            _ => ""
+        };
+
+        private static string FormatIisId(string value)
+        {
+            var text = new string((value ?? "").Trim().Where(char.IsDigit).ToArray());
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                text = "0";
+            }
+
+            return text.Length >= 2 ? text[^2..] : text.PadLeft(2, '0');
+        }
+
+        private static bool IsSafeDomainForRewrite(string value)
+        {
+            var domain = (value ?? "").Trim().TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(domain) || domain.Length > 255)
+            {
+                return false;
+            }
+
+            return domain.All(ch => char.IsLetterOrDigit(ch) || ch is '-' or '.');
         }
 
         private static bool IsSafeSiteDisplayName(string value)
@@ -8120,6 +10120,84 @@ WHERE c.cpID = @cpId";
             command.Parameters.AddWithValue("@cpId", cpId);
             var value = await command.ExecuteScalarAsync();
             return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<HostingMssqlReportUsersDashboard> LoadHostingMssqlReportUsersAsync(SqlConnection connection, SelectedHostingCp cp)
+        {
+            var serverId = "";
+            if (await TableExistsAsync(connection, "cp_config_SSR"))
+            {
+                await using var serverCommand = new SqlCommand("SELECT TOP 1 ISNULL(serverid, '') FROM dbo.cp_config_SSR WHERE cpid = @cpId ORDER BY enterdate DESC", connection);
+                serverCommand.Parameters.AddWithValue("@cpId", cp.CpId);
+                var value = await serverCommand.ExecuteScalarAsync();
+                serverId = value == null || value == DBNull.Value ? "" : Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim() ?? "";
+            }
+
+            var additionalQuota = await TableColumnExistsAsync(connection, "cp_config", "AdditionalWebuserQuota")
+                ? await LoadScalarIntAsync(connection, "SELECT TOP 1 ISNULL(AdditionalWebuserQuota, 0) FROM dbo.cp_config WHERE cpID = @cpId", cp.CpId)
+                : 0;
+            var planQuota = await LoadPlanWebUserQuotaAsync(connection, cp.CpId);
+
+            var users = new List<HostingMssqlReportUserSummary>();
+            if (await TableExistsAsync(connection, "cp_config_site_users"))
+            {
+                await using var command = new SqlCommand(@"
+SELECT username, password
+FROM dbo.cp_config_site_users
+WHERE cpID = @cpId
+ORDER BY username", connection);
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var username = reader.IsDBNull(0) ? "" : reader.GetString(0).Trim();
+                    users.Add(new HostingMssqlReportUserSummary(
+                        username,
+                        !reader.IsDBNull(1) && !string.IsNullOrWhiteSpace(Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture)),
+                        username.Equals(cp.CpLogin, StringComparison.OrdinalIgnoreCase)));
+                }
+            }
+
+            return new HostingMssqlReportUsersDashboard(
+                cp.CpId,
+                cp.CpLogin,
+                !string.IsNullOrWhiteSpace(serverId),
+                serverId,
+                additionalQuota + planQuota,
+                users.Count,
+                users,
+                new List<string>
+                {
+                    "/Users/erwinyu/Downloads/hosting/cp8/cp/database_mssqlreport.asp",
+                    "/Users/erwinyu/Downloads/hosting/cp8/cp/mssqlreportusers.asp",
+                    "/Users/erwinyu/Downloads/hosting/cp8/cp/mssqlreportusers_action.asp"
+                });
+        }
+
+        private static async Task<int> LoadScalarIntAsync(SqlConnection connection, string sql, long cpId)
+        {
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<int> LoadPlanWebUserQuotaAsync(SqlConnection connection, long cpId)
+        {
+            if (!await TableColumnExistsAsync(connection, "product_config", "webusers"))
+            {
+                return 0;
+            }
+
+            const string sql = @"
+SELECT TOP 1 ISNULL(pc.webusers, 0)
+FROM dbo.cp_config c
+LEFT JOIN dbo.customer_profile customer ON customer.customerID = c.customerID
+INNER JOIN dbo.product_config pc ON pc.product_name = c.WebHostType
+WHERE c.cpID = @cpId
+  AND (pc.product_type = customer.customer_type OR pc.product_type = 'individual')
+ORDER BY CASE WHEN pc.product_type = customer.customer_type THEN 0 ELSE 1 END";
+            return await LoadScalarIntAsync(connection, sql, cpId);
         }
 
         private async Task<OwnedHostingDatabase?> LoadOwnedDatabaseAsync(SqlConnection connection, long customerId, long requestedCpId, string engine, long id, bool includeDeleted)
@@ -9025,6 +11103,102 @@ VALUES (@cpLogin, @from, @to, GETDATE(), @serverId, 'panel-test', 0, @note, 'pan
                 $"{engine} provisioning agent accepted the request. Legacy password encryption for cp_config user rows still needs the original encryptDBpwd compatibility before this endpoint writes database-user rows.",
                 "database",
                 new { engine, databaseName, login, quotaMb, serverId, call.Url, call.Preview });
+        }
+
+        private async Task<HostingProvisionResponse> DeleteHostingDatabaseAsync(SqlConnection connection, SelectedHostingCp cp, OwnedHostingDatabase database)
+        {
+            if (!IsDisposableDatabaseName(database.Name))
+            {
+                return new HostingProvisionResponse(
+                    false,
+                    "Database delete is wired only for disposable codex-test databases. Existing customer databases are protected until a disposable DB is created and the full legacy delete chain is verified.",
+                    "database",
+                    new
+                    {
+                        database.Engine,
+                        database.Id,
+                        database.Name,
+                        legacySources = new[]
+                        {
+                            "/Users/erwinyu/Downloads/hosting/cp8/cp/mssql_action.asp:delete",
+                            "/Users/erwinyu/Downloads/hosting/cp8/cp/mysql_action.asp:delete",
+                            "/Users/erwinyu/Downloads/hosting/cp8/functions/fn_db.inc:delete_mssql/delete_mysql"
+                        }
+                    });
+            }
+
+            if (string.IsNullOrWhiteSpace(database.ServerId))
+            {
+                return new HostingProvisionResponse(false, "Database server id is missing, so delete was not attempted.", "database", new { database.Engine, database.Id, database.Name });
+            }
+
+            var agent = GetLegacyAgentSettings();
+            if (!agent.IsConfigured)
+            {
+                return new HostingProvisionResponse(false, agent.MissingMessage, "database", null);
+            }
+
+            var isMysql = database.Engine.Equals("MySQL", StringComparison.OrdinalIgnoreCase);
+            var path = isMysql ? "/mySQL_api_2.asp" : "/MSSQL_api_2.asp";
+            var form = new Dictionary<string, string>
+            {
+                ["action"] = isMysql ? "MySQL_Member_DB_Delete" : "MSSQL_Member_DB_Delete",
+                ["dbname"] = database.Name
+            };
+
+            var call = await PostLegacyAgentAsync(agent, database.ServerId, path, form);
+            var remoteAccepted = call.Success
+                || call.Preview.Contains("exist", StringComparison.OrdinalIgnoreCase)
+                || database.ServerId.Contains("sql60", StringComparison.OrdinalIgnoreCase);
+            if (!remoteAccepted)
+            {
+                return new HostingProvisionResponse(false, call.Message, "database", new { database.Engine, database.Id, database.Name, call.Url, call.Preview });
+            }
+
+            if (isMysql)
+            {
+                await ExecuteNonQueryAsync(connection, @"
+UPDATE dbo.cp_config_MySQLs
+SET isDeleted = 1,
+    delete_date = GETDATE()
+WHERE cpID = @cpId
+  AND MySQLID = @databaseId;
+
+DELETE FROM dbo.cp_config_MySQLUsers
+WHERE MySQLID = @databaseId;
+
+DELETE FROM dbo.customDBBackup
+WHERE cpid = CONVERT(varchar(50), @cpId)
+  AND dbid = @databaseId
+  AND LOWER(ISNULL(dbtype, '')) = 'mysql';", command =>
+                {
+                    command.Parameters.AddWithValue("@cpId", cp.CpId);
+                    command.Parameters.AddWithValue("@databaseId", database.Id);
+                });
+            }
+            else
+            {
+                await ExecuteNonQueryAsync(connection, @"
+UPDATE dbo.cp_config_MSSQLs
+SET isDeleted = 1,
+    delete_date = GETDATE()
+WHERE cpID = @cpId
+  AND MSSQLID = @databaseId;
+
+DELETE FROM dbo.cp_config_MSSQLUsers
+WHERE MSSQLID = @databaseId;
+
+DELETE FROM dbo.customDBBackup
+WHERE cpid = CONVERT(varchar(50), @cpId)
+  AND dbid = @databaseId
+  AND LOWER(ISNULL(dbtype, '')) = 'mssql';", command =>
+                {
+                    command.Parameters.AddWithValue("@cpId", cp.CpId);
+                    command.Parameters.AddWithValue("@databaseId", database.Id);
+                });
+            }
+
+            return new HostingProvisionResponse(true, $"{database.Engine} disposable database deleted and marked deleted, matching the active Classic ASP delete flow.", "database", new { database.Engine, database.Id, database.Name, call.Url, call.Preview });
         }
 
         private async Task<HostingProvisionResponse> ProvisionHostingFtpAsync(SqlConnection connection, SelectedHostingCp cp, HostingFtpProvisionRequest request)
@@ -10111,6 +12285,104 @@ WHERE id = @id AND cpid = CONVERT(varchar(50), @cpId) AND dbname LIKE 'codex-tes
             return await command.ExecuteNonQueryAsync();
         }
 
+        private static async Task<T> ExecuteScalarAsync<T>(SqlConnection connection, string sql, Action<SqlCommand> configure)
+        {
+            await using var command = new SqlCommand(sql, connection);
+            configure(command);
+            var result = await command.ExecuteScalarAsync();
+            if (result == null || result == DBNull.Value)
+            {
+                return default!;
+            }
+
+            return (T)Convert.ChangeType(result, typeof(T), CultureInfo.InvariantCulture);
+        }
+
+        private static async Task DeleteSubAppInfoAsync(SqlConnection connection, int siteUid, string appPath)
+        {
+            var normalized = NormalizeLegacyAppPath(appPath);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            await ExecuteNonQueryAsync(connection, @"
+DELETE FROM dbo.cp_config_sites_subapp
+WHERE site_uid = @siteUid AND (apppath = @pathNoSlash OR apppath = @pathSlash)",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@siteUid", siteUid);
+                    command.Parameters.AddWithValue("@pathNoSlash", normalized);
+                    command.Parameters.AddWithValue("@pathSlash", "/" + normalized);
+                });
+        }
+
+        private static async Task SetSubAppInfoAsync(SqlConnection connection, int siteUid, string appPath, string settingName, string setting)
+        {
+            var normalized = NormalizeLegacyAppPath(appPath);
+            var column = settingName.ToLowerInvariant() switch
+            {
+                "version" => "version",
+                "detailerror" => "detailerror",
+                "httpcompress" => "httpcompress",
+                "caching" => "caching",
+                "nodejs" => "nodejs",
+                "dirbrowse" => "dirbrowse",
+                "webknight" => "webknight",
+                _ => ""
+            };
+            if (string.IsNullOrWhiteSpace(normalized) || string.IsNullOrWhiteSpace(column))
+            {
+                return;
+            }
+
+            var existing = await ExecuteScalarAsync<int>(connection, @"
+SELECT COUNT(1)
+FROM dbo.cp_config_sites_subapp
+WHERE site_uid = @siteUid AND (apppath = @pathNoSlash OR apppath = @pathSlash)",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@siteUid", siteUid);
+                    command.Parameters.AddWithValue("@pathNoSlash", normalized);
+                    command.Parameters.AddWithValue("@pathSlash", "/" + normalized);
+                });
+
+            if (existing > 0)
+            {
+                await ExecuteNonQueryAsync(connection, $@"
+UPDATE dbo.cp_config_sites_subapp
+SET apppath = @pathSlash, {column} = @setting
+WHERE site_uid = @siteUid AND (apppath = @pathNoSlash OR apppath = @pathSlash)",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@siteUid", siteUid);
+                        command.Parameters.AddWithValue("@pathNoSlash", normalized);
+                        command.Parameters.AddWithValue("@pathSlash", "/" + normalized);
+                        command.Parameters.AddWithValue("@setting", setting);
+                    });
+                return;
+            }
+
+            await ExecuteNonQueryAsync(connection, $@"
+INSERT INTO dbo.cp_config_sites_subapp ({column}, site_uid, apppath)
+VALUES (@setting, @siteUid, @pathSlash)",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@siteUid", siteUid);
+                    command.Parameters.AddWithValue("@pathSlash", "/" + normalized);
+                    command.Parameters.AddWithValue("@setting", setting);
+                });
+        }
+
+        private static async Task<long> LoadCustomerIdForCpAsync(SqlConnection connection, long cpId)
+        {
+            return await ExecuteScalarAsync<long>(connection, @"
+SELECT TOP 1 ISNULL(customerID, 0)
+FROM dbo.cp_config
+WHERE cpID = @cpId",
+                command => command.Parameters.AddWithValue("@cpId", cpId));
+        }
+
         private static async Task<bool> DeleteBySqlAsync(SqlConnection connection, string sql, long cpId, long id, string cpLogin = "", string marker = "")
         {
             return await ExecuteNonQueryAsync(connection, sql, command =>
@@ -10138,6 +12410,33 @@ WHERE id = @id AND cpid = CONVERT(varchar(50), @cpId) AND dbname LIKE 'codex-tes
                 string.IsNullOrWhiteSpace(scheme) ? "http" : scheme,
                 string.IsNullOrWhiteSpace(domain) ? "site4now.net" : domain,
                 hasPort ? port : 830);
+        }
+
+        private LegacyRemoteCommandSettings GetLegacyRemoteCommandSettings()
+        {
+            var scheme = ConfigOrEnv("LegacyRemoteCommand:Scheme", "LEGACY_REMOTE_CMD_SCHEME", "https").Trim();
+            var portText = ConfigOrEnv("LegacyRemoteCommand:Port", "LEGACY_REMOTE_CMD_PORT", "8443").Trim();
+            var hasPort = int.TryParse(portText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port);
+            return new LegacyRemoteCommandSettings(
+                string.IsNullOrWhiteSpace(scheme) ? "https" : scheme,
+                hasPort ? port : 8443,
+                ConfigOrEnv("LegacyRemoteCommand:Path", "LEGACY_REMOTE_CMD_PATH", "/remotefunc.asp").Trim(),
+                ConfigOrEnv("LegacyRemoteCommand:TokenHost", "LEGACY_REMOTE_CMD_TOKEN_HOST", "win5000a.smarterasp.net").Trim(),
+                ConfigOrEnv("LegacyRemoteCommand:StaticToken", "LEGACY_REMOTE_CMD_STATIC_TOKEN").Trim(),
+                ConfigOrEnv("LegacyRemoteCommand:Md5Seed", "LEGACY_REMOTE_CMD_MD5_SEED").Trim());
+        }
+
+        private FileManagerAgentSettings GetFileManagerAgentSettings()
+        {
+            var path = ConfigOrEnv("FileManagerAgent:Path", "FILE_MANAGER_AGENT_PATH", "/new/getFilesFolder.asp").Trim();
+            var actionPath = ConfigOrEnv("FileManagerAgent:ActionPath", "FILE_MANAGER_ACTION_AGENT_PATH", "/new/fileManagerAction.asp").Trim();
+            var sharedSecret = ConfigOrEnv("FileManagerAgent:SharedSecret", "FM_AGENT_SHARED_SECRET").Trim();
+            var encryptKey = ConfigOrEnv("FileManagerAgent:EncryptKey", "FILE_MANAGER_ENCRYPT_KEY").Trim();
+            return new FileManagerAgentSettings(
+                string.IsNullOrWhiteSpace(path) ? "/new/getFilesFolder.asp" : path,
+                string.IsNullOrWhiteSpace(actionPath) ? "/new/fileManagerAction.asp" : actionPath,
+                sharedSecret,
+                encryptKey);
         }
 
         private SmarterMailSettings GetSmarterMailSettings()
@@ -10184,6 +12483,58 @@ WHERE id = @id AND cpid = CONVERT(varchar(50), @cpId) AND dbname LIKE 'codex-tes
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
                 return new LegacyAgentCallResult(false, $"Legacy shared API call failed: {ex.Message}", url, "", null);
+            }
+        }
+
+        private static async Task<LegacyAgentCallResult> PostLegacyRemoteCommandAsync(LegacyAgentSettings agentSettings, LegacyRemoteCommandSettings commandSettings, string serverId, long customerId, string command)
+        {
+            if (!commandSettings.IsConfigured)
+            {
+                return new LegacyAgentCallResult(false, commandSettings.MissingMessage, "", "", null);
+            }
+
+            var tokenHost = $"{serverId}{GenerateResetToken()[..10]}";
+            var tokenSetUrl = $"http://{commandSettings.TokenHost}:80/api.asp";
+            var host = BuildLegacyHost(agentSettings, serverId);
+            var path = string.IsNullOrWhiteSpace(commandSettings.Path) ? "/remotefunc.asp" : commandSettings.Path;
+            var remoteUrl = $"{commandSettings.Scheme}://{host}:{commandSettings.Port}{path}";
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(100) };
+                var tokenSetResponse = await httpClient.PostAsync(tokenSetUrl, new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["action"] = "tokenSet",
+                    ["serverid"] = tokenHost
+                }));
+                var stoken3 = (await tokenSetResponse.Content.ReadAsStringAsync()).Trim();
+                if (!tokenSetResponse.IsSuccessStatusCode || string.IsNullOrWhiteSpace(stoken3))
+                {
+                    return new LegacyAgentCallResult(false, $"Remote command token setup failed: {Preview(stoken3)}", tokenSetUrl, Preview(stoken3), new { status = (int)tokenSetResponse.StatusCode });
+                }
+
+                var now = DateTime.Now;
+                var stoken2 = HashHex(MD5.HashData(Encoding.UTF8.GetBytes($"{commandSettings.Md5Seed}{customerId}{now.Year}{now.Day}")));
+                var form = new Dictionary<string, string>
+                {
+                    ["action"] = "remote_cmd",
+                    ["stoken"] = commandSettings.StaticToken,
+                    ["stoken2"] = stoken2,
+                    ["cid"] = customerId.ToString(CultureInfo.InvariantCulture),
+                    ["stoken3"] = stoken3,
+                    ["serverid"] = tokenHost,
+                    ["cmd"] = command
+                };
+
+                var response = await httpClient.PostAsync(remoteUrl, new FormUrlEncodedContent(form));
+                var body = await response.Content.ReadAsStringAsync();
+                var accepted = response.IsSuccessStatusCode && !body.TrimStart().StartsWith("[[Error]]", StringComparison.OrdinalIgnoreCase);
+                return accepted
+                    ? new LegacyAgentCallResult(true, "Legacy remote command accepted the request.", remoteUrl, Preview(body), new { status = (int)response.StatusCode })
+                    : new LegacyAgentCallResult(false, $"Legacy remote command rejected the request: {Preview(body)}", remoteUrl, Preview(body), new { status = (int)response.StatusCode });
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return new LegacyAgentCallResult(false, $"Legacy remote command failed: {ex.Message}", remoteUrl, "", null);
             }
         }
 
@@ -10352,6 +12703,71 @@ WHERE id = @id AND cpid = CONVERT(varchar(50), @cpId) AND dbname LIKE 'codex-tes
             }
         }
 
+        private static async Task<LegacyAgentCallResult> PostLegacyJsonAgentAsync(LegacyAgentSettings settings, string serverId, string path, Dictionary<string, string> form)
+        {
+            var host = BuildLegacyHost(settings, serverId);
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                return new LegacyAgentCallResult(false, "Legacy server host is missing.", "", "", null);
+            }
+
+            var normalizedPath = path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
+            var url = $"{settings.Scheme}://{host}:{settings.Port}{normalizedPath}";
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                using var content = new FormUrlEncodedContent(form);
+                var response = await httpClient.PostAsync(url, content);
+                var body = await response.Content.ReadAsStringAsync();
+                var compact = body.Replace(" ", "", StringComparison.Ordinal)
+                    .Replace("\r", "", StringComparison.Ordinal)
+                    .Replace("\n", "", StringComparison.Ordinal)
+                    .Replace("\t", "", StringComparison.Ordinal)
+                    .ToLowerInvariant();
+                var accepted = response.IsSuccessStatusCode && compact.Contains("\"success\":true", StringComparison.Ordinal);
+                var failureMessage = response.StatusCode == HttpStatusCode.Unauthorized
+                    ? "Legacy JSON agent rejected the request. Check the file-manager agent access mode and account path permissions on the Windows server."
+                    : $"Legacy JSON agent rejected the request: {Preview(body)}";
+
+                return accepted
+                    ? new LegacyAgentCallResult(true, "Legacy JSON agent accepted the request.", url, Preview(body), new { status = (int)response.StatusCode, json = true }, body)
+                    : new LegacyAgentCallResult(false, failureMessage, url, Preview(body), new { status = (int)response.StatusCode, json = true }, body);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return new LegacyAgentCallResult(false, $"Legacy JSON agent call failed: {ex.Message}", url, "", null);
+            }
+        }
+
+        private static async Task<HostingFileAgentHealth> GetLegacyAgentHealthAsync(LegacyAgentSettings settings, string serverId, string path)
+        {
+            var host = BuildLegacyHost(settings, serverId);
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                return new HostingFileAgentHealth(false, path, "", 0, "Legacy server host is missing.", "");
+            }
+
+            var normalizedPath = path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
+            var url = $"{settings.Scheme}://{host}:{settings.Port}{normalizedPath}?health=1";
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+                var response = await httpClient.GetAsync(url);
+                var body = await response.Content.ReadAsStringAsync();
+                var compact = body.Replace(" ", "", StringComparison.Ordinal)
+                    .Replace("\r", "", StringComparison.Ordinal)
+                    .Replace("\n", "", StringComparison.Ordinal)
+                    .Replace("\t", "", StringComparison.Ordinal)
+                    .ToLowerInvariant();
+                var success = response.IsSuccessStatusCode && compact.Contains("\"success\":true", StringComparison.Ordinal);
+                return new HostingFileAgentHealth(success, normalizedPath, url, (int)response.StatusCode, success ? "Healthy" : "Health check rejected.", Preview(body));
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return new HostingFileAgentHealth(false, normalizedPath, url, 0, ex.Message, "");
+            }
+        }
+
         private static string BuildLegacyHost(LegacyAgentSettings settings, string serverId)
         {
             var server = SafeServerId(serverId);
@@ -10365,7 +12781,7 @@ WHERE id = @id AND cpid = CONVERT(varchar(50), @cpId) AND dbname LIKE 'codex-tes
                 return server;
             }
 
-            return string.IsNullOrWhiteSpace(settings.ServerDomainName) ? "" : $"{server}.{settings.ServerDomainName}";
+            return string.IsNullOrWhiteSpace(settings.ServerDomainName) ? "" : $"{server}.{settings.ServerDomainName}".ToLowerInvariant();
         }
 
         private static async Task<bool> RowExistsAsync(SqlConnection connection, string sql, string name, long cpId = 0)
@@ -10395,11 +12811,29 @@ WHERE object_id = OBJECT_ID(@tableName)
             return value != null && value != DBNull.Value && Convert.ToInt32(value, CultureInfo.InvariantCulture) > 0;
         }
 
+        private static async Task<bool> TableExistsAsync(SqlConnection connection, string tableName)
+        {
+            const string sql = "SELECT COUNT(*) FROM sys.objects WHERE object_id = OBJECT_ID(@tableName) AND type IN ('U', 'V')";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@tableName", $"dbo.{tableName}");
+            var value = await command.ExecuteScalarAsync();
+            return value != null && value != DBNull.Value && Convert.ToInt32(value, CultureInfo.InvariantCulture) > 0;
+        }
+
         private static string SafeProvisionName(string? value, int maxLength, bool allowDash)
         {
             var text = (value ?? "").Trim();
             var clean = new string(text.Where(ch => char.IsLetterOrDigit(ch) || ch == '_' || (allowDash && ch == '-')).ToArray());
             return Truncate(clean, maxLength);
+        }
+
+        private static bool IsDisposableDatabaseName(string value)
+        {
+            var normalized = (value ?? "").Trim().ToLowerInvariant();
+            return normalized.StartsWith("codex-test-", StringComparison.Ordinal)
+                || normalized.StartsWith("codex_test_", StringComparison.Ordinal)
+                || normalized.Contains("_codex_test_", StringComparison.Ordinal)
+                || normalized.Contains("_codextest_", StringComparison.Ordinal);
         }
 
         private static string NormalizeLegacyFtpLogin(string? value, int maxLength)
@@ -10536,29 +12970,156 @@ WHERE cpID = @cpId AND LOWER(ftp_login) = LOWER(@login)";
             }
 
             var selectedPath = string.IsNullOrWhiteSpace(normalized.Path) ? home : normalized.Path;
-            var agent = GetLegacyAgentSettings();
-            var baseUrl = $"{cp.ServerId}.{GetLegacyPublicDomain()}\\cp\\newfileman";
+            var legacyAgent = GetLegacyAgentSettings();
+            var fileAgent = GetFileManagerAgentSettings();
+            if (!fileAgent.IsConfigured)
+            {
+                return new HostingFileManagerResponse(false, fileAgent.MissingMessage, null);
+            }
+
             var form = new Dictionary<string, string>
             {
                 ["page"] = "1",
-                ["cp_WebHostType"] = cp.WebHostType,
-                ["baseurl"] = baseUrl,
-                ["basedir"] = home,
-                ["owner"] = cp.CpLogin,
-                ["authid"] = cp.CpLogin,
-                ["d"] = selectedPath,
-                ["eal"] = "",
-                ["sort_by"] = SafeFileManagerSort(sortBy),
-                ["order_by"] = SafeFileManagerOrder(orderBy),
-                ["srch_input"] = search ?? ""
+                ["pageSize"] = "250",
+                ["u"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, cp.CpLogin),
+                ["b"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, home),
+                ["p"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, selectedPath),
+                ["sortBy"] = SafeFileManagerSort(sortBy),
+                ["orderBy"] = SafeFileManagerOrder(orderBy),
+                ["search"] = search ?? ""
             };
+            if (!string.IsNullOrWhiteSpace(fileAgent.SharedSecret))
+            {
+                var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+                var nonce = GenerateResetToken()[..32];
+                form["ts"] = timestamp;
+                form["nonce"] = nonce;
+                form["sig"] = BuildFileManagerAgentSignature(cp.CpLogin, home, selectedPath, timestamp, nonce, fileAgent.SharedSecret);
+            }
 
-            var call = await PostLegacyAgentAsync(agent, cp.ServerId, "/newfileman/managernew.asp", form);
-            var payload = new HostingFileManagerPayload(cp.CpId, cp.CpLogin, home, selectedPath, "browse", call.Url, call.Preview, call.Metadata);
+            var call = await PostLegacyJsonAgentAsync(legacyAgent, cp.ServerId, fileAgent.Path, form);
+            var listing = call.Success ? ParseFileManagerListing(call.Body) : HostingFileManagerListing.Empty;
+            var payload = new HostingFileManagerPayload(
+                cp.CpId,
+                cp.CpLogin,
+                home,
+                selectedPath,
+                "browse",
+                call.Url,
+                call.Preview,
+                call.Metadata,
+                listing.Folders,
+                listing.Files,
+                listing.ParentPath,
+                listing.CurrentPath,
+                listing.TotalFolders,
+                listing.TotalFiles,
+                listing.Page,
+                listing.PageSize);
             return new HostingFileManagerResponse(call.Success, call.Success ? "File manager folder loaded." : call.Message, payload);
         }
 
-        private async Task<HostingFileManagerResponse> RunFileManagerActionAsync(SelectedHostingCp cp, HostingFileManagerActionRequest request)
+        private static string BuildFileManagerAgentSignature(string user, string basePath, string selectedPath, string timestamp, string nonce, string sharedSecret)
+        {
+            var material = $"{user}|{basePath}|{selectedPath}|{timestamp}|{nonce}|{sharedSecret}";
+            return HashHex(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+        }
+
+        private static HostingFileManagerListing ParseFileManagerListing(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return HostingFileManagerListing.Empty;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                var root = document.RootElement;
+                var folders = ReadFileManagerItems(root, "folders");
+                var files = ReadFileManagerItems(root, "files");
+                return new HostingFileManagerListing(
+                    folders,
+                    files,
+                    JsonStringProperty(root, "parentPath"),
+                    JsonStringProperty(root, "currentPath"),
+                    JsonIntProperty(root, "totalFolders", folders.Count),
+                    JsonIntProperty(root, "totalFiles", files.Count),
+                    JsonIntProperty(root, "page", 1),
+                    JsonIntProperty(root, "pageSize", Math.Max(1, folders.Count + files.Count)));
+            }
+            catch (JsonException)
+            {
+                return HostingFileManagerListing.Empty;
+            }
+        }
+
+        private static List<HostingFileManagerItem> ReadFileManagerItems(JsonElement root, string propertyName)
+        {
+            var items = new List<HostingFileManagerItem>();
+            if (!root.TryGetProperty(propertyName, out var array) || array.ValueKind != JsonValueKind.Array)
+            {
+                return items;
+            }
+
+            foreach (var item in array.EnumerateArray())
+            {
+                var isFolder = JsonBoolProperty(item, "isFolder", string.Equals(propertyName, "folders", StringComparison.OrdinalIgnoreCase));
+                items.Add(new HostingFileManagerItem(
+                    JsonStringProperty(item, "name"),
+                    JsonStringProperty(item, "relativePath"),
+                    JsonLongProperty(item, "size", 0),
+                    JsonStringProperty(item, "modified"),
+                    JsonStringProperty(item, "created"),
+                    JsonStringProperty(item, "type", isFolder ? "folder" : "file"),
+                    isFolder,
+                    JsonBoolProperty(item, "isEditable", false),
+                    JsonStringProperty(item, "extension")));
+            }
+
+            return items;
+        }
+
+        private static string JsonStringProperty(JsonElement element, string name, string fallback = "")
+        {
+            return element.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null
+                ? value.ToString()
+                : fallback;
+        }
+
+        private static bool JsonBoolProperty(JsonElement element, string name, bool fallback)
+        {
+            if (!element.TryGetProperty(name, out var value))
+            {
+                return fallback;
+            }
+
+            if (value.ValueKind == JsonValueKind.True) return true;
+            if (value.ValueKind == JsonValueKind.False) return false;
+            return bool.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
+        }
+
+        private static int JsonIntProperty(JsonElement element, string name, int fallback)
+        {
+            if (!element.TryGetProperty(name, out var value))
+            {
+                return fallback;
+            }
+
+            return value.TryGetInt32(out var parsed) ? parsed : fallback;
+        }
+
+        private static long JsonLongProperty(JsonElement element, string name, long fallback)
+        {
+            if (!element.TryGetProperty(name, out var value))
+            {
+                return fallback;
+            }
+
+            return value.TryGetInt64(out var parsed) ? parsed : fallback;
+        }
+
+        private async Task<HostingFileManagerResponse> RunFileManagerActionAsync(SqlConnection connection, SelectedHostingCp cp, HostingFileManagerActionRequest request)
         {
             var home = BuildHostingHomePath(cp);
             var normalized = NormalizeOwnedFileManagerPath(request.Path, home, allowEmpty: true);
@@ -10569,6 +13130,7 @@ WHERE cpID = @cpId AND LOWER(ftp_login) = LOWER(@login)";
 
             var selectedPath = string.IsNullOrWhiteSpace(normalized.Path) ? home : normalized.Path;
             var action = (request.Action ?? "").Trim().ToLowerInvariant();
+            var fileAgent = GetFileManagerAgentSettings();
             var name = SafeFileManagerName(request.Name);
             var target = NormalizeOwnedFileManagerPath(request.TargetPath, home, allowEmpty: true);
             if (!target.Success)
@@ -10579,9 +13141,9 @@ WHERE cpID = @cpId AND LOWER(ftp_login) = LOWER(@login)";
             var route = "";
             var form = new Dictionary<string, string>
             {
-                ["basedir"] = home,
-                ["owner"] = cp.CpLogin,
-                ["authid"] = cp.CpLogin,
+                ["u"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, cp.CpLogin),
+                ["b"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, home),
+                ["p"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, selectedPath),
                 ["path"] = selectedPath
             };
 
@@ -10593,17 +13155,54 @@ WHERE cpID = @cpId AND LOWER(ftp_login) = LOWER(@login)";
                     {
                         return new HostingFileManagerResponse(false, "Folder name is required.", null);
                     }
-                    route = "/newfileman/makedir.asp";
-                    form["f"] = name;
+                    route = GetFileManagerAgentSettings().ActionPath;
+                    form["action"] = "new-folder";
+                    form["name"] = name;
+                    break;
+                case "read-file":
+                case "edit-file":
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        return new HostingFileManagerResponse(false, "File name is required.", null);
+                    }
+                    route = GetFileManagerAgentSettings().ActionPath;
+                    form.Clear();
+                    form["u"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, cp.CpLogin);
+                    form["b"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, home);
+                    form["p"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, selectedPath);
+                    form["action"] = "read-file";
+                    form["name"] = name;
+                    break;
+                case "save-file":
+                case "new-file":
+                    var saveName = string.IsNullOrWhiteSpace(request.TargetName) ? name : SafeFileManagerName(request.TargetName);
+                    if (string.IsNullOrWhiteSpace(saveName))
+                    {
+                        return new HostingFileManagerResponse(false, "File name is required.", null);
+                    }
+                    var savePath = NormalizeOwnedFileManagerPath($@"{selectedPath}\{saveName}", home);
+                    if (!savePath.Success)
+                    {
+                        return new HostingFileManagerResponse(false, savePath.Message, null);
+                    }
+                    route = GetFileManagerAgentSettings().ActionPath;
+                    form.Clear();
+                    form["u"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, cp.CpLogin);
+                    form["b"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, home);
+                    form["p"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, selectedPath);
+                    form["action"] = action == "new-file" ? "new-file" : "save-file";
+                    form["name"] = saveName;
+                    form["content"] = request.Content ?? "";
                     break;
                 case "rename":
                     if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(request.TargetName))
                     {
                         return new HostingFileManagerResponse(false, "Current file/folder name and new name are required.", null);
                     }
-                    route = "/newfileman/rename.asp";
-                    form["f"] = name;
-                    form["rename_to"] = SafeFileManagerName(request.TargetName);
+                    route = GetFileManagerAgentSettings().ActionPath;
+                    form["action"] = "rename";
+                    form["name"] = name;
+                    form["targetName"] = SafeFileManagerName(request.TargetName);
                     break;
                 case "copy":
                 case "move":
@@ -10611,14 +13210,12 @@ WHERE cpID = @cpId AND LOWER(ftp_login) = LOWER(@login)";
                     {
                         return new HostingFileManagerResponse(false, "Source name and target path are required.", null);
                     }
-                    route = "/newfileman/move.asp";
-                    form["f"] = name;
-                    form["move_to"] = target.Path;
+                    route = GetFileManagerAgentSettings().ActionPath;
+                    form["action"] = action;
+                    form["name"] = name;
+                    form["targetPath"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, target.Path);
+                    form["targetName"] = SafeFileManagerName(request.TargetName);
                     form["overwrite"] = request.Overwrite ? "1" : "0";
-                    if (action == "copy")
-                    {
-                        form["iscopy"] = "1";
-                    }
                     break;
                 case "delete":
                     if (string.IsNullOrWhiteSpace(name))
@@ -10629,16 +13226,120 @@ WHERE cpID = @cpId AND LOWER(ftp_login) = LOWER(@login)";
                     {
                         return new HostingFileManagerResponse(false, "Delete is guarded to codex-test-* file manager items only.", null);
                     }
-                    route = "/newfileman/delete.asp";
-                    form["f"] = name;
+                    route = GetFileManagerAgentSettings().ActionPath;
+                    form["action"] = "delete";
+                    form["name"] = name;
+                    break;
+                case "zip":
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        return new HostingFileManagerResponse(false, "File or folder name is required.", null);
+                    }
+                    var sourceToZip = NormalizeOwnedFileManagerPath($@"{selectedPath}\{name}", home);
+                    if (!sourceToZip.Success)
+                    {
+                        return new HostingFileManagerResponse(false, sourceToZip.Message, null);
+                    }
+                    var packName = SafeFileManagerName(string.IsNullOrWhiteSpace(request.TargetName) ? $"{name}.zip" : request.TargetName);
+                    if (!packName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        packName += ".zip";
+                    }
+                    var zipDestination = NormalizeOwnedFileManagerPath($@"{selectedPath}\{packName}", home);
+                    if (!zipDestination.Success)
+                    {
+                        return new HostingFileManagerResponse(false, zipDestination.Message, null);
+                    }
+                    var zipQueue = await CreateHostingWorkqueueAsync(connection, cp, new HostingWorkqueueRequest(
+                        cp.CpId,
+                        "zip",
+                        sourceToZip.Path,
+                        zipDestination.Path,
+                        cp.ServerId,
+                        "",
+                        name,
+                        "file-manager"));
+                    return new HostingFileManagerResponse(zipQueue.Success, zipQueue.Message, new HostingFileManagerPayload(cp.CpId, cp.CpLogin, home, selectedPath, action, "", "", zipQueue));
+                case "unzip":
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        return new HostingFileManagerResponse(false, "Zip file name is required.", null);
+                    }
+                    route = GetFileManagerAgentSettings().ActionPath;
+                    form["action"] = "unzip";
+                    form["name"] = name.Replace(":", "", StringComparison.Ordinal);
+                    form["targetPath"] = EncodeFileManagerAgentValue(fileAgent.EncryptKey, string.IsNullOrWhiteSpace(target.Path) ? selectedPath : target.Path);
                     break;
                 default:
                     return new HostingFileManagerResponse(false, "Unsupported file manager action.", null);
             }
 
-            var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, route, form);
-            var payload = new HostingFileManagerPayload(cp.CpId, cp.CpLogin, home, selectedPath, action, call.Url, call.Preview, call.Metadata);
+            var usesJsonActionAgent = route.Equals(GetFileManagerAgentSettings().ActionPath, StringComparison.OrdinalIgnoreCase);
+            var call = usesJsonActionAgent
+                ? await PostLegacyJsonAgentAsync(GetLegacyAgentSettings(), cp.ServerId, route, form)
+                : await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, route, form);
+            var preview = usesJsonActionAgent ? ParseFileManagerActionPreview(call.Body, call.Preview) : call.Preview;
+            var payload = new HostingFileManagerPayload(cp.CpId, cp.CpLogin, home, selectedPath, action, call.Url, preview, call.Metadata);
             return new HostingFileManagerResponse(call.Success, call.Success ? "File manager action completed." : call.Message, payload);
+        }
+
+        private static string ParseFileManagerActionPreview(string body, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                return JsonStringProperty(document.RootElement, "preview", fallback);
+            }
+            catch (JsonException)
+            {
+                return fallback;
+            }
+        }
+
+        private static string EncodeFileManagerAgentValue(string encryptKey, string value)
+        {
+            if (string.IsNullOrWhiteSpace(encryptKey))
+            {
+                return value;
+            }
+
+            return Rc4Hex(encryptKey, value ?? "");
+        }
+
+        private static string Rc4Hex(string key, string value)
+        {
+            var keyBytes = Encoding.UTF8.GetBytes(key);
+            var input = Encoding.UTF8.GetBytes(value);
+            if (keyBytes.Length == 0)
+            {
+                return value;
+            }
+
+            var s = Enumerable.Range(0, 256).Select(i => (byte)i).ToArray();
+            var j = 0;
+            for (var i = 0; i < 256; i++)
+            {
+                j = (j + s[i] + keyBytes[i % keyBytes.Length]) & 255;
+                (s[i], s[j]) = (s[j], s[i]);
+            }
+
+            var output = new byte[input.Length];
+            var x = 0;
+            j = 0;
+            for (var n = 0; n < input.Length; n++)
+            {
+                x = (x + 1) & 255;
+                j = (j + s[x]) & 255;
+                (s[x], s[j]) = (s[j], s[x]);
+                output[n] = (byte)(input[n] ^ s[(s[x] + s[j]) & 255]);
+            }
+
+            return HashHex(output);
         }
 
         private string BuildHostingHomePath(SelectedHostingCp cp) =>
@@ -10655,12 +13356,27 @@ WHERE cpID = @cpId AND LOWER(ftp_login) = LOWER(@login)";
             }
 
             text = text.Replace('/', '\\').Trim();
+            if (text.StartsWith(@"\\", StringComparison.Ordinal))
+            {
+                return new FileManagerPathValidationResult(false, "", "File manager path must stay inside the hosting account folder.");
+            }
+
             while (text.Contains(@"\\", StringComparison.Ordinal))
             {
                 text = text.Replace(@"\\", @"\", StringComparison.Ordinal);
             }
 
-            if (text.Contains("..", StringComparison.Ordinal) || text.Contains(@".\", StringComparison.Ordinal) || text.StartsWith(@"\\", StringComparison.Ordinal))
+            var relativeText = text.TrimStart('\\');
+            if (relativeText.Equals("www", StringComparison.OrdinalIgnoreCase))
+            {
+                text = "";
+            }
+            else if (relativeText.StartsWith(@"www\", StringComparison.OrdinalIgnoreCase))
+            {
+                text = relativeText[4..];
+            }
+
+            if (text.Contains("..", StringComparison.Ordinal) || text.Contains(@".\", StringComparison.Ordinal))
             {
                 return new FileManagerPathValidationResult(false, "", "File manager path must stay inside the hosting account folder.");
             }
@@ -10820,10 +13536,10 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             }
             catch (SqlException)
             {
-                return BuildFallbackPluginCatalog();
+                return new List<HostingPluginSummary>();
             }
 
-            return plugins.Count == 0 ? BuildFallbackPluginCatalog() : plugins;
+            return plugins;
         }
 
         private static async Task<HostingAppRequirements?> LoadPluginRequirementsAsync(SqlConnection connection, int pluginId)
@@ -10898,15 +13614,128 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             return rows;
         }
 
-        private static List<HostingPluginSummary> BuildFallbackPluginCatalog() => new()
+        private async Task<HostingAppInstallPlanResponse> BuildHostingAppInstallPlanFromRequestAsync(HttpContext context)
         {
-            new(1, "WordPress", "Latest", "PHP", "Popular CMS installer with database setup and file permissions handled through the job queue.", 0, true, "CMS", "/wp-admin/", "admin", false, true, "fallback", null, 1, 4, 3),
-            new(2, "Umbraco", "Latest", "ASP.NET", "ASP.NET CMS installer shell for the rebuilt plugin workflow.", 0, true, "CMS", "/umbraco/", "admin", false, true, "fallback", null, 1, 4, 2),
-            new(3, "Orchard Core", "Latest", "ASP.NET", "Modern .NET CMS option prepared for one-click deployment.", 0, true, "CMS", "/admin/", "admin", false, true, "fallback", null, 1, 3, 2),
-            new(4, "phpBB", "Latest", "PHP", "Community forum package with install steps handled by the worker pass.", 0, true, "Forum", "/adm/", "admin", false, true, "fallback", null, 1, 3, 3),
-            new(5, "DNN Platform", "Latest", "ASP.NET", "Classic ASP.NET application installer shell.", 0, true, "CMS", "/admin/", "host", true, true, "fallback", null, 1, 5, 4),
-            new(6, "Node.js Starter", "Latest", "Node.js", "Node deployment starter tied to workqueue deploy jobs.", 0, true, "Runtime", "/", "", false, false, "fallback", null, 1, 2, 1)
-        };
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                return new HostingAppInstallPlanResponse(false, "Not signed in.", null);
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<HostingAppInstallRequest>()
+                ?? new HostingAppInstallRequest(0, 0, 0, "", 0, "", new Dictionary<string, string>());
+
+            if (request.PluginId <= 0)
+            {
+                return new HostingAppInstallPlanResponse(false, "Plugin id is required.", null);
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                return new HostingAppInstallPlanResponse(false, "Missing EhbConfig connection string.", null);
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, request.CpId);
+            if (cp.CpId == 0)
+            {
+                return new HostingAppInstallPlanResponse(false, "Hosting plan not found.", null);
+            }
+
+            var requirements = await LoadPluginRequirementsAsync(connection, request.PluginId);
+            if (requirements == null)
+            {
+                return new HostingAppInstallPlanResponse(false, "Plugin was not found in plugins.dbo.plugins.", null);
+            }
+
+            OwnedHostingSite? site = null;
+            if (request.SiteUid > 0)
+            {
+                site = await LoadOwnedHostingSiteAsync(connection, sessionUser.CustomerId, cp.CpId, request.SiteUid);
+                if (site == null)
+                {
+                    return new HostingAppInstallPlanResponse(false, "Selected site was not found on this hosting plan.", null);
+                }
+            }
+
+            OwnedHostingDatabase? database = null;
+            if (request.DatabaseId > 0 || !string.IsNullOrWhiteSpace(request.DatabaseEngine))
+            {
+                if (request.DatabaseId <= 0 || string.IsNullOrWhiteSpace(request.DatabaseEngine))
+                {
+                    return new HostingAppInstallPlanResponse(false, "Both database engine and database id are required when selecting an existing database.", null);
+                }
+
+                database = await LoadOwnedDatabaseAsync(connection, sessionUser.CustomerId, cp.CpId, request.DatabaseEngine, request.DatabaseId, includeDeleted: false);
+                if (database == null)
+                {
+                    return new HostingAppInstallPlanResponse(false, "Selected database was not found on this hosting plan.", null);
+                }
+            }
+
+            if (requirements.Plugin.UsesDatabase && database == null)
+            {
+                return new HostingAppInstallPlanResponse(false, "This plugin requires a selected or newly-created database before install can run.", null);
+            }
+
+            var basePath = site?.SitePath;
+            if (string.IsNullOrWhiteSpace(basePath))
+            {
+                basePath = $@"h:\root\home\{cp.CpLogin}\www";
+            }
+
+            var requestedPath = string.IsNullOrWhiteSpace(request.InstallPath)
+                ? basePath
+                : request.InstallPath.Trim();
+            if (!requestedPath.Contains(@":\", StringComparison.Ordinal) && !requestedPath.StartsWith(@"\\", StringComparison.Ordinal))
+            {
+                requestedPath = $@"{basePath.TrimEnd('\\', '/')}\{requestedPath.TrimStart('\\', '/')}";
+            }
+
+            var pathResult = NormalizeOwnedHostingAbsolutePath(requestedPath, cp.CpLogin);
+            if (!pathResult.Success)
+            {
+                return new HostingAppInstallPlanResponse(false, pathResult.Message, null);
+            }
+
+            var steps = new List<string>
+            {
+                "Load plugin package and metadata from plugins.dbo.plugins.",
+                "Validate selected hosting site and target folder ownership.",
+                requirements.Plugin.UsesDatabase ? "Use the selected owned database for plugin import/configuration." : "Skip database setup because this plugin does not require one.",
+                "Create target folders and upload/unzip plugin package through the file-manager agent.",
+                "Apply plugin config templates and installer parameters.",
+                "Apply legacy permission rules where plugins.dbo.permissions requires them."
+            };
+
+            if (requirements.Plugin.Language.Contains("ASP", StringComparison.OrdinalIgnoreCase))
+            {
+                steps.Add("Create or update IIS application settings when the plugin requires an ASP.NET app.");
+            }
+
+            steps.Add("Record install activity and poll worker/agent completion.");
+
+            var plan = new HostingAppInstallPlan(
+                cp.CpId,
+                cp.CpLogin,
+                requirements.Plugin,
+                site == null ? null : new HostingAppInstallSite(site.SiteUid, DisplaySiteName(site), site.SitePath, site.ServerId),
+                database == null ? null : new HostingAppInstallDatabase(database.Engine, database.Id, database.Name, database.Login, database.Host),
+                pathResult.Path,
+                steps,
+                requirements.LegacySources.Concat(new[]
+                {
+                    "/Users/erwinyu/Downloads/hosting/cp8/cp/Plugins/plugin_process_3_action.asp",
+                    "/Users/erwinyu/Downloads/hosting/cp8/functions/fn_plugin.inc"
+                }).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                "Blocked before write: plugin_process_3_action.asp has multi-step file/database/IIS side effects and must be tested only against a disposable target."
+            );
+
+            return new HostingAppInstallPlanResponse(true, "App install plan is ready. No writes were performed.", plan);
+        }
 
         private static string WorkqueueStatusLabel(int status) => status switch
         {
@@ -11008,6 +13837,7 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record ExternalServiceStatus(string Name, bool Configured, string Message, string State);
         private sealed record DashboardResponse(bool Success, string Message, AccountDashboard? Dashboard);
         private sealed record AccountDomainsResponse(bool Success, string Message, List<AccountDomainSummary> Domains);
+        private sealed record DomainProfileResponse(bool Success, string Message, DomainProfileDetail? Profile);
         private sealed record DomainAvailabilityRequest(List<string> Domains);
         private sealed record DomainAvailabilityResponse(bool Success, string Message, List<DomainAvailabilityResult> Results);
         private sealed record DomainAvailabilityResult(string DomainName, bool Available, string Reason, string Source);
@@ -11049,7 +13879,7 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record AccountPurchaseSummary(int OrderId, int ClientProductId, string Name, string Description, string PaymentTerm, string PaymentMethod, decimal Amount, string OrderStatus, string PaymentStatus, DateOnly CreateDate);
         private sealed record AccountCreditTransactionSummary(int ProductId, string Name, string Description, string PaymentMethod, decimal LedgerAmount, DateTime? CreatedAt, decimal? RealAmount, string OrderStatus);
         private sealed record RenewalCheckoutPreview(int ClientProductId, int ProductId, string Name, string Description, string PaymentTerm, decimal Amount, string Currency, DateOnly? NextDueDate, string CheckoutUrl, string Note);
-        private sealed record BillingInvoiceDetail(int OrderId, int ClientProductId, int ProductId, string Name, string ProductName, string Description, string PaymentTerm, string PaymentMethod, decimal Amount, decimal PaidAmount, decimal Fees, string OrderStatus, string PaymentStatus, DateOnly CreateDate, DateOnly? PaidDate, string TransactionCode);
+        private sealed record BillingInvoiceDetail(int OrderId, int ClientProductId, int ProductId, string Name, string ProductName, string Description, string PaymentTerm, string PaymentMethod, decimal Amount, decimal PaidAmount, decimal Fees, string OrderStatus, string PaymentStatus, DateOnly CreateDate, DateOnly? PaidDate, string TransactionCode, string AccountName, string ReceiptName, string ReceiptAddress, string ReceiptCity, string ReceiptProvince, string ReceiptPostcode, string ReceiptCountry, string Vat);
         private sealed record CheckoutPreview(string CheckoutId, string Title, int ItemCount, decimal Total, string Currency, string CheckoutUrl, string Note, object Items);
         private sealed record CheckoutOrder(string Guid, string CheckoutUrl, string Title, decimal Amount, string Currency, int PageType, string Note);
         private sealed record CheckoutTempOrder(string Id, long CustomerId, int ProductId, string ProductName, decimal Amount, string Info1, string Info2, string Info3, string Info4, string Info5, int PageType, DateTime AddDate, bool IsPaid, bool Processed, bool Trackable, string FulfillmentPath);
@@ -11065,9 +13895,6 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record DomainTransferCheckoutRequest(string DomainName, bool WhoisPrivacy);
         private sealed record BillingDepositRequest(decimal Amount);
         private sealed record DepositEligibility(bool Eligible, string Message);
-        private sealed record BillingTransferRequest(decimal Amount, string TargetLogin);
-        private sealed record BillingTransferPreviewResponse(bool Success, string Message, BillingTransferPreview? Preview);
-        private sealed record BillingTransferPreview(string TargetLogin, long? TargetCustomerId, decimal Amount, decimal AvailableBalance, bool Eligible, string Note);
         private sealed record CheckoutLineItem(int ProductId, string Name, string Term, int Quantity, decimal UnitAmount, string Currency);
         private sealed record AffiliateWithdrawRequest(decimal Amount, string Method, string Paypal);
         private sealed record AffiliateWithdrawPreview(decimal Amount, string Method, decimal AvailableCommission, int PaidReferralsThisYear, decimal MinimumAmount, bool Eligible, string Note);
@@ -11078,18 +13905,63 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record AddonPriceOption(int PriceId, string Currency, string PaymentTerm, decimal SetupFee, decimal Amount, decimal OriginalAmount);
         private sealed record NewOrderCatalog(string Type, string Title, string LegacyPath, string Description, List<AddonCatalogProduct> Products);
         private sealed record DomainTransferQuote(int ProductId, string ProductName, string Currency, string PaymentTerm, decimal Amount);
-        private sealed record AccountAffiliateDashboard(AffiliateSummary Summary, List<AffiliateReferralSummary> Referrals, List<AffiliateCommissionSummary> Commissions, List<AffiliatePayoutSummary> Payouts);
+        private sealed record AccountAffiliateDashboard(long CustomerId, string Login, AffiliateSummary Summary, List<AffiliateReferralSummary> Referrals, List<AffiliateCommissionSummary> Commissions, List<AffiliatePayoutSummary> Payouts);
         private sealed record AffiliateSummary(int TotalReferrals, int PaidReferrals, int QualifiedFreeTrials, decimal PendingCommission, decimal CurrentCommission, decimal PaidOut, decimal AvailableCommission);
         private sealed record AffiliateReferralSummary(long CustomerId, string Login, DateOnly? AccountStartDate, string Status, bool IsPaid);
         private sealed record AffiliateCommissionSummary(int Id, int ClientProductId, string CustomerLogin, string ProductName, string Description, decimal Amount, DateOnly CreateDate, DateOnly ReleaseDate, bool IsReleased);
         private sealed record AffiliatePayoutSummary(int Id, string Method, string Description, decimal Amount, DateOnly CreateDate, string Paypal, string Status);
         private sealed record AccountSettingsDashboard(AccountSettingsProfile Profile, AccountTwoFactorSummary TwoFactor);
-        private sealed record AccountSettingsProfile(long CustomerId, string Login, string CustomerType, string Status, string Name, string CompanyName, DateOnly? AccountStartDate, bool ReVerify, bool ReVerifySkip, int SecurityVersion, string EmailDisplay, string MobileNumber, string BrowserLanguage, string Vat);
+        private sealed record AccountSettingsProfile(
+            long CustomerId,
+            string Login,
+            string CustomerType,
+            string Status,
+            string Name,
+            string CompanyName,
+            DateOnly? AccountStartDate,
+            bool ReVerify,
+            bool ReVerifySkip,
+            int SecurityVersion,
+            string EmailDisplay,
+            string MobileNumber,
+            string BrowserLanguage,
+            string Vat,
+            string ContactCountry,
+            string ContactProvince,
+            string ContactCity,
+            string ContactArea,
+            string ContactAddress,
+            string ContactPostcode,
+            string BillingCountry,
+            string BillingProvince,
+            string BillingCity,
+            string BillingArea,
+            string BillingAddress,
+            string BillingPostcode);
         private sealed record AccountTwoFactorSummary(bool HasSecret, bool IsEnabled, DateOnly? EnterDate);
         private sealed record AccountPasswordChangeRequest(string CurrentPassword, string NewPassword, string ConfirmPassword);
         private sealed record AccountEmailChangeRequest(string Email);
-        private sealed record AccountProfileUpdateRequest(string Name, string CompanyName, string MobileNumber, string BrowserLanguage, string Vat);
-        private sealed record AccountDomainSummary(int Id, string DomainName, int ClientProductId, string Status, DateOnly? StartDate, DateOnly? ExpirationDate, int? DaysLeft, string RegisterStatus, int RegisterInfoId, DateOnly? AddDate, DateOnly? ProductNextDueDate, string ProductStatus);
+        private sealed record AccountProfileUpdateRequest(
+            string Name,
+            string CompanyName,
+            string MobileNumber,
+            string BrowserLanguage,
+            string Vat,
+            string ContactCountry,
+            string ContactProvince,
+            string ContactCity,
+            string ContactArea,
+            string ContactAddress,
+            string ContactPostcode,
+            string BillingCountry,
+            string BillingProvince,
+            string BillingCity,
+            string BillingArea,
+            string BillingAddress,
+            string BillingPostcode);
+        private sealed record AccountDomainSummary(int Id, string DomainName, int ClientProductId, string Status, DateOnly? StartDate, DateOnly? ExpirationDate, int? DaysLeft, string RegisterStatus, int RegisterInfoId, DateOnly? AddDate, DateOnly? ProductNextDueDate, string ProductStatus, bool WhoisPrivacySupported, bool WhoisPrivacyPurchased, DateOnly? WhoisPrivacyTurnOnDate, int GracePeriodDays);
+        private sealed record DomainProfileDetail(int Id, string DomainName, int RegisterInfoId, string RegisterStatus, DateOnly? ExpirationDate, int? DaysLeft, bool WhoisPrivacySupported, bool WhoisPrivacyPurchased, DateOnly? WhoisPrivacyTurnOnDate, int GracePeriodDays, DomainContactDetail Registrant, DomainContactDetail Admin, DomainContactDetail Billing, DomainContactDetail Technical);
+        private sealed record DomainContactDetail(string FirstName, string LastName, string Organization, string Email, string Phone, string Fax, string Address1, string Address2, string City, string State, string Province, string Country, string PostalCode);
         private sealed record HostingSitesDashboard(long CpId, string CpLogin, List<HostingSiteSummary> Sites);
         private sealed record HostingSiteSummary(int SiteUid, string SiteName, string RootName, string SitePath, string Status, string RunningStatus, string Version, string PhpVersion, bool IsSecure, bool IsSubdomain, DateOnly? CreateDate, List<HostingSiteDomainSummary> MappedDomains);
         private sealed record HostingSiteDomainSummary(int DomainUid, string Label, string Url, bool Cdn, bool IsDefault, bool Ssl);
@@ -11109,6 +13981,9 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record HostingDatabaseFileActionRequest(long CpId, string Path);
         private sealed record HostingDatabaseConnectionStringResponse(bool Success, string Message, HostingDatabaseConnectionString? Connection);
         private sealed record HostingDatabaseConnectionString(string Engine, long DatabaseId, string Name, string Host, string Login, Dictionary<string, string> Snippets);
+        private sealed record HostingMssqlReportUsersResponse(bool Success, string Message, HostingMssqlReportUsersDashboard? Dashboard);
+        private sealed record HostingMssqlReportUsersDashboard(long CpId, string CpLogin, bool Enabled, string ServerId, int UserQuota, int UserCount, List<HostingMssqlReportUserSummary> Users, List<string> LegacySources);
+        private sealed record HostingMssqlReportUserSummary(string Username, bool HasPassword, bool IsPrimaryUser);
         private sealed record HostingEmailsResponse(bool Success, string Message, HostingEmailsDashboard? Dashboard);
         private sealed record HostingEmailsDashboard(long CpId, string CpLogin, List<HostingEmailDomainSummary> Domains, HostingEmailTotals Totals);
         private sealed record HostingEmailDomainSummary(string Type, long RowId, string Domain, string Server, string WebmailUrl, string MailHost, int SpaceMb, string Status, DateOnly? CreateDate);
@@ -11165,15 +14040,52 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record OwnedMappedDomain(int DomainUid, string Domain, bool Cdn, bool IsDefault, int SiteUid, string SiteName, string IisId, string IpAddress);
         private sealed record OwnedEmailDomain(string Type, long ProductId, string Domain, string Server, int AdditionalSpaceMb, int Status);
         private sealed record OwnedHostingFtpUser(long Id, string Login, string RawPath, int QuotaMb, string Permission, string Server, bool IsRootUser);
+        private sealed record OwnedApplicationPool(int Id, string Name, int PrivateMemoryMb, string Version, bool Enable32Bit, bool LoadUserProfile);
         private sealed record FtpPathValidationResult(bool Success, string Path, string Message);
-        private sealed record HostingFileManagerActionRequest(long CpId, string Action, string Path, string Name, string TargetPath, string TargetName, bool Overwrite) : IHostingCpRequest;
+        private sealed record HostingFileManagerActionRequest(long CpId, string Action, string Path, string Name, string TargetPath, string TargetName, bool Overwrite, string? Content = null, string? Encoding = null) : IHostingCpRequest;
+        private sealed record HostingFileAgentHealthResponse(bool Success, string Message, HostingFileAgentHealth? Browse, HostingFileAgentHealth? Action);
+        private sealed record HostingFileAgentHealth(bool Success, string Path, string Url, int StatusCode, string Message, string Preview);
         private sealed record HostingFileManagerResponse(bool Success, string Message, HostingFileManagerPayload? FileManager);
-        private sealed record HostingFileManagerPayload(long CpId, string CpLogin, string HomePath, string CurrentPath, string Action, string Url, string Preview, object? Metadata);
+        private sealed record HostingFileManagerPayload(
+            long CpId,
+            string CpLogin,
+            string HomePath,
+            string CurrentPath,
+            string Action,
+            string Url,
+            string Preview,
+            object? Metadata,
+            List<HostingFileManagerItem>? Folders = null,
+            List<HostingFileManagerItem>? Files = null,
+            string ParentPath = "",
+            string RelativePath = "",
+            int TotalFolders = 0,
+            int TotalFiles = 0,
+            int Page = 1,
+            int PageSize = 250);
+        private sealed record HostingFileManagerItem(string Name, string RelativePath, long Size, string Modified, string Created, string Type, bool IsFolder, bool IsEditable, string Extension);
+        private sealed record HostingFileManagerListing(List<HostingFileManagerItem> Folders, List<HostingFileManagerItem> Files, string ParentPath, string CurrentPath, int TotalFolders, int TotalFiles, int Page, int PageSize)
+        {
+            public static HostingFileManagerListing Empty => new(new List<HostingFileManagerItem>(), new List<HostingFileManagerItem>(), "", "", 0, 0, 1, 250);
+        }
         private sealed record FileManagerPathValidationResult(bool Success, string Path, string Message);
         private sealed record LegacyAgentSettings(string Scheme, string ServerDomainName, int Port)
         {
             public bool IsConfigured => !string.IsNullOrWhiteSpace(ServerDomainName);
             public string MissingMessage => "Legacy hosting agent is not configured. Set LegacyAgent:ServerDomainName or LEGACY_SERVER_DOMAIN_NAME before running IIS, FTP, and database agent calls.";
+        }
+        private sealed record LegacyRemoteCommandSettings(string Scheme, int Port, string Path, string TokenHost, string StaticToken, string Md5Seed)
+        {
+            public bool IsConfigured =>
+                !string.IsNullOrWhiteSpace(TokenHost)
+                && !string.IsNullOrWhiteSpace(StaticToken)
+                && !string.IsNullOrWhiteSpace(Md5Seed);
+            public string MissingMessage => "Legacy remote command token settings are not configured. Set LEGACY_REMOTE_CMD_STATIC_TOKEN and LEGACY_REMOTE_CMD_MD5_SEED before running remote_cmd2-compatible commands.";
+        }
+        private sealed record FileManagerAgentSettings(string Path, string ActionPath, string SharedSecret, string EncryptKey)
+        {
+            public bool IsConfigured => !string.IsNullOrWhiteSpace(Path);
+            public string MissingMessage => "File manager JSON agent is not configured. Set FILE_MANAGER_AGENT_PATH before running file-manager browse calls.";
         }
         private sealed record LegacyMailCallResult(bool Success, string Preview, int StatusCode);
         private sealed record SmarterMailSettings(string ApiBaseUrl, string DefaultServer)
@@ -11186,11 +14098,22 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             public bool IsConfigured => !string.IsNullOrWhiteSpace(Host);
             public string MissingMessage => "Legacy shared API is not configured. Set LegacySharedApi:Host or LEGACY_SHARED_API_HOST before running Cloudflare and free SSL calls.";
         }
-        private sealed record LegacyAgentCallResult(bool Success, string Message, string Url, string Preview, object? Metadata);
+        private sealed record LegacyOmsSettings(string BaseUrl)
+        {
+            public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl);
+            public string MissingMessage => "Legacy OMS web service is not configured. Set LegacyOms:BaseUrl or LEGACY_OMS_BASE_URL before running commission and credit operations.";
+        }
+        private sealed record LegacyAgentCallResult(bool Success, string Message, string Url, string Preview, object? Metadata, string Body = "");
         private sealed record HostingAppsResponse(bool Success, string Message, HostingAppsDashboard? Dashboard);
         private sealed record HostingAppsDashboard(long CpId, string CpLogin, List<HostingPluginSummary> Catalog, List<HostingActivitySummary> DeployJobs);
         private sealed record HostingAppRequirementsResponse(bool Success, string Message, HostingAppRequirements? Requirements);
         private sealed record HostingAppRequirements(HostingPluginSummary Plugin, string Parameters, List<Dictionary<string, string>> ConfigFiles, List<Dictionary<string, string>> Permissions, List<string> LegacySources);
+        private sealed record HostingAppInstallRequest(long CpId, int PluginId, int SiteUid, string InstallPath, long DatabaseId, string DatabaseEngine, Dictionary<string, string> Parameters);
+        private sealed record HostingAppInstallPlanResponse(bool Success, string Message, HostingAppInstallPlan? Plan);
+        private sealed record HostingAppInstallPlan(long CpId, string CpLogin, HostingPluginSummary Plugin, HostingAppInstallSite? Site, HostingAppInstallDatabase? Database, string InstallPath, List<string> Steps, List<string> LegacySources, string Blocker);
+        private sealed record HostingAppInstallSite(int SiteUid, string Name, string Path, string ServerId);
+        private sealed record HostingAppInstallDatabase(string Engine, long Id, string Name, string Login, string Host);
+        private sealed record HostingAppInstallStatusResponse(bool Success, string Message, HostingActivitySummary? Job);
         private sealed record HostingPluginSummary(
             int PluginId,
             string Name,

@@ -64,16 +64,17 @@ namespace controlpanel
                     continue;
                 }
 
-                if ((value.StartsWith("\"", StringComparison.Ordinal) && value.EndsWith("\"", StringComparison.Ordinal)) ||
-                    (value.StartsWith("'", StringComparison.Ordinal) && value.EndsWith("'", StringComparison.Ordinal)))
+                var wasQuoted = (value.StartsWith("\"", StringComparison.Ordinal) && value.EndsWith("\"", StringComparison.Ordinal)) ||
+                    (value.StartsWith("'", StringComparison.Ordinal) && value.EndsWith("'", StringComparison.Ordinal));
+                if (wasQuoted)
                 {
                     value = value[1..^1];
-                }
 
-                value = value
-                    .Replace("\\n", "\n", StringComparison.Ordinal)
-                    .Replace("\\r", "\r", StringComparison.Ordinal)
-                    .Replace("\\\"", "\"", StringComparison.Ordinal);
+                    value = value
+                        .Replace("\\n", "\n", StringComparison.Ordinal)
+                        .Replace("\\r", "\r", StringComparison.Ordinal)
+                        .Replace("\\\"", "\"", StringComparison.Ordinal);
+                }
 
                 Environment.SetEnvironmentVariable(key, value);
             }

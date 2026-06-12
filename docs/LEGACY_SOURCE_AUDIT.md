@@ -191,6 +191,8 @@ Latest account/checkout sources checked at a high level:
 - `/Users/erwinyu/Downloads/hosting/cp8/account/addon_renew.asp`
 - `/Users/erwinyu/Downloads/hosting/cp8/account/cp_renew_1.asp`
 - `/Users/erwinyu/Downloads/hosting/cp8/account/checkoutDomainBuy.asp`
+- `/Users/erwinyu/Downloads/hosting/cp8/account/domain_profile.asp`
+- `/Users/erwinyu/Downloads/hosting/cp8/account/modifyContact_action.asp`
 - `/Users/erwinyu/Downloads/hosting/cp8/Checkout/checkout_overview_v7.asp`
 - `/Users/erwinyu/Downloads/hosting/cp8/Checkout/checkout_overview_renew_v5.asp`
 
@@ -200,8 +202,15 @@ Important latest behaviors:
 - Renewals create/use `renew_temp` and then pass through checkout overview/waiting-payment pages.
 - Add-on purchase pages set session values such as `addon_purchase_product_id`, `addon_purchase_payment_term`, `addon_purchase_currencytype`, `addon_purchase_product_name`, and `addon_purchase_qty`.
 - VPN products are listed from product type `vpn` in `addon_purchase_special.asp`.
+- Billing purchase history follows `billings.asp` date-window behavior. The rebuilt Billing API now accepts `purchaseStart`/`purchaseEnd` (`yyyy-MM-dd`) and defaults to one year back through one year forward, matching the Classic ASP page instead of loading an arbitrary latest-25 slice.
+- Billing invoice detail now mirrors the receipt context from `/Users/erwinyu/Downloads/hosting/cp8/account/printreceipt.asp` and `/Users/erwinyu/Downloads/hosting/cp8/account/generateinvoice.asp`: order ownership through `oms.dbo.client_product`, CP account name lookup through `cp_config` then `addon_client_product_to_cpid`, receipt name preference for company over personal name, billing address fields, VAT, transaction code, paid amount, and fees.
+- Add-on temp checkout page types are mapped against `/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc` constants and `/Users/erwinyu/Downloads/hosting/cp8/account/addon_purchase_action.asp`. `SITE...` now maps to `constPageType_NewSite = 2`; Site Guard/Website Firewall remains `constPageType_websitefirewall = 33`.
+- Account Settings profile now includes the contact and billing address fields handled by `/Users/erwinyu/Downloads/hosting/cp8/account/profile_update_action.asp` and `/Users/erwinyu/Downloads/hosting/cp8/functions/profile_update.inc`: `country_zh_cn`, `province_zh_cn`, `city_zh_cn`, `area_zh_cn`, `address_zh_cn`, `postcodestr`, and their billing equivalents.
+- Account Domain Manage now includes a read-only domain profile endpoint using the same `domain_profile.asp` ownership join: `domain_profile` by current `customer_profile_id`, joined to `DomainRegisterInfo` by `RegisterInfoID` and `sponsorid`. It shows registrant, admin, billing, and technical contacts without exposing registrar credentials.
+- Real `jyu001` smoke tests passed on 2026-06-13: dashboard, billing, domains, VPN, add-ons, affiliate, and settings APIs loaded; OpenSRS search returned live availability for a disposable domain and `sample.com`; invoice detail loaded for owned order `2498597`; a disposable domain registration temp order created a `buyer_temp` row and loaded through the checkout handoff API.
 
 Remaining parity notes:
 
-- The React account panel has modern order/renewal previews and balance-backed flows, but the remaining checkout path should keep being verified against the latest `/Checkout` pages rather than the older `/Downloads/cp8` copies.
+- The React account panel creates real domain/add-on/VPN/new-order `buyer_temp` rows and renewal checkout rows, then hands off to the classic checkout/temp-order continuation path. Balance-backed checkout marks the temp order paid, matching the latest `/Checkout` pages.
 - Payment-provider fragments need a separate checkout audit before claiming complete parity.
+- Domain contact writes still use the existing OpenSRS registrar-action path. Full `modifyContact_action.asp` parity should be tested only with a disposable domain/contact profile because it changes live registrar contact data.

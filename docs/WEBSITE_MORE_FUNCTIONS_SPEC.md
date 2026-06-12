@@ -69,7 +69,7 @@ Shared behavior:
 - Batch read page data for drawers. Example: Application Pool drawer should return pools, current pool, RAM quota, and pending workqueue jobs in one response.
 - Use `SqlConnection` pooling and parameterized SQL.
 - Use short remote-agent timeouts for status reads, longer timeouts for worker-style provisioning only.
-- Queue long filesystem/IIS actions in `workqueue` instead of blocking UI.
+- Queue only actions whose exact Classic ASP source writes to `workqueue`. Direct IIS/API/DB actions must stay direct.
 - Return pending-job IDs and poll only the job status row, not the whole website dashboard.
 - Add ETag-ish lightweight `lastUpdated` values for read-heavy drawers where data is stable.
 
@@ -78,7 +78,7 @@ Shared behavior:
 | UI Function | Legacy Entry | Legacy Action/Helpers | Rebuilt Function Key |
 |---|---|---|---|
 | Site Name | `includes/website_name_edit.asp` | `domainbind_actions.asp?action=editwebsitename`, `editwebsitename`, `edit_iis_name` | `site-name` |
-| Mapped Path | `treepick.asp` from menu | `domainbind_actions.asp?action=updatesitepath`, `workqueue type=changepool` when pool changes | `mapped-path` |
+| Mapped Path | `treepick.asp` from menu | `domainbind_actions.asp?action=editdomainpath`, direct IIS path change, `workqueue type=changepool` only after pool side effect | `mapped-path` |
 | ASP.NET Version | `/cp/advance` and `domainbind_version_change.asp` | `aspnetapp_action.asp`, `addCustomScriptMap/removeCustomScriptMap` for PHP mapping | `aspnet-version` |
 | .NET Core Mode | `boxinfo_core_mode.asp` | `aspnetapp_action.asp?action=set_HostingModel`, `set_HostingModel_rpc` | `core-mode` |
 | Node.js App | `boxinfo_nodejs.asp` | `nodejs_action.asp`, `/api/URLRewrite/create` via `httpcall4`, `workqueue type=nodejs` | `nodejs-app` |
@@ -90,7 +90,7 @@ Shared behavior:
 | Domain Manager | `boxinfo_mapdomain.asp` | `domainbind_actions.asp` add/delete/move domain, DNS helpers | `domain-manager` |
 | Visitor Stats | `boxinfo_webstats.asp` | AWStats / statistics setup tied to WebDeploy/Remote IIS password | `visitor-stats` |
 | FTP Access | `boxinfo_ftp.asp` | `ftp_action.asp`, `fn_ftp.inc` `createFTP`, `edit_ftp_user`, `deleteFTP` | `ftp-access` |
-| VS Webdeploy | `boxinfo_webdeploy.asp` | `iis_manager_webdeploy_action.asp`, `iis_manager_webdeploy_generate.asp` | `vs-webdeploy` |
+| VS Webdeploy | `boxinfo_webdeploy.asp` | `iis_manager_webdeploy_action.asp`, `iis_manager_webdeploy_generate.asp`; direct IIS API, no queue | `vs-webdeploy` |
 | Github Deploy | `boxinfo_nodejs_deploy.asp` | `nodejs_action.asp` deploy fields and worker/RPC flow | `github-deploy` |
 | SMTP Sample Code | `boxinfo_smtp_code.asp` | `setupOtherPlugins/smtpscriptsamples_action` | `smtp-sample-code` |
 | IP Deny | `boxinfo_ipdeny.asp` | IP deny page/actions, IIS config/server firewall depending mode | `ip-deny` |
@@ -152,13 +152,13 @@ Existing safe mapping should remain:
 - `createpool`
 - `changepool`
 - `nodejs`
-- `deploy`
+- `deploy` for GitHub deploy only, not VS WebDeploy / Remote IIS
 - `perm`
 - `zip`
 - `Unzip`
 - `scanvirus`
 
-Use `workqueue` for long operations and risky filesystem permissions, matching old behavior.
+Use `workqueue` only for the specific legacy queue types recorded in `docs/WORKQUEUE_USAGE_AUDIT.md`.
 
 ## Function Specs
 
@@ -208,7 +208,7 @@ Speed:
 Legacy:
 
 - Menu source opens `treepick.asp?id={n}&sitepath={basedir}&currentpath={sitepath}`.
-- Write path in `domainbind_actions.asp?action=updatesitepath`.
+- Write path in `domainbind_actions.asp?action=editdomainpath`.
 - If pool changes, old code inserts `workqueue type=changepool`.
 
 Behavior:
@@ -628,7 +628,7 @@ Legacy:
 
 - UI: `boxinfo_nodejs_deploy.asp`.
 - Action: `nodejs_action.asp`, deploy request fields.
-- Worker likely stores deploy job and logs; current rebuilt workqueue supports `deploy`.
+- Classic `nodejs_action.asp` stores GitHub deploy jobs in `workqueue type=deploy`.
 
 Behavior:
 

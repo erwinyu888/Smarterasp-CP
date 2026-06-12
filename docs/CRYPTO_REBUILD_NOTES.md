@@ -25,6 +25,21 @@ Known wrappers:
 
 The rebuilt app now has `/Users/erwinyu/codex/Smarterasp-CP/CryptoHelper.cs`.
 
+## Short-Lived Agent Transport
+
+Not every encrypted value needs Persits compatibility. Many old control-panel flows encrypt request parameters only so server-to-server agent calls are hard to forge or inspect; those values are decrypted immediately and are not stored in legacy tables.
+
+For rebuilt-only agent transport:
+
+- Do not use Persits compatibility as a requirement.
+- Use modern rebuilt encryption between ASP.NET and the whitelisted Classic ASP agent.
+- Decrypt immediately inside the agent.
+- Validate the decrypted value against ownership/path rules before doing any work.
+- Keep port `830` IP-whitelisted so browsers cannot call these agents directly.
+- Signing is optional for these internal agents when the network path is restricted; use it only when a feature explicitly needs replay protection.
+
+For File Manager, ASP.NET encrypts `u`, `b`, `p`, and related path fields when `FILE_MANAGER_ENCRYPT_KEY` is set. The Classic ASP agent decrypts them and then enforces `h:\root\home\<cpLogin>\...` containment.
+
 Use these methods for new rebuilt-only data:
 
 - `CryptoHelper.Encrypt(encryptKey, plainText)`

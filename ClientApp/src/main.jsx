@@ -38,103 +38,13 @@ window.fetch = async (input, init) => {
   return response;
 };
 
-const hostingAccounts = [
-  {
-    hosting_account_name: "sample.com",
-    siteHosted: "Total: 30 sites",
-    renewal: "Aug 14, 2026",
-    planName: "Starter"
-  },
-  {
-    hosting_account_name: "clientportal.io Business",
-    siteHosted: "ATotal: 3 sites",
-    renewal: "Nov 02, 2026",
-    planName: "Business"
-  },
-  {
-    hosting_account_name: "staging-controlpanel.dev",
-    siteHosted: "Total: 11 sites",
-    renewal: "Jan 18, 2027",
-    planName: "Preview"
-  }
-];
-
-const renewalNotices = [
-  {
-    name: "sample.com",
-    renewal: "Aug 14, 2026",
-    daysLeft: 64,
-    status: "Renew soon"
-  },
-  {
-    name: "controlpaneldemo.com",
-    renewal: "Sep 20, 2026",
-    daysLeft: 101,
-    status: "Upcoming"
-  },
-  {
-    name: "SSL-S Certificate",
-    renewal: "Jul 15, 2026",
-    daysLeft: 34,
-    status: "Action needed"
-  }
-];
-
-const domains = [
-  { name: "controlpaneldemo.com", status: "Active", renewal: "Sep 20, 2026" },
-  { name: "myhostingaccount.net", status: "Active", renewal: "Dec 04, 2026" },
-  { name: "sample-client.org", status: "Renew soon", renewal: "Jul 15, 2026" }
-];
-
-const vpnServices = [
-  {
-    name: "VPN Business Seat",
-    details: "5 users, Asia gateway",
-    billing: "Monthly billing",
-    price: "$24/mo"
-  },
-  {
-    name: "VPN Dedicated IP",
-    details: "1 dedicated IP, US gateway",
-    billing: "Annual billing",
-    price: "$99/yr"
-  }
-];
-
-const addons = [
-  {
-    name: "SSL-S",
-    description: "Comodo SSL Certificate - Single Domain or Subdomain",
-    terms: "1 Year $29",
-    qty: 1
-  },
-  {
-    name: "SSL-W",
-    description: "Comodo SSL Certificate - Multiple Subdomains (*.yourdomain.com)",
-    terms: "1 Year $169",
-    qty: 1
-  },
-  {
-    name: "SSL-M",
-    description: "Comodo SSL Certificate - Multiple Domains (3 domains included)",
-    terms: "1 Year $59",
-    qty: 1
-  },
-  {
-    name: "SSL-E",
-    description: "Comodo SSL Certificate - Extended Validation (Companies and Organizations)",
-    terms: "1 Year $199",
-    qty: 1
-  }
-];
-
 const sections = [
-  { id: "hosting", label: "Hosting Plans", stat: "12", icon: "server" },
-  { id: "domain", label: "Domain", stat: "8", icon: "globe" },
-  { id: "vpn", label: "VPN", stat: "2", icon: "shield" },
-  { id: "addon", label: "Add-On", stat: "4", icon: "plus" },
+  { id: "hosting", label: "Hosting Plans", stat: "", icon: "server" },
+  { id: "domain", label: "Domain", stat: "", icon: "globe" },
+  { id: "vpn", label: "VPN", stat: "", icon: "shield" },
+  { id: "addon", label: "Add-On", stat: "", icon: "plus" },
   { id: "affiliate", label: "Affiliate", stat: "Earn 60%", icon: "share" },
-  { id: "billing", label: "Billing", stat: "0", icon: "card", statTone: "warning" },
+  { id: "billing", label: "Billing", stat: "", icon: "card", statTone: "warning" },
   { id: "settings", label: "Settings", stat: "Sec", icon: "settings" },
   { id: "new-order", label: "+ New Order", stat: "Buy", icon: "order", tone: "order" }
 ];
@@ -167,6 +77,81 @@ const deployActions = [
   { label: "Github", icon: "git" },
   { label: "VSDeploy", icon: "deploy" }
 ];
+
+const actionIconByLabel = {
+  "Add Domain": "add-domain",
+  Alias: "share",
+  "Automated Backups": "backup",
+  Back: "back",
+  Backup: "backup",
+  "Browse Root": "folder-search",
+  Connection: "server",
+  "Connection String": "server",
+  "Parent Folder": "back",
+  Cancel: "x",
+  Close: "x",
+  Copy: "copy",
+  Create: "plus",
+  "Create Checkout": "order",
+  Delete: "trash",
+  Disable: "power-off",
+  Dismiss: "x",
+  Download: "download",
+  Edit: "edit",
+  Enable: "power",
+  Invoice: "invoice",
+  "Lock Site": "lock",
+  "Manage Mailboxes": "mail",
+  "New Folder": "new-folder",
+  "New Site": "website-plus",
+  Open: "open",
+  Permissions: "permissions",
+  Password: "lock",
+  Quota: "server",
+  Move: "open",
+  Refresh: "refresh",
+  Renew: "renew",
+  Reset: "reset",
+  Restore: "retry",
+  Retry: "retry",
+  "Scan Virus": "virus",
+  Search: "search",
+  "Sub Domain": "add-domain",
+  Unlock: "unlock",
+  "Unlock Site": "unlock",
+  Unzip: "unzip",
+  Upload: "upload",
+  Webmail: "open",
+  Zip: "zip",
+  DNS: "dns",
+  Forwarding: "share",
+  "Raw Logs": "logs",
+  "DNS Manager": "dns",
+  "Domain Settings": "settings",
+  "Whois Privacy": "shield",
+  "Privacy On": "shield",
+  "Privacy Off": "shield",
+  "Auth Code": "lock",
+  "CSR Request": "invoice",
+  "Request Free SSL": "ssl",
+  "Buy SSL": "order",
+  "Import SSL": "upload",
+  "Re-import SSL": "upload",
+  "Install Certificate": "ssl",
+  "Reinstall Certificate": "refresh",
+  "Re-install SSL Cert": "refresh",
+  "Install to all subdomains": "add-domain",
+  "Export SSL Cert": "download",
+  "Edit Validation Method": "edit",
+  "Resend Approver Email": "mail",
+  "View Free SSL Log": "logs",
+  "Delete SSL": "trash"
+};
+
+function iconForAction(label) {
+  const normalized = String(label ?? "").replace(/^\+\s*/, "").trim();
+  return actionIconByLabel[normalized] ?? actionIconByLabel[label] ?? "more";
+}
 
 const websiteMoreFunctionColumns = [
   {
@@ -288,16 +273,21 @@ const websites = [
   }
 ];
 
-const affiliateBanners = [
+const affiliateBannerDefinitions = [
   { size: "728X90", file: "728X90.gif" },
   { size: "468x60", file: "468X60.gif" },
   { size: "300x250", file: "300x250.gif" },
   { size: "234x60", file: "234x60.gif" }
-].map((banner) => ({
-  ...banner,
-  url: `https://www.SmarterASP.NET/affiliate/${banner.file}`,
-  code: `<a href="https://www.SmarterASP.NET/index?r=openreward"><img src="https://www.SmarterASP.NET/affiliate/${banner.file}" border="0"></a>`
-}));
+];
+
+function buildAffiliateBanners(referralCode) {
+  const code = encodeURIComponent(referralCode || "jyu001");
+  return affiliateBannerDefinitions.map((banner) => ({
+    ...banner,
+    url: `https://www.SmarterASP.NET/affiliate/${banner.file}`,
+    code: `<a href="https://www.SmarterASP.NET/index?r=${code}"><img src="https://www.SmarterASP.NET/affiliate/${banner.file}" border="0"></a>`
+  }));
+}
 
 const vpnKbArticles = [
   ["How to set up VPN with your Windows 10 PC?", "http://www.smarterasp.net/support/kb/a2180/how-to-set-up-vpn-with-your-windows-10-pc.aspx"],
@@ -481,7 +471,7 @@ function App() {
       <main className="login-page">
         <section className="login-card auth-loading" aria-label="Loading session">
           <div className="product-mark" aria-hidden="true">CP</div>
-          <p>Checking session...</p>
+          <LoadingIcon label="Checking session" />
         </section>
       </main>
     );
@@ -615,7 +605,7 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
       <section className="checkout-handoff-card">
         <span className="status-pill blue">Checkout Handoff</span>
         <h1>{title}</h1>
-        <p>This page confirms the order handoff created by the Account Panel rebuild and mirrors the legacy checkout temp-order state.</p>
+        <p>This page confirms the checkout temp-order state used by the account panel.</p>
         {order && (
           <div className="checkout-status-grid">
             <div>
@@ -640,17 +630,21 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
           {order?.info1 && <div><dt>Info 1</dt><dd>{order.info1}</dd></div>}
           {order?.info2 && <div><dt>Info 2</dt><dd>{order.info2}</dd></div>}
           {order?.renewInfo && <div><dt>Renew Info</dt><dd>{order.renewInfo}</dd></div>}
-          {order?.fulfillmentPath && <div><dt>Legacy Fulfillment</dt><dd>{order.fulfillmentPath}</dd></div>}
+          {order?.fulfillmentPath && <div><dt>Next Step</dt><dd>{order.fulfillmentPath}</dd></div>}
         </dl>
-        {orderMessage && <p className="renewal-action-message">{orderMessage}</p>}
+        {orderMessage && (
+          orderMessage.startsWith("Loading")
+            ? <LoadingState label="Loading checkout order" />
+            : <p className="renewal-action-message">{orderMessage}</p>
+        )}
         <div className="checkout-action-row">
           {canUseBalance && (
             <button className="primary-button" type="button" disabled={isPayingWithBalance} onClick={payWithBalance}>
-              {isPayingWithBalance ? "Checking..." : "Pay with Account Balance"}
+              {isPayingWithBalance ? <LoadingIcon label="Checking account balance" /> : "Pay with Account Balance"}
             </button>
           )}
           {orderPaid && !orderProcessed && order.fulfillmentPath && (
-            <a className="secondary-button as-link" href={order.fulfillmentPath}>Continue Fulfillment</a>
+            <a className="secondary-button as-link" href={order.fulfillmentPath}>Continue Account Setup</a>
           )}
         </div>
         <button className="primary-button" type="button" onClick={onBackToPanel}>
@@ -723,11 +717,11 @@ function EmailChangeVerify({ theme, onBackToPanel, onToggleTheme }) {
       </header>
       <section className="handoff-card">
         <span className={status.success ? "status-pill" : "status-pill muted"}>
-          {status.loading ? "Checking" : status.success ? "Verified" : "Needs attention"}
+          {status.loading ? <LoadingIcon label="Checking email verification" /> : status.success ? "Verified" : "Needs attention"}
         </span>
         <h1>Email Verification</h1>
         {status.loading ? (
-          <p>Checking email verification link...</p>
+          <LoadingState label="Checking email verification link" />
         ) : (
           <>
             <p>{status.message}</p>
@@ -747,7 +741,7 @@ function EmailChangeVerify({ theme, onBackToPanel, onToggleTheme }) {
 }
 
 function PasswordResetRequest({ theme, onBackToLogin, onToggleTheme }) {
-  const [login, setLogin] = useState("openreward");
+  const [login, setLogin] = useState("jyu001");
   const [message, setMessage] = useState("");
   const [resetUrl, setResetUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -812,7 +806,7 @@ function PasswordResetRequest({ theme, onBackToLogin, onToggleTheme }) {
             </a>
           )}
           <button className="primary-button full" type="submit" disabled={isSubmitting || !login.trim()}>
-            {isSubmitting ? "Creating..." : "Create Reset Link"}
+            {isSubmitting ? <LoadingIcon label="Creating reset link" /> : "Create Reset Link"}
           </button>
           <button className="secondary-button full" type="button" onClick={onBackToLogin}>
             Back to Login
@@ -901,7 +895,7 @@ function PasswordResetConfirm({ theme, onBackToLogin, onToggleTheme }) {
           </label>
           {message && <p className={isSuccess ? "login-success" : "login-error"}>{message}</p>}
           <button className="primary-button full" type="submit" disabled={isSubmitting || !token}>
-            {isSubmitting ? "Saving..." : "Reset Password"}
+            {isSubmitting ? <LoadingIcon label="Saving password" /> : "Reset Password"}
           </button>
           <button className="secondary-button full" type="button" onClick={onBackToLogin}>
             Back to Login
@@ -913,7 +907,7 @@ function PasswordResetConfirm({ theme, onBackToLogin, onToggleTheme }) {
 }
 
 function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
-  const [login, setLogin] = useState("openreward");
+  const [login, setLogin] = useState("jyu001");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -991,7 +985,7 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
           </label>
           {loginError && <p className="login-error">{loginError}</p>}
           <button className="primary-button full" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Logging in..." : "Login"}
+            {isSubmitting ? <LoadingIcon label="Logging in" /> : "Login"}
           </button>
           <button className="link-button login-form-link" type="button" onClick={onForgotPassword}>
             Forgot password?
@@ -1007,6 +1001,7 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
   const [dashboard, setDashboard] = useState(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [accountStats, setAccountStats] = useState({
     domains: null,
     vpn: null,
@@ -1087,11 +1082,23 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
     loadAccountStats();
   }, []);
 
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [activeSection]);
+
   const accountFunds = accountStats.balance === null ? "$179.92" : formatUsdFull(accountStats.balance);
 
   return (
-    <div className="app-shell">
+    <div className={isMobileMenuOpen ? "app-shell mobile-menu-open" : "app-shell"}>
+      <button className="mobile-menu-button" type="button" onClick={() => setIsMobileMenuOpen(true)} aria-label="Open menu">
+        <MenuIcon name="menu" />
+        <span>{activeTitle}</span>
+      </button>
+      <button className="mobile-menu-overlay" type="button" onClick={() => setIsMobileMenuOpen(false)} aria-label="Close menu" />
       <aside className="sidebar">
+        <button className="mobile-menu-close" type="button" onClick={() => setIsMobileMenuOpen(false)} aria-label="Close menu">
+          <MenuIcon name="x" />
+        </button>
         <div className="sidebar-top">
           <a className="brand project-brand" href="/panel">
             <span className="brand-name">{browserDomain}</span>
@@ -1113,13 +1120,15 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
                 <MenuIcon name={section.icon} />
                 <span>{section.label}</span>
               </span>
-              <strong className={[
-                "nav-stat",
-                section.statTone === "warning" ? "warning" : "",
-                section.tone === "order" ? "order" : ""
-              ].filter(Boolean).join(" ")}>
-                {section.stat}
-              </strong>
+              {section.stat && (
+                <strong className={[
+                  "nav-stat",
+                  section.statTone === "warning" ? "warning" : "",
+                  section.tone === "order" ? "order" : ""
+                ].filter(Boolean).join(" ")}>
+                  {section.stat}
+                </strong>
+              )}
             </button>
           ))}
         </nav>
@@ -1142,9 +1151,9 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
           </a>
         </div>
         <div className="reward-card" aria-label="Account balance">
-          <ProfileAvatar username={currentUser?.login ?? "OPENREWARD"} />
+          <ProfileAvatar username={currentUser?.login ?? "Account"} />
           <div>
-            <strong>{(currentUser?.login ?? "OPENREWARD").toUpperCase()}</strong>
+            <strong>{(currentUser?.login ?? "Account").toUpperCase()}</strong>
             <span>Funds {accountFunds}</span>
           </div>
         </div>
@@ -1243,6 +1252,7 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
   const [selectedCpId, setSelectedCpId] = useState(0);
   const [isHostingPlanMenuOpen, setIsHostingPlanMenuOpen] = useState(false);
   const [accountFunds, setAccountFunds] = useState(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const activeTitle = useMemo(
     () => controlPanelSections.find((section) => section.id === activeSection)?.label ?? "Dashboard",
     [activeSection]
@@ -1282,9 +1292,21 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
     };
   }, []);
 
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [activeSection, selectedCpId]);
+
   return (
-    <div className="app-shell">
+    <div className={isMobileMenuOpen ? "app-shell mobile-menu-open" : "app-shell"}>
+      <button className="mobile-menu-button" type="button" onClick={() => setIsMobileMenuOpen(true)} aria-label="Open menu">
+        <MenuIcon name="menu" />
+        <span>{activeTitle}</span>
+      </button>
+      <button className="mobile-menu-overlay" type="button" onClick={() => setIsMobileMenuOpen(false)} aria-label="Close menu" />
       <aside className="sidebar">
+        <button className="mobile-menu-close" type="button" onClick={() => setIsMobileMenuOpen(false)} aria-label="Close menu">
+          <MenuIcon name="x" />
+        </button>
         <div className="sidebar-top">
           <div className="mock-plan-select-wrap">
             <button
@@ -1324,7 +1346,7 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
                   <button className="mock-plan-option" type="button">
                     <span className="mock-plan-option-label">
                       <MenuIcon name="server" />
-                      <span>Loading plans...</span>
+                      <LoadingIcon label="Loading plans" />
                     </span>
                   </button>
                 )}
@@ -1410,7 +1432,9 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
 }
 
 function hostingApiUrl(path, cpId) {
-  return cpId ? `${path}?cpId=${encodeURIComponent(cpId)}` : path;
+  if (!cpId) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}cpId=${encodeURIComponent(cpId)}`;
 }
 
 function useSectionViewMode(sectionKey, itemCount) {
@@ -1589,7 +1613,7 @@ function HostingDashboard({ cpId }) {
     <section className="cp-dashboard">
       <article className="panel-card cp-context-card">
         <div>
-          <span className="status-pill blue">{isLoadingDashboard ? "Loading" : dashboard?.status ?? "Live CP"}</span>
+          <span className="status-pill blue">{isLoadingDashboard ? <LoadingIcon label="Loading dashboard" /> : dashboard?.status ?? "Live CP"}</span>
           <h2>Hosting Overview</h2>
           <p>{dashboard?.primaryDomain || "Primary hosting context"}</p>
         </div>
@@ -1604,7 +1628,7 @@ function HostingDashboard({ cpId }) {
       {dashboardError && (
         <div className="panel-card dashboard-error-panel">
           <p>{dashboardError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadHostingDashboard}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadHostingDashboard} />
         </div>
       )}
       {!!visibleMigrations.length && (
@@ -2002,17 +2026,17 @@ function WebsitesSection({ cpId }) {
       <div className="panel-card website-live-summary">
         <div>
           <span className="status-pill blue">Live websites</span>
-          <p>{sitesDashboard ? `${siteRecords.length} sites` : "Loading hosting websites"}</p>
+          <p>{sitesDashboard ? `${siteRecords.length} sites` : <LoadingIcon label="Loading hosting websites" />}</p>
         </div>
         <RefreshButton onClick={refreshWebsitesSection} />
       </div>
 
-      {isLoadingSites && <p className="empty-state">Loading websites from cp_config_Sites...</p>}
+      {isLoadingSites && <LoadingState label="Loading websites" />}
       {websiteMessage && <p className="sandbox-message">{websiteMessage}</p>}
       {sitesError && (
         <div className="panel-card dashboard-error-panel">
           <p>{sitesError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadHostingSites}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadHostingSites} />
         </div>
       )}
       {!isLoadingSites && !sitesError && !siteRecords.length && (
@@ -2489,7 +2513,7 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, messa
           <div>
             <span className="status-pill blue">{details?.group ?? "More Functions"}</span>
             <h2>{activeFunction.label}</h2>
-            <p>{details?.description ?? "Loading website function details..."}</p>
+            <p>{details?.description ?? <LoadingIcon label="Loading website function details" />}</p>
           </div>
           <div className="function-drawer-actions">
             <RefreshButton onClick={onRefresh} />
@@ -2499,7 +2523,7 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, messa
           </div>
         </header>
 
-        {isLoading && <p className="empty-state">Loading live website data...</p>}
+        {isLoading && <LoadingState label="Loading live website data" />}
         {error && <p className="sandbox-message danger">{error}</p>}
         {message && <p className="sandbox-message">{message}</p>}
 
@@ -2539,6 +2563,17 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, messa
                     <>
                       <button className="secondary-button compact" type="button" onClick={() => onSubmit("start")}>Start</button>
                       <button className="secondary-button compact" type="button" onClick={() => onSubmit("stop")}>Stop</button>
+                    </>
+                  ) : details.key === "outgoing-port" ? (
+                    <>
+                      <button className="primary-button compact" type="button" onClick={() => onSubmit("add")}>Add Rule</button>
+                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("delete")}>Remove Rule</button>
+                    </>
+                  ) : details.key === "vs-webdeploy" || details.key === "remote-iis-manager" ? (
+                    <>
+                      <button className="primary-button compact" type="button" onClick={() => onSubmit("fix-acl")}>Fix ACL</button>
+                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("enable")}>Turn On</button>
+                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("disable")}>Turn Off</button>
                     </>
                   ) : details.supportsWrite ? (
                     <button className="primary-button compact" type="submit">Run Function</button>
@@ -2744,6 +2779,23 @@ function DatabasesSection({ cpId }) {
     }
   }
 
+  async function deleteDatabase(database) {
+    setDatabaseMessage("");
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/databases/${encodeURIComponent(database.engine)}/${database.databaseId}`, cpId), {
+        method: "DELETE"
+      });
+      const result = await response.json().catch(() => null);
+      setDatabaseMessage(result?.message ?? "Database delete request finished.");
+      if (response.ok && result?.success) {
+        await loadDatabases();
+        await loadBackupSchedules();
+      }
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
+  }
+
   async function loadDeletedDatabases() {
     setDatabaseMessage("");
     try {
@@ -2898,10 +2950,10 @@ function DatabasesSection({ cpId }) {
 
       <div className="database-toolbar panel-card">
         <div className="database-actions">
-          <button className="primary-button compact" type="button" onClick={() => queueDatabaseTest("+ Database")}>+ Database</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("+ Quota")}>+ Quota</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("+ Advanced Backup")}>+ Advanced Backup</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("Run SQL File")}>Run SQL File</button>
+          <button className="primary-button compact" type="button" onClick={() => setDatabaseMessage("Create Database form is ready below. Fill in the database details and submit to call the legacy database create gateway.")}>+ Database</button>
+          <button className="secondary-button compact" type="button" onClick={() => setDatabaseMessage("Database quota changes are handled through Add-On purchases and product quota mapping. Use Account Panel > Add-On for extra database quota.")}>+ Quota</button>
+          <button className="secondary-button compact" type="button" onClick={() => setDatabaseMessage("Automated Backups form is ready above. Choose a database, hour, and retention window.")}>+ Advanced Backup</button>
+          <button className="secondary-button compact" type="button" onClick={() => setDatabaseMessage("Run SQL form is ready below. Choose an MSSQL database and SQL file path.")}>Run SQL File</button>
           <button className="secondary-button compact" type="button" onClick={loadDeletedDatabases}>Deleted DBs</button>
         </div>
         <div className="engine-tabs" aria-label="Database engine filter">
@@ -3067,7 +3119,7 @@ function DatabasesSection({ cpId }) {
         </article>
       </div>
 
-      {isLoadingDatabases && <p className="empty-state">Loading databases from cp_config_MSSQLs and cp_config_MySQLs...</p>}
+      {isLoadingDatabases && <LoadingState label="Loading databases" />}
       {databaseMessage && <p className="sandbox-message">{databaseMessage}</p>}
       {connectionPreview && (
         <article className="panel-card connection-preview-card">
@@ -3134,7 +3186,7 @@ function DatabasesSection({ cpId }) {
       {databaseError && (
         <div className="panel-card dashboard-error-panel">
           <p>{databaseError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadDatabases}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadDatabases} />
         </div>
       )}
       {!isLoadingDatabases && !databaseError && !visibleDatabases.length && (
@@ -3163,12 +3215,16 @@ function DatabasesSection({ cpId }) {
                 <div><dt>Created</dt><dd>{formatDate(database.createDate)}</dd></div>
               </dl>
               <div className="database-action-row">
-                {["Backup", "Restore", "Connection String", "More"].map((action) => (
-                  <button
-                    className="secondary-button compact"
-                    type="button"
+                {["Backup", "Restore", "Connection String", "More", "Delete"].map((action) => (
+                  <IconActionButton
+                    label={action}
                     key={action}
                     onClick={() => {
+                      if (action === "Delete") {
+                        deleteDatabase(database);
+                        return;
+                      }
+
                       if (action === "Connection String") {
                         showConnectionString(database);
                         return;
@@ -3188,9 +3244,7 @@ function DatabasesSection({ cpId }) {
                       setSqlDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}` }));
                       setDatabaseMessage(database.engine === "MSSQL" ? "Use Run SQL to queue a SQL file for this database." : "MySQL import needs the exact legacy import gateway before it can be enabled.");
                     }}
-                  >
-                    {action}
-                  </button>
+                  />
                 ))}
               </div>
             </article>
@@ -3224,16 +3278,17 @@ function DatabasesSection({ cpId }) {
                   <td>{formatDate(database.createDate)}</td>
                   <td>
                     <div className="website-action-buttons compact-actions">
-                      <button className="secondary-button compact" type="button" onClick={() => backupDatabaseNow(database)}>Backup</button>
-                      <button className="secondary-button compact" type="button" onClick={() => {
+                      <IconActionButton label="Backup" onClick={() => backupDatabaseNow(database)} />
+                      <IconActionButton label="Restore" onClick={() => {
                         setRestoreDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}`, backupFile: database.engine === "MSSQL" ? "/db/backup.bak" : "/db/backup.sql", mode: "Restore from backup" }));
                         setDatabaseMessage("Enter the backup file path in Server Backup, then queue the restore.");
-                      }}>Restore</button>
-                      <button className="secondary-button compact" type="button" onClick={() => showConnectionString(database)}>Connection</button>
-                      <button className="secondary-button compact" type="button" onClick={() => {
+                      }} />
+                      <IconActionButton label="Connection" onClick={() => showConnectionString(database)} />
+                      <IconActionButton label="More" onClick={() => {
                         setSqlDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}` }));
                         setDatabaseMessage(database.engine === "MSSQL" ? "Use Run SQL to queue a SQL file for this database." : "MySQL import needs the exact legacy import gateway before it can be enabled.");
-                      }}>More</button>
+                      }} />
+                      <IconActionButton label="Delete" onClick={() => deleteDatabase(database)} />
                     </div>
                   </td>
                 </tr>
@@ -3489,13 +3544,13 @@ function EmailsSection({ cpId }) {
 
       <div className="database-toolbar panel-card">
         <div className="database-actions">
-          <button className="primary-button compact" type="button" onClick={() => queueEmailTest("+ Email Domain")}>+ Email Domain</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("+ Corporate Email")}>+ Corporate Email</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("+ Mailbox")}>+ Mailbox</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("Daily Send Limit")}>Daily Send Limit</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("DNS Records", primaryDomain)}>DNS Records</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("Webmail Login", primaryDomain)}>Webmail Login</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueEmailTest("DKIM Setup", primaryDomain)}>DKIM Setup</button>
+          <button className="primary-button compact" type="button" onClick={() => setEmailMessage("Email Domain form is ready below. Hosted email writes call the latest SmarterMail gateway.")}>+ Email Domain</button>
+          <button className="secondary-button compact" type="button" onClick={() => setEmailDomainDraft((draft) => ({ ...draft, type: "Corporate Email" }))}>+ Corporate Email</button>
+          <button className="secondary-button compact" type="button" onClick={() => setEmailMessage("Mailbox draft is ready below. Choose a domain, mailbox name, quota, and mailbox action.")}>+ Mailbox</button>
+          <button className="secondary-button compact" type="button" onClick={() => setEmailMessage("Daily Send Limit uses cp_config_DailySentLimit. Purchase and active-user flows still need the exact masssmtp action ported before write.")}>Daily Send Limit</button>
+          <button className="secondary-button compact" type="button" onClick={() => primaryDomain ? handleEmailDomainAction("DNS", primaryDomain) : setEmailMessage("No email domain selected.")}>DNS Records</button>
+          <button className="secondary-button compact" type="button" onClick={() => primaryDomain ? handleEmailDomainAction("Webmail", primaryDomain) : setEmailMessage("No email domain selected.")}>Webmail Login</button>
+          <button className="secondary-button compact" type="button" onClick={() => setEmailMessage("DKIM values are shown in Mail Setup when present. The SmarterMail DKIM generation SOAP action still needs exact template mapping before write.")}>DKIM Setup</button>
         </div>
         <div className="engine-tabs" aria-label="Email type filter">
           {["All", "Hosted Email", "Corporate Email"].map((type) => (
@@ -3615,12 +3670,12 @@ function EmailsSection({ cpId }) {
         </article>
       </div>
 
-      {isLoadingEmails && <p className="empty-state">Loading email domains from cp_config_EmailDomains...</p>}
+      {isLoadingEmails && <LoadingState label="Loading email domains" />}
       {emailMessage && <p className="sandbox-message">{emailMessage}</p>}
       {emailError && (
         <div className="panel-card dashboard-error-panel">
           <p>{emailError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadEmails}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadEmails} />
         </div>
       )}
       {!isLoadingEmails && !emailError && !visibleDomains.length && (
@@ -3651,9 +3706,7 @@ function EmailsSection({ cpId }) {
               </dl>
               <div className="database-action-row">
                 {["Manage Mailboxes", "Alias", "Forwarding", "Password", "Quota", "DNS", "Webmail", "Delete"].map((action) => (
-                  <button className="secondary-button compact" type="button" key={action} onClick={() => handleEmailDomainAction(action, domain)}>
-                    {action}
-                  </button>
+                  <IconActionButton key={action} label={action} onClick={() => handleEmailDomainAction(action, domain)} />
                 ))}
               </div>
             </article>
@@ -3688,9 +3741,7 @@ function EmailsSection({ cpId }) {
                   <td>
                     <div className="website-action-buttons compact-actions">
                       {["Password", "Quota", "DNS", "Webmail", "Delete"].map((action) => (
-                        <button className="secondary-button compact" type="button" key={action} onClick={() => handleEmailDomainAction(action, domain)}>
-                          {action}
-                        </button>
+                        <IconActionButton key={action} label={action} onClick={() => handleEmailDomainAction(action, domain)} />
                       ))}
                     </div>
                   </td>
@@ -3733,7 +3784,7 @@ function FtpSection({ cpId }) {
   const [isLoadingFtp, setIsLoadingFtp] = useState(true);
   const [ftpError, setFtpError] = useState("");
   const [ftpMessage, setFtpMessage] = useState("");
-  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test", quota: "500", permission: "write" });
+  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test" });
   const [editingFtpLogin, setEditingFtpLogin] = useState("");
   const [isFtpMutating, setIsFtpMutating] = useState(false);
 
@@ -3798,11 +3849,6 @@ function FtpSection({ cpId }) {
     }
   }
 
-  async function queueFtpTest(action, user = null, details = "") {
-    setFtpMessage("");
-    setFtpMessage(details || `${action} is not wired to a legacy bulk source yet. Use the live FTP user actions below.`);
-  }
-
   async function submitFtpDraft(event) {
     event.preventDefault();
     setFtpMessage("");
@@ -3812,8 +3858,8 @@ function FtpSection({ cpId }) {
         login: ftpDraft.login,
         password: ftpDraft.password,
         path: ftpDraft.path,
-        quotaMb: Number(ftpDraft.quota) || 0,
-        permission: ftpDraft.permission
+        quotaMb: 0,
+        permission: "write"
       };
       const result = editingFtpLogin
         ? await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(editingFtpLogin)}`, {
@@ -3835,33 +3881,9 @@ function FtpSection({ cpId }) {
     setFtpDraft({
       login: user.login,
       password: "",
-      path: simplifySitePath(user.rawPath || user.path || "", ftpDashboard?.cpLogin),
-      quota: String(user.quotaMb || 0),
-      permission: String(user.permission || "write").toLowerCase().includes("read") && !String(user.permission || "").toLowerCase().includes("write") ? "read" : "write"
+      path: simplifySitePath(user.rawPath || user.path || "", ftpDashboard?.cpLogin)
     });
-    setFtpMessage("Editing live FTP user. Leave password blank to keep the current password.");
-  }
-
-  async function setFtpUserStatus(user, action) {
-    try {
-      await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(user.login)}/status`, {
-        method: "POST",
-        body: JSON.stringify({ cpId, login: user.login, action })
-      });
-    } catch (error) {
-      setFtpMessage(error.message);
-    }
-  }
-
-  async function resetFtpUserPermissions(user) {
-    try {
-      await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(user.login)}/permissions/reset`, {
-        method: "POST",
-        body: JSON.stringify({ cpId, login: user.login, path: user.rawPath || "" })
-      });
-    } catch (error) {
-      setFtpMessage(error.message);
-    }
+    setFtpMessage("Editing live FTP user. The active Classic ASP edit page only changes the password.");
   }
 
   async function deleteFtpUser(user) {
@@ -3905,14 +3927,8 @@ function FtpSection({ cpId }) {
         <div className="database-actions">
           <button className="primary-button compact" type="button" onClick={() => {
             setEditingFtpLogin("");
-            setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test", quota: "500", permission: "write" });
+            setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test" });
           }}>+ FTP User</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueFtpTest("Import Users")}>Import Users</button>
-          <button className="secondary-button compact" type="button" onClick={() => {
-            const rootUser = users.find((user) => user.isRootUser);
-            if (rootUser) resetFtpUserPermissions(rootUser);
-            else setFtpMessage("Root FTP user was not found.");
-          }}>Reset Root Path</button>
         </div>
       </div>
 
@@ -3920,7 +3936,7 @@ function FtpSection({ cpId }) {
         <div>
           <span className="status-pill blue">FTP User Draft</span>
           <h3>{editingFtpLogin ? `Edit ${displayFtpLogin(editingFtpLogin, ftpDashboard?.cpLogin)}` : "Create FTP User"}</h3>
-          <p>Matches the active Classic ASP DB path. New passwords are paused until encryptpwd and encryptFTPpwd are reproduced exactly.</p>
+          <p>{editingFtpLogin ? "The active Classic ASP ftpedit page exposes password update only." : "Matches the active Classic ASP Add FTP User form: login, password, confirm password, and folder."}</p>
         </div>
         <form className="advance-inline-form" onSubmit={submitFtpDraft}>
           <label>
@@ -3933,35 +3949,24 @@ function FtpSection({ cpId }) {
           </label>
           <label>
             Path
-            <input value={ftpDraft.path} onChange={(event) => setFtpDraft((draft) => ({ ...draft, path: event.target.value }))} />
-          </label>
-          <label>
-            Quota MB
-            <input type="number" min="0" max="10240" value={ftpDraft.quota} onChange={(event) => setFtpDraft((draft) => ({ ...draft, quota: event.target.value }))} />
-          </label>
-          <label>
-            Permission
-            <select value={ftpDraft.permission} onChange={(event) => setFtpDraft((draft) => ({ ...draft, permission: event.target.value }))}>
-              <option value="write">Read / Write</option>
-              <option value="read">Read Only</option>
-            </select>
+            <input value={ftpDraft.path} disabled={!!editingFtpLogin} onChange={(event) => setFtpDraft((draft) => ({ ...draft, path: event.target.value }))} />
           </label>
           <button className="primary-button compact" type="submit" disabled={isFtpMutating}>{editingFtpLogin ? "Save FTP User" : "Create FTP User"}</button>
           {editingFtpLogin && (
             <button className="secondary-button compact" type="button" onClick={() => {
               setEditingFtpLogin("");
-              setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test", quota: "500", permission: "write" });
+              setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test" });
             }}>Cancel</button>
           )}
         </form>
       </article>
 
-      {isLoadingFtp && <p className="empty-state">Loading FTP users from cp_config_FTP...</p>}
+      {isLoadingFtp && <LoadingState label="Loading FTP users" />}
       {ftpMessage && <p className="sandbox-message">{ftpMessage}</p>}
       {ftpError && (
         <div className="panel-card dashboard-error-panel">
           <p>{ftpError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadFtp}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadFtp} />
         </div>
       )}
       {!isLoadingFtp && !ftpError && !users.length && (
@@ -3978,11 +3983,9 @@ function FtpSection({ cpId }) {
             <thead>
               <tr>
                 <th>Login</th>
+                <th>Password</th>
+                <th>Server IP</th>
                 <th>Path</th>
-                <th>Quota</th>
-                <th>Permission</th>
-                <th>Server</th>
-                <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -3996,18 +3999,13 @@ function FtpSection({ cpId }) {
                       {user.isRootUser && <span className="status-pill blue">Root</span>}
                     </span>
                   </td>
-                  <td>{simplifySitePath(user.rawPath || user.path, ftpDashboard?.cpLogin)}</td>
-                  <td>{user.quotaMb > 0 ? `${user.quotaMb} MB` : "Unlimited"}</td>
-                  <td>{user.permission}</td>
+                  <td>********</td>
                   <td>{user.server || "Default FTP server"}</td>
-                  <td><span className="status-pill">{user.status}</span></td>
+                  <td>{simplifySitePath(user.rawPath || user.path, ftpDashboard?.cpLogin)}</td>
                   <td>
                     <div className="website-action-buttons compact-actions">
-                      <button className="secondary-button compact" type="button" onClick={() => editFtpUser(user)}>Edit</button>
-                      <button className="secondary-button compact" type="button" disabled={isFtpMutating} onClick={() => setFtpUserStatus(user, "enable")}>Enable</button>
-                      <button className="secondary-button compact" type="button" disabled={isFtpMutating} onClick={() => setFtpUserStatus(user, "disable")}>Disable</button>
-                      <button className="secondary-button compact" type="button" disabled={isFtpMutating} onClick={() => resetFtpUserPermissions(user)}>Reset</button>
-                      <button className="secondary-button compact danger" type="button" disabled={isFtpMutating || user.isRootUser} onClick={() => deleteFtpUser(user)}>Delete</button>
+                      <IconActionButton label="Edit" onClick={() => editFtpUser(user)} />
+                      <IconActionButton label="Delete" className="secondary-button compact icon-only-button danger" disabled={isFtpMutating || user.isRootUser} onClick={() => deleteFtpUser(user)} />
                     </div>
                   </td>
                 </tr>
@@ -4016,6 +4014,14 @@ function FtpSection({ cpId }) {
           </table>
         </div>
       )}
+
+      <article className="panel-card knowledge-card">
+        <span className="status-pill muted">KB Article</span>
+        <a href="http://www.smarterasp.net/support/kb/c8/ftp.aspx" target="_blank" rel="noreferrer">How to use FTP</a>
+        <a href="http://www.smarterasp.net/support/KB/a7/deploying-visual-studio-2010-web-application-project.aspx" target="_blank" rel="noreferrer">How to Deploy Web Project using Visual Studio + FTP</a>
+        <a href="http://www.smarterasp.net/support/KB/a8/deploying-visual-studio-2010-web-site-project-to.aspx" target="_blank" rel="noreferrer">How to Deploy Web Application using Visual Studio + FTP</a>
+        <a href="http://www.smarterasp.net/support/KB/c34/ftp-program-configuration.aspx" target="_blank" rel="noreferrer">How to Deploy Files using other FTP Tools</a>
+      </article>
 
       <ActivityList jobs={ftpJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent FTP jobs" onRetry={reloadActivity} />
     </section>
@@ -4032,11 +4038,17 @@ function displayFtpLogin(login, cpLogin) {
 
 function FilesSection({ cpId }) {
   const { activity, isLoading, error, reload } = useHostingActivity(cpId);
+  const fileUploadInputRef = useRef(null);
   const [sitesDashboard, setSitesDashboard] = useState(null);
   const [securityDashboard, setSecurityDashboard] = useState(null);
+  const [fileAgentHealth, setFileAgentHealth] = useState(null);
   const [sitesError, setSitesError] = useState("");
   const [filesMessage, setFilesMessage] = useState("");
   const [fileManagerPreview, setFileManagerPreview] = useState(null);
+  const [currentFilePath, setCurrentFilePath] = useState("");
+  const [fileSearch, setFileSearch] = useState("");
+  const [fileEditor, setFileEditor] = useState(null);
+  const [isFileSaving, setIsFileSaving] = useState(false);
   const [protectionDraft, setProtectionDraft] = useState({
     site: "sample.com",
     path: "/www/sample.com",
@@ -4074,6 +4086,10 @@ function FilesSection({ cpId }) {
           }
         })
         .catch(() => {});
+      fetch(hostingApiUrl("/api/hosting/files/agent-health", cpId))
+        .then((response) => response.json().then((healthResult) => ({ response, healthResult })))
+        .then(({ healthResult }) => setFileAgentHealth(healthResult))
+        .catch(() => setFileAgentHealth({ success: false, message: "Unable to reach file-manager agent health check." }));
     } catch {
       setSitesError("Unable to reach site folder service.");
     }
@@ -4086,6 +4102,10 @@ function FilesSection({ cpId }) {
   const siteFolders = (sitesDashboard?.sites ?? []).slice(0, 12);
   const [viewMode, setViewMode] = useSectionViewMode("cp-files", siteFolders.length);
   const securityBySite = new Map((securityDashboard?.siteSecurityRows ?? []).map((row) => [String(row.siteUid), row]));
+  const managerFolders = fileManagerPreview?.folders ?? [];
+  const managerFiles = fileManagerPreview?.files ?? [];
+  const managerItems = [...managerFolders, ...managerFiles];
+  const [managerViewMode, setManagerViewMode] = useSectionViewMode("cp-file-manager", managerItems.length);
 
   async function queueFileTest(action, site = null, details = "") {
     setFilesMessage("");
@@ -4144,15 +4164,33 @@ function FilesSection({ cpId }) {
     }
   }
 
-  async function browseFileManager(path = "") {
+  async function browseFileManager(path = currentFilePath, searchValue = fileSearch) {
     setFilesMessage("");
+    const nextPath = path ?? "";
+    const params = new URLSearchParams();
+    params.set("path", nextPath);
+    if (searchValue) params.set("search", searchValue);
     try {
-      const response = await fetch(hostingApiUrl(`/api/hosting/files/browse?path=${encodeURIComponent(path)}`, cpId));
+      const response = await fetch(hostingApiUrl(`/api/hosting/files/browse?${params.toString()}`, cpId));
       const result = await response.json().catch(() => null);
       setFileManagerPreview(result?.fileManager ?? null);
-      setFilesMessage(result?.message ?? "File manager browse completed.");
+      if (result?.fileManager) {
+        setCurrentFilePath(result.fileManager.relativePath || nextPath);
+      }
+      setFilesMessage(formatFileManagerMessage(result?.message ?? "File manager browse completed."));
     } catch {
       setFilesMessage("Unable to reach file manager API.");
+    }
+  }
+
+  function submitFileSearch(event) {
+    event.preventDefault();
+    browseFileManager(currentFilePath, fileSearch);
+  }
+
+  function openFileManagerItem(item) {
+    if (item?.isFolder) {
+      browseFileManager(item.relativePath || item.name || "");
     }
   }
 
@@ -4174,9 +4212,154 @@ function FilesSection({ cpId }) {
       });
       const result = await response.json().catch(() => null);
       setFileManagerPreview(result?.fileManager ?? null);
-      setFilesMessage(result?.message ?? "File manager action completed.");
+      setFilesMessage(formatFileManagerMessage(result?.message ?? "File manager action completed."));
     } catch {
       setFilesMessage("Unable to reach file manager API.");
+    }
+  }
+
+  async function runFileManagerAction(payload) {
+    const response = await fetch("/api/hosting/files/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cpId, ...payload })
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      throw new Error(formatFileManagerMessage(result?.message ?? "File manager action failed."));
+    }
+    return result;
+  }
+
+  async function readFileForEdit(item) {
+    setFilesMessage("");
+    try {
+      const result = await runFileManagerAction({
+        action: "read-file",
+        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        name: item.name,
+        targetPath: "",
+        targetName: "",
+        overwrite: false
+      });
+      setFileEditor({
+        name: item.name,
+        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        content: result?.fileManager?.preview ?? "",
+        originalContent: result?.fileManager?.preview ?? ""
+      });
+      setFilesMessage(result.message);
+    } catch (error) {
+      setFilesMessage(error.message);
+    }
+  }
+
+  async function downloadFileManagerItem(item) {
+    if (!item || item.isFolder) return;
+    setFilesMessage("");
+    try {
+      const result = await runFileManagerAction({
+        action: "read-file",
+        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        name: item.name,
+        targetPath: "",
+        targetName: "",
+        overwrite: false
+      });
+      const blob = new Blob([result?.fileManager?.preview ?? ""], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = item.name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setFilesMessage("File downloaded.");
+    } catch (error) {
+      setFilesMessage(error.message);
+    }
+  }
+
+  function openUploadPicker() {
+    fileUploadInputRef.current?.click();
+  }
+
+  async function uploadFileManagerItem(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 1048576) {
+      setFilesMessage("Upload is limited to 1 MB text files until binary streaming is wired.");
+      return;
+    }
+
+    setFilesMessage("");
+    try {
+      const content = await file.text();
+      const result = await runFileManagerAction({
+        action: "save-file",
+        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        name: file.name,
+        targetPath: "",
+        targetName: file.name,
+        overwrite: true,
+        content,
+        encoding: ""
+      });
+      setFilesMessage(result.message);
+      await browseFileManager(currentFilePath, fileSearch);
+    } catch (error) {
+      setFilesMessage(error.message);
+    }
+  }
+
+  async function runFileItemAction(action, item) {
+    setFilesMessage("");
+    try {
+      const result = await runFileManagerAction({
+        action,
+        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        name: item.name,
+        targetPath: currentFilePath || fileManagerPreview?.relativePath || "",
+        targetName: action === "zip" ? `${item.name}.zip` : "",
+        overwrite: false
+      });
+      setFileManagerPreview(result?.fileManager ?? fileManagerPreview);
+      setFilesMessage(result.message);
+      if (action === "zip" || action === "unzip") {
+        await reload();
+      } else {
+        await browseFileManager(currentFilePath, fileSearch);
+      }
+    } catch (error) {
+      setFilesMessage(error.message);
+    }
+  }
+
+  async function saveFileEditor(event) {
+    event.preventDefault();
+    if (!fileEditor) return;
+    setIsFileSaving(true);
+    setFilesMessage("");
+    try {
+      const result = await runFileManagerAction({
+        action: "save-file",
+        path: fileEditor.path,
+        name: fileEditor.name,
+        targetPath: "",
+        targetName: fileEditor.name,
+        overwrite: true,
+        content: fileEditor.content,
+        encoding: ""
+      });
+      setFilesMessage(result.message);
+      setFileEditor((editor) => editor ? { ...editor, originalContent: editor.content } : editor);
+      await browseFileManager(fileEditor.path, fileSearch);
+    } catch (error) {
+      setFilesMessage(error.message);
+    } finally {
+      setIsFileSaving(false);
     }
   }
 
@@ -4242,17 +4425,58 @@ function FilesSection({ cpId }) {
         </article>
       )}
 
+      {fileAgentHealth && (
+        <article className="panel-card site-security-summary-card">
+          <div className="database-card-header">
+            <div>
+              <span className={fileAgentHealth.success ? "status-pill" : "status-pill muted"}>
+                {fileAgentHealth.success ? "Agents healthy" : "Agent attention"}
+              </span>
+              <h3>File Manager Agents</h3>
+              <p>{fileAgentHealth.message}</p>
+            </div>
+            <MenuIcon name="server" />
+          </div>
+          <div className="service-status-grid">
+            {[
+              ["Browse", fileAgentHealth.browse],
+              ["Action", fileAgentHealth.action]
+            ].map(([label, agent]) => (
+              <div className="service-status-card" key={label}>
+                <div><span>{label}</span><strong>{agent?.success ? "OK" : "Check"}</strong></div>
+                <p>{agent?.path || "Agent path not available"}</p>
+              </div>
+            ))}
+          </div>
+        </article>
+      )}
+
       <div className="database-toolbar panel-card">
         <div className="database-actions">
-          <button className="primary-button compact" type="button" onClick={() => browseFileManager("")}>Browse Root</button>
-          <button className="secondary-button compact" type="button" onClick={createTestFolder}>New Test Folder</button>
-          {["Upload", "New Folder", "Zip", "Unzip", "Permissions", "Scan Virus", "Lock Site", "Unlock Site", "Raw Logs"].map((action, index) => (
-            <button className="secondary-button compact" type="button" key={action} onClick={() => queueFileTest(action)}>
-              {action}
-            </button>
+          <IconActionButton label="Browse Root" className="primary-button compact icon-only-button" onClick={() => browseFileManager("")} />
+          <IconActionButton label="Parent Folder" disabled={!fileManagerPreview?.parentPath} onClick={() => browseFileManager(fileManagerPreview?.parentPath || "")} />
+          <IconActionButton label="New Folder" onClick={createTestFolder} />
+          <IconActionButton label="Upload" onClick={openUploadPicker} />
+          {["Zip", "Unzip", "Permissions", "Scan Virus", "Lock Site", "Unlock Site", "Raw Logs"].map((action) => (
+            <IconActionButton label={action} key={action} onClick={() => queueFileTest(action)} />
           ))}
+          <input
+            ref={fileUploadInputRef}
+            type="file"
+            className="visually-hidden"
+            onChange={uploadFileManagerItem}
+          />
         </div>
-        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="File folder view mode" />
+        <form className="file-search-form" onSubmit={submitFileSearch}>
+          <MenuIcon name="search" />
+          <input
+            value={fileSearch}
+            onChange={(event) => setFileSearch(event.target.value)}
+            placeholder="Search files..."
+          />
+          <IconActionButton label="Search" className="primary-button compact icon-only-button" type="submit" />
+        </form>
+        <ViewModeToggle viewMode={managerViewMode} onChange={setManagerViewMode} label="File manager view mode" />
       </div>
       {filesMessage && <p className="sandbox-message">{filesMessage}</p>}
 
@@ -4260,19 +4484,142 @@ function FilesSection({ cpId }) {
         <div className="database-card-header">
           <div>
             <span className="status-pill">Root</span>
-            <h3>/www</h3>
-            <p>Remote file browsing, uploads, and edits need the file manager gateway before writes are enabled.</p>
+            <h3>{fileManagerPreview?.relativePath || currentFilePath || "/www"}</h3>
+            <p>Remote browsing and guarded file actions use encrypted JSON agents on the hosting server.</p>
           </div>
           <MenuIcon name="folder" />
         </div>
-        <dl className="card-meta single">
-          <div><dt>Queue Types</dt><dd>zip, Unzip, perm, scanvirus</dd></div>
-          <div><dt>Processing</dt><dd>Legacy worker-compatible workqueue rows</dd></div>
-          <div><dt>Home Root</dt><dd>{fileManagerPreview?.homePath || "Loaded from HOSTING_HOME_ROOT"}</dd></div>
-          <div><dt>Last Gateway</dt><dd>{fileManagerPreview?.url || "Not called yet"}</dd></div>
-        </dl>
+        <div className="file-manager-meta">
+          <span>{managerFolders.length} folders</span>
+          <span>{managerFiles.length} files</span>
+          <span>{fileManagerPreview?.url || "Gateway not called yet"}</span>
+        </div>
+
+        {!fileManagerPreview && (
+          <div className="empty-state file-empty-state">
+            <MenuIcon name="folder-search" />
+            <p>Use the folder icon to browse the hosting root once the server agent is uploaded.</p>
+          </div>
+        )}
+
+        {fileManagerPreview && managerItems.length === 0 && (
+          <div className="empty-state file-empty-state">
+            <MenuIcon name="folder" />
+            <p>No files or folders returned for this path.</p>
+          </div>
+        )}
+
+        {!!managerItems.length && managerViewMode === "cards" && (
+          <div className="file-manager-grid">
+            {managerItems.map((item) => (
+              <article className="file-item-card" key={`${item.type}-${item.relativePath}-${item.name}`}>
+                <button
+                  className="file-item-main"
+                  type="button"
+                  onClick={() => openFileManagerItem(item)}
+                  disabled={!item.isFolder}
+                  title={item.isFolder ? "Open folder" : item.name}
+                >
+                  <MenuIcon name={item.isFolder ? "folder" : "invoice"} />
+                  <span>{item.name}</span>
+                </button>
+                <dl>
+                  <div><dt>Type</dt><dd>{item.isFolder ? "Folder" : item.extension ? `.${item.extension}` : "File"}</dd></div>
+                  <div><dt>Size</dt><dd>{item.isFolder ? "-" : formatFileSize(item.size)}</dd></div>
+                  <div><dt>Modified</dt><dd>{formatDateTime(item.modified)}</dd></div>
+                </dl>
+                <div className="website-action-buttons compact-actions">
+                  {item.isFolder && <IconActionButton label="Open" onClick={() => openFileManagerItem(item)} />}
+                  {!item.isFolder && item.isEditable && <IconActionButton label="Edit" onClick={() => readFileForEdit(item)} />}
+                  {!item.isFolder && item.isEditable && <IconActionButton label="Download" onClick={() => downloadFileManagerItem(item)} />}
+                  <IconActionButton label="Permissions" onClick={() => queueFileTest("Permissions", null, `Permissions for ${item.relativePath}`)} />
+                  <IconActionButton label="Copy" onClick={() => runFileItemAction("copy", item)} />
+                  <IconActionButton label="Move" onClick={() => runFileItemAction("move", item)} />
+                  <IconActionButton label="Zip" onClick={() => runFileItemAction("zip", item)} />
+                  {!item.isFolder && item.extension?.toLowerCase() === "zip" && <IconActionButton label="Unzip" onClick={() => runFileItemAction("unzip", item)} />}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+
+        {!!managerItems.length && managerViewMode === "table" && (
+          <div className="table-wrap file-manager-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Size</th>
+                  <th>Modified</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {managerItems.map((item) => (
+                  <tr key={`${item.type}-${item.relativePath}-${item.name}`}>
+                    <td>
+                      <button
+                        className="table-link-button file-name-button"
+                        type="button"
+                        disabled={!item.isFolder}
+                        onClick={() => openFileManagerItem(item)}
+                        title={item.isFolder ? "Open folder" : item.name}
+                      >
+                        <MenuIcon name={item.isFolder ? "folder" : "invoice"} />
+                        <span>{item.name}</span>
+                      </button>
+                    </td>
+                    <td>{item.isFolder ? "Folder" : item.extension ? `.${item.extension}` : "File"}</td>
+                    <td>{item.isFolder ? "-" : formatFileSize(item.size)}</td>
+                    <td>{formatDateTime(item.modified)}</td>
+                    <td>
+                      <div className="website-action-buttons compact-actions">
+                        {item.isFolder && <IconActionButton label="Open" onClick={() => openFileManagerItem(item)} />}
+                        {!item.isFolder && item.isEditable && <IconActionButton label="Edit" onClick={() => readFileForEdit(item)} />}
+                        {!item.isFolder && item.isEditable && <IconActionButton label="Download" onClick={() => downloadFileManagerItem(item)} />}
+                        <IconActionButton label="Permissions" onClick={() => queueFileTest("Permissions", null, `Permissions for ${item.relativePath}`)} />
+                        <IconActionButton label="Copy" onClick={() => runFileItemAction("copy", item)} />
+                        <IconActionButton label="Move" onClick={() => runFileItemAction("move", item)} />
+                        <IconActionButton label="Zip" onClick={() => runFileItemAction("zip", item)} />
+                        {!item.isFolder && item.extension?.toLowerCase() === "zip" && <IconActionButton label="Unzip" onClick={() => runFileItemAction("unzip", item)} />}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
         {fileManagerPreview?.preview && <pre className="gateway-preview">{fileManagerPreview.preview}</pre>}
       </article>
+
+      {fileEditor && (
+        <article className="panel-card file-editor-card">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill blue">Editor</span>
+              <h3>{fileEditor.name}</h3>
+              <p>{fileEditor.path || "Hosting root"}</p>
+            </div>
+            <IconActionButton label="Close" onClick={() => setFileEditor(null)} />
+          </div>
+          <form className="file-editor-form" onSubmit={saveFileEditor}>
+            <textarea
+              value={fileEditor.content}
+              onChange={(event) => setFileEditor((editor) => editor ? { ...editor, content: event.target.value } : editor)}
+              spellCheck="false"
+            />
+            <div className="file-editor-actions">
+              <span>{fileEditor.content === fileEditor.originalContent ? "No unsaved changes" : "Unsaved changes"}</span>
+              <button className="primary-button compact" disabled={isFileSaving} type="submit">
+                {isFileSaving ? <LoadingIcon label="Saving file" /> : "Save"}
+              </button>
+            </div>
+          </form>
+        </article>
+      )}
 
       <div className="advance-form-grid">
         <article className="panel-card advance-form-card">
@@ -4340,7 +4687,7 @@ function FilesSection({ cpId }) {
       {sitesError && (
         <div className="panel-card dashboard-error-panel">
           <p>{sitesError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadFileSites}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadFileSites} />
         </div>
       )}
 
@@ -4370,7 +4717,11 @@ function FilesSection({ cpId }) {
                 </dl>
                 <div className="database-action-row">
                   {["Open", "Upload", "Permissions", "Lock Site"].map((action) => (
-                    <button className="secondary-button compact" type="button" key={action} onClick={() => queueFileTest(action, site)}>{action}</button>
+                    <IconActionButton
+                      label={action}
+                      key={action}
+                      onClick={() => action === "Open" ? browseFileManager(site.sitePath) : queueFileTest(action, site)}
+                    />
                   ))}
                 </div>
               </article>
@@ -4404,10 +4755,9 @@ function FilesSection({ cpId }) {
                     <td>{locked ? "Locked" : security?.webKnight ? "Firewall on" : "Standard"}</td>
                     <td>
                       <div className="website-action-buttons compact-actions">
+                        <IconActionButton label="Open" onClick={() => browseFileManager(site.sitePath)} />
                         {["Zip", "Unzip", "Permissions", "Scan Virus"].map((action) => (
-                          <button className="secondary-button compact" type="button" key={action} onClick={() => queueFileTest(action, site)}>
-                            {action}
-                          </button>
+                          <IconActionButton label={action} key={action} onClick={() => queueFileTest(action, site)} />
                         ))}
                       </div>
                     </td>
@@ -4424,6 +4774,17 @@ function FilesSection({ cpId }) {
   );
 }
 
+function formatFileManagerMessage(message) {
+  const text = message || "";
+  if (text.includes("Legacy JSON agent rejected the request")) {
+    return "File Manager agent rejected the encrypted request. Upload the latest getFilesFolder.asp/fileManagerAction.asp pair and confirm FILE_MANAGER_ENCRYPT_KEY matches.";
+  }
+  if (text.includes("Legacy agent rejected the request")) {
+    return "Legacy File Manager action was rejected by the hosting server. Upload the latest encrypted fileManagerAction.asp agent.";
+  }
+  return text;
+}
+
 function AppsSection({ cpId }) {
   const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
   const [appsDashboard, setAppsDashboard] = useState(null);
@@ -4432,6 +4793,7 @@ function AppsSection({ cpId }) {
   const [appsMessage, setAppsMessage] = useState("");
   const [previewPluginId, setPreviewPluginId] = useState(null);
   const [appRequirements, setAppRequirements] = useState(null);
+  const [appInstallPlan, setAppInstallPlan] = useState(null);
   const [appSearch, setAppSearch] = useState("");
   const [activeAppType, setActiveAppType] = useState("All");
   const [nodeDraft, setNodeDraft] = useState({
@@ -4487,16 +4849,33 @@ function AppsSection({ cpId }) {
 
   async function createPluginInstallTest(plugin) {
     setAppsMessage("");
+    setAppInstallPlan(null);
     try {
-      const result = await createPanelTestActivity(cpId, {
-        from: `plugin:${plugin.name}`,
-        to: `/www/${plugin.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "app"}`,
-        server: "plugin-installer",
-        note: `Plugin installer gateway required for ${plugin.name} ${plugin.version || ""}`.trim()
+      const response = await fetch(hostingApiUrl("/api/hosting/apps/install", cpId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId,
+          pluginId: plugin.pluginId,
+          siteUid: 0,
+          installPath: "",
+          databaseId: 0,
+          databaseEngine: "",
+          parameters: {}
+        })
       });
-      setAppsMessage(result.message);
-      await loadApps();
-      await reloadActivity();
+      const result = await response.json().catch(() => null);
+      if (result?.plan) {
+        setAppInstallPlan(result.plan);
+        setAppRequirements({
+          plugin: result.plan.plugin,
+          parameters: "",
+          configFiles: [],
+          permissions: [],
+          legacySources: result.plan.legacySources ?? []
+        });
+      }
+      setAppsMessage(result?.message ?? `${plugin.name} install plan could not be loaded.`);
     } catch (error) {
       setAppsMessage(error.message);
     }
@@ -4504,6 +4883,7 @@ function AppsSection({ cpId }) {
 
   async function createPluginRequirementTest(plugin) {
     setAppsMessage("");
+    setAppInstallPlan(null);
     setAppRequirements(null);
     try {
       const response = await fetch(hostingApiUrl(`/api/hosting/apps/${plugin.pluginId}/requirements`, cpId));
@@ -4582,14 +4962,43 @@ function AppsSection({ cpId }) {
         <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="App catalog view mode" />
       </div>
 
-      {isLoadingApps && <p className="empty-state">Loading app catalog...</p>}
+      {isLoadingApps && <LoadingState label="Loading app catalog" />}
       {appsError && (
         <div className="panel-card dashboard-error-panel">
           <p>{appsError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadApps}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadApps} />
         </div>
       )}
       {appsMessage && <p className="sandbox-message">{appsMessage}</p>}
+      {appInstallPlan && (
+        <article className="panel-card app-requirements-panel">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill orange">Install Plan</span>
+              <h3>{appInstallPlan.plugin?.name}</h3>
+              <p>{appInstallPlan.blocker}</p>
+            </div>
+            <button className="secondary-button compact" type="button" onClick={() => setAppInstallPlan(null)}>Close</button>
+          </div>
+          <div className="app-requirement-grid">
+            <div>
+              <strong>Target Path</strong>
+              <code>{appInstallPlan.installPath}</code>
+            </div>
+            <div>
+              <strong>Website</strong>
+              <span>{appInstallPlan.site?.name ?? "Choose during install"}</span>
+            </div>
+            <div>
+              <strong>Database</strong>
+              <span>{appInstallPlan.database ? `${appInstallPlan.database.engine} · ${appInstallPlan.database.name}` : "Not selected"}</span>
+            </div>
+          </div>
+          <ol className="plugin-step-list">
+            {(appInstallPlan.steps ?? []).map((step) => <li key={step}>{step}</li>)}
+          </ol>
+        </article>
+      )}
       {appRequirements && (
         <article className="panel-card app-requirements-panel">
           <div className="database-card-header">
@@ -5017,7 +5426,7 @@ function AdvanceSection({ cpId }) {
           <div><span>Static IPs</span><strong>{runtimeDashboard?.totals?.staticIps ?? 0}</strong></div>
           <div><span>Team Users</span><strong>{runtimeDashboard?.totals?.aliases ?? 0}</strong></div>
         </div>
-        {isLoadingRuntime && <p className="empty-state">Loading runtime inventory...</p>}
+        {isLoadingRuntime && <LoadingState label="Loading runtime inventory" />}
         {runtimeError && <p className="inline-status">{runtimeError}</p>}
         {!!runtimeDashboard?.warnings?.length && (
           <div className="runtime-warning-list">
@@ -5314,12 +5723,12 @@ function useHostingActivity(cpId) {
 }
 
 function ActivityList({ jobs, isLoading, error, emptyTitle, onRetry }) {
-  if (isLoading) return <p className="empty-state">Loading workqueue activity...</p>;
+  if (isLoading) return <LoadingState label="Loading workqueue activity" />;
   if (error) {
     return (
       <div className="panel-card dashboard-error-panel">
         <p>{error}</p>
-        <button className="secondary-button compact" type="button" onClick={onRetry}>Retry</button>
+        <IconActionButton label="Retry" onClick={onRetry} />
       </div>
     );
   }
@@ -5546,6 +5955,224 @@ function buildSecurityRows(mode, securityDashboard) {
   ];
 }
 
+const sslValidityNotice = [
+  "Beginning March 15, 2026, any paid certificate issued on or after that date must comply with the new 200-day maximum validity period.",
+  "Shorter lifespans minimize the window of exposure for compromised keys and keep domain validation data fresh.",
+  "You do not need to purchase a new certificate twice as often. Existing SSL certificates will be reissued for free and reinstalled automatically every 200 days."
+];
+
+const sslKbArticles = [
+  ["How to force HTTPS?", "http://www.smarterasp.net/support/kb/a345/redirect-http-to-https.aspx"],
+  ["How to order new SSL?", "http://www.smarterasp.net/support/kb/a2118/how-to-order-ssl-certificate.aspx"],
+  ["How to import SSL?", "http://www.smarterasp.net/support/kb/a2034/how-to-import-my-ssl-certificate-to-your-web-server.aspx"],
+  ["How to export SSL?", "http://www.smarterasp.net/support/kb/a2036/how-to-export-your-ssl-certificate.aspx"],
+  ["How to install SSL to sub sites?", "http://www.smarterasp.net/support/kb/a2035/how-to-install-your-ssl-m-or-ssl-w-to-your-other-domain-names-or-subdomains.aspx"]
+];
+
+function splitSslList(value) {
+  return String(value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatSslApproverEmails(order) {
+  return [order.email, ...splitSslList(order.dnsApproverEmails)].filter(Boolean);
+}
+
+function sslStatusHint(status) {
+  const normalized = String(status ?? "").toLowerCase();
+  if (normalized === "pending") return "normally within 15 minutes";
+  if (normalized === "invalid") return "validation log available";
+  return "";
+}
+
+function sslOrderActions(order, runAction) {
+  const status = String(order.status ?? "").toLowerCase();
+  const actions = [];
+  if (status === "ordered") {
+    actions.push("Edit Validation Method", "Resend Approver Email");
+  }
+  actions.push("Re-import SSL");
+  if (status === "installed" || status === "completed") {
+    actions.push("Re-install SSL Cert", "Export SSL Cert");
+  }
+  if (String(order.commonName ?? "").includes("*.")) {
+    actions.push("Install to all subdomains");
+  }
+  if (!order.email) {
+    actions.push("Delete SSL");
+  }
+  if (status === "invalid") {
+    actions.unshift("View Free SSL Log");
+  }
+
+  return actions.map((action) => (
+    <IconActionButton
+      key={`${order.id}-${action}`}
+      label={action}
+      onClick={() => runAction(action, order)}
+    />
+  ));
+}
+
+function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServiceAction, setSslDraft }) {
+  const sslOrders = securityDashboard?.sslOrders ?? [];
+  const freeSslRows = securityDashboard?.freeSslRows ?? [];
+  const firstDomain = actionableDomains[0] || null;
+
+  function runSslOrderAction(action, order) {
+    runDomainServiceAction("ssl", action, firstDomain, {
+      domain: order.commonName || firstDomain?.label || "",
+      sslOrderId: order.id,
+      certificateId: order.certificateId,
+      certificateType: order.buyYears ? "Paid SSL" : "Free SSL",
+      approverEmail: order.email || "",
+      action
+    });
+  }
+
+  function chooseSslWorkflow(action) {
+    setSslDraft((draft) => ({
+      ...draft,
+      action,
+      domain: draft.domain || firstDomain?.label || "",
+      approverEmail: draft.approverEmail || (firstDomain ? `admin@${firstDomain.label}` : "")
+    }));
+    runDomainServiceAction("ssl", action, firstDomain, {
+      domain: firstDomain?.label || "",
+      action
+    });
+  }
+
+  return (
+    <>
+      <article className="panel-card ssl-legacy-notice">
+        <div>
+          <span className="status-pill warning">SSL List</span>
+          <h3>SSL Validity Notice</h3>
+          {sslValidityNotice.map((line) => <p key={line}>{line}</p>)}
+        </div>
+      </article>
+
+      <div className="database-toolbar panel-card ssl-legacy-actions">
+        <div className="database-actions">
+          <button className="secondary-button compact" type="button" onClick={() => chooseSslWorkflow("CSR Request")}>
+            <MenuIcon name="invoice" /> CSR Request
+          </button>
+          <button className="primary-button compact" type="button" onClick={() => chooseSslWorkflow("Request Free SSL")}>
+            <MenuIcon name="ssl" /> Request Free SSL
+          </button>
+          <a className="primary-button compact success-link-button" href="/account/addon_purchase_special?cat=SSL">
+            <MenuIcon name="order" /> Buy SSL
+          </a>
+          <button className="secondary-button compact" type="button" onClick={() => chooseSslWorkflow("Import SSL")}>
+            <MenuIcon name="upload" /> Import SSL
+          </button>
+        </div>
+      </div>
+
+      <section className="runtime-row-section ssl-legacy-table-section">
+        <h4>SSL Certificates</h4>
+        {!sslOrders.length ? (
+          <p className="runtime-empty">No items</p>
+        ) : (
+          <div className="table-wrap website-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Common Name</th>
+                  <th>Order Date</th>
+                  <th>Status</th>
+                  <th>Approver Email</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sslOrders.map((order) => {
+                  const otherDomains = splitSslList(order.dnsNames);
+                  const approverEmails = formatSslApproverEmails(order);
+                  const hint = sslStatusHint(order.status);
+                  return (
+                    <tr key={`ssl-order-${order.id}`}>
+                      <td>
+                        <div className="ssl-common-name-cell">
+                          <strong>{order.commonName || `SSL #${order.id}`}</strong>
+                          {otherDomains.map((domain) => <span key={`${order.id}-${domain}`}>{domain}</span>)}
+                        </div>
+                      </td>
+                      <td>{order.createDate ? formatDateTime(order.createDate) : "-"}</td>
+                      <td>
+                        <span className={String(order.status).toLowerCase() === "invalid" ? "status-pill warning" : "status-pill muted"}>{order.status || "SSL"}</span>
+                        {hint && <small className="ssl-status-hint">{hint}</small>}
+                      </td>
+                      <td>
+                        {approverEmails.length ? (
+                          <div className="ssl-email-list">
+                            {approverEmails.map((email) => <span key={`${order.id}-${email}`}>{email}</span>)}
+                          </div>
+                        ) : "-"}
+                        {String(order.status).toLowerCase() === "ordered" && (
+                          <button className="text-link-button" type="button" onClick={() => runSslOrderAction("Resend Approver Email", order)}>
+                            Resend Approver Email
+                          </button>
+                        )}
+                      </td>
+                      <td>
+                        <div className="website-action-buttons compact-actions">
+                          {sslOrderActions(order, runSslOrderAction)}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="runtime-row-section">
+        <h4>Free SSL</h4>
+        {!freeSslRows.length ? (
+          <p className="runtime-empty">No Let's SSL rows found for this hosting plan.</p>
+        ) : (
+          <div className="runtime-row-grid">
+            {freeSslRows.slice(0, 12).map((row) => (
+              <article className="runtime-row-card" key={`free-ssl-${row.id}`}>
+                <div>
+                  <span className="status-pill muted">{row.status || "Free SSL"}</span>
+                  <strong>{row.domain || `Free SSL #${row.id}`}</strong>
+                  <p>{row.lastUpdate ? `Updated ${formatDateTime(row.lastUpdate)}` : "Let's SSL"}</p>
+                </div>
+                <dl>
+                  <div><dt>Row ID</dt><dd>{row.id}</dd></div>
+                  <div><dt>Created</dt><dd>{row.createDate ? formatDateTime(row.createDate) : "-"}</dd></div>
+                  <div><dt>Updated</dt><dd>{row.lastUpdate ? formatDateTime(row.lastUpdate) : "-"}</dd></div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <article className="panel-card ssl-kb-card">
+        <div>
+          <span className="status-pill blue">Tips</span>
+          <h3>Order Status and FAQs</h3>
+        </div>
+        <div className="kb-link-list">
+          {sslKbArticles.map(([label, href]) => (
+            <a href={href} target="_blank" rel="noreferrer" key={href}>
+              <span>[KB Article]</span> {label}
+            </a>
+          ))}
+        </div>
+      </article>
+    </>
+  );
+}
+
 function DomainServicesSection({ mode, cpId }) {
   const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
   const [sitesDashboard, setSitesDashboard] = useState(null);
@@ -5560,8 +6187,10 @@ function DomainServicesSection({ mode, cpId }) {
     host: "@",
     type: "A",
     value: "208.98.35.146",
-    ttl: "3600",
-    priority: "10"
+    ttl: "300",
+    priority: "10",
+    weight: "1",
+    port: "443"
   });
   const [sslDraft, setSslDraft] = useState({
     domain: "sample.com",
@@ -5572,8 +6201,7 @@ function DomainServicesSection({ mode, cpId }) {
   const [cdnDraft, setCdnDraft] = useState({
     domain: "sample.com",
     mode: "Enable CDN",
-    sslMode: "Full",
-    redirectWww: true
+    sslMode: "Full"
   });
 
   async function loadDomainServices() {
@@ -5637,8 +6265,8 @@ function DomainServicesSection({ mode, cpId }) {
     dns: {
       title: "DNS",
       label: "Live DNS",
-      description: "Mapped domains and safe DNS record previews. Publishing waits for the exact DNS gateway port.",
-      actions: ["Preview Records", "Add A Record", "Add CNAME", "Add MX", "Import Zone", "Scan Records", "Publish DNS"],
+      description: "DNS record add/edit/delete flow from cp/dns/editdns.asp. Publishing waits for the exact DNS gateway functions.",
+      actions: ["Add Record"],
       statOne: "Domains",
       statTwo: "Default Domains",
       statThree: "Sites"
@@ -5646,8 +6274,8 @@ function DomainServicesSection({ mode, cpId }) {
     cdn: {
       title: "CDN",
       label: "Live CDN",
-      description: "Cloudflare/CDN readiness from mapped hosting domains. Live changes call the legacy shared API only when the exact command can be built.",
-      actions: ["Create Tenant", "Invite User", "Add Zone", "Enable CDN", "Disable CDN", "Purge Cache", "SSL Mode", "WWW Redirect"],
+      description: "Cloudflare tenant and per-domain CDN controls from cloudflare_tenant.asp.",
+      actions: ["Enable CDN", "Disable CDN", "Purge Cache", "Resend Invite"],
       statOne: "Domains",
       statTwo: "CDN Enabled",
       statThree: "Sites"
@@ -5655,8 +6283,8 @@ function DomainServicesSection({ mode, cpId }) {
     ssl: {
       title: "SSL",
       label: "Live SSL",
-      description: "SSL binding inventory from mapped domains. Free SSL maps to the latest freessl.asp gateway; other certificate flows stay blocked until exact parity is ported.",
-      actions: ["Free SSL", "Import SSL", "Install Certificate", "Reinstall", "Approver Email", "Renew SSL", "Delete SSL"],
+      description: "SSL certificate inventory, free SSL requests, imports, install actions, and SSL order guidance from the legacy SSL manager.",
+      actions: ["CSR Request", "Request Free SSL", "Buy SSL", "Import SSL"],
       statOne: "Domains",
       statTwo: "SSL Ready",
       statThree: "Sites"
@@ -5735,7 +6363,7 @@ function DomainServicesSection({ mode, cpId }) {
 
   function submitDnsDraft(event) {
     event.preventDefault();
-    const ttl = Math.max(300, Math.min(86400, Number(dnsDraft.ttl) || 3600));
+    const ttl = Math.max(300, Math.min(86400, Number(dnsDraft.ttl) || 300));
     runDomainServiceAction("dns", `${dnsDraft.type} Record`, selectedDnsDomain, { ...dnsDraft, ttl: String(ttl) });
   }
 
@@ -5771,16 +6399,13 @@ function DomainServicesSection({ mode, cpId }) {
         <RefreshButton onClick={refreshDomainServiceSection} />
       </article>
 
-      <div className="database-toolbar panel-card">
+      {mode !== "ssl" && <div className="database-toolbar panel-card">
         <div className="database-actions">
-          {modeCopy.actions.map((action, index) => (
-            <button className={index === 0 ? "primary-button compact" : "secondary-button compact"} type="button" key={action} onClick={() => runDomainServiceAction(mode, action, actionableDomains[0] || null)}>
-              {action}
-            </button>
-          ))}
+          {mode === "dns" && <span className="inline-status">Add A, AAAA, CNAME, MX, SPF/TXT, and SRV records just like the old DNS editor.</span>}
+          {mode === "cdn" && <span className="inline-status">Use the per-domain table actions below. Tenant enable/resend invite follows the old Cloudflare tenant page.</span>}
         </div>
         <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label={`${modeCopy.title} view mode`} />
-      </div>
+      </div>}
 
       {mode === "dns" && (
         <article className="panel-card dns-record-draft-card">
@@ -5810,7 +6435,7 @@ function DomainServicesSection({ mode, cpId }) {
                 <option value="AAAA">AAAA</option>
                 <option value="CNAME">CNAME</option>
                 <option value="MX">MX</option>
-                <option value="TXT">TXT</option>
+                <option value="TXT">SPF/TXT</option>
                 <option value="SRV">SRV</option>
               </select>
             </label>
@@ -5828,8 +6453,24 @@ function DomainServicesSection({ mode, cpId }) {
                 <input type="number" min="0" max="100" value={dnsDraft.priority} onChange={(event) => setDnsDraft((draft) => ({ ...draft, priority: event.target.value }))} />
               </label>
             )}
+            {dnsDraft.type === "SRV" && (
+              <>
+                <label>
+                  Weight
+                  <input type="number" min="0" max="100" value={dnsDraft.weight} onChange={(event) => setDnsDraft((draft) => ({ ...draft, weight: event.target.value }))} />
+                </label>
+                <label>
+                  Port
+                  <input type="number" min="1" max="65535" value={dnsDraft.port} onChange={(event) => setDnsDraft((draft) => ({ ...draft, port: event.target.value }))} />
+                </label>
+              </>
+            )}
             <button className="primary-button compact" type="submit">Preview DNS</button>
           </form>
+          <div className="dns-example-panel">
+            <span className="status-pill muted">Example</span>
+            <p>{dnsRecordExample(dnsDraft.type)}</p>
+          </div>
         </article>
       )}
 
@@ -5837,9 +6478,9 @@ function DomainServicesSection({ mode, cpId }) {
         <article className="panel-card dns-record-draft-card">
           <div className="database-card-header">
             <div>
-              <span className="status-pill blue">SSL Draft</span>
+              <span className="status-pill blue">SSL Workflow</span>
               <h3>Certificate Workflow</h3>
-              <p>Needs the SSL gateway for free SSL, import, install, approver email, renewal, and delete requests.</p>
+              <p>Use the SSL List below for certificate rows and row actions. Write actions remain guarded until each exact legacy SSL gateway path is enabled.</p>
             </div>
             <MenuIcon name="ssl" />
           </div>
@@ -5880,6 +6521,15 @@ function DomainServicesSection({ mode, cpId }) {
         </article>
       )}
 
+      {mode === "ssl" && (
+        <SslLegacyContent
+          securityDashboard={securityDashboard}
+          actionableDomains={actionableDomains}
+          runDomainServiceAction={runDomainServiceAction}
+          setSslDraft={setSslDraft}
+        />
+      )}
+
       {mode === "cdn" && (
         <article className="panel-card dns-record-draft-card">
           <div className="database-card-header">
@@ -5900,34 +6550,34 @@ function DomainServicesSection({ mode, cpId }) {
             <label>
               Mode
               <select value={cdnDraft.mode} onChange={(event) => setCdnDraft((draft) => ({ ...draft, mode: event.target.value }))}>
-                <option>Create Tenant</option>
-                <option>Invite User</option>
-                <option>Add Zone</option>
                 <option>Enable CDN</option>
                 <option>Disable CDN</option>
                 <option>Purge Cache</option>
-                <option>Set SSL Mode</option>
+                <option>Resend Invite</option>
               </select>
-            </label>
-            <label>
-              SSL Mode
-              <select value={cdnDraft.sslMode} onChange={(event) => setCdnDraft((draft) => ({ ...draft, sslMode: event.target.value }))}>
-                <option>Flexible</option>
-                <option>Full</option>
-                <option>Full Strict</option>
-              </select>
-            </label>
-            <label className="checkbox-line">
-              <input type="checkbox" checked={cdnDraft.redirectWww} onChange={(event) => setCdnDraft((draft) => ({ ...draft, redirectWww: event.target.checked }))} />
-              Redirect non-www to www
             </label>
             <button className="primary-button compact" type="submit">Run CDN Action</button>
           </form>
         </article>
       )}
+      {mode === "dns" && (
+        <article className="panel-card knowledge-card">
+          <span className="status-pill muted">KB Article</span>
+          <a href="http://www.smarterasp.net/support/kb/a1544/how-to-set-mx-records-for-google-mail.aspx" target="_blank" rel="noreferrer">How to set MX records for Google Mail</a>
+        </article>
+      )}
+      {mode === "cdn" && (
+        <article className="panel-card knowledge-card">
+          <span className="status-pill muted">KB Article</span>
+          <a href="http://www.smarterasp.net/support/KB/a1688/how-do-i-test-if-my-domain-name-is-now-on-cloudflare.aspx" target="_blank" rel="noreferrer">How do I test if my domain name is now on Cloudflare?</a>
+          <a href="http://www.smarterasp.net/support/kb/a300/301-redirect-www-redirect-domain-redirect.aspx" target="_blank" rel="noreferrer">How do I redirect all requests from non-www to www domain?</a>
+          <a href="http://www.smarterasp.net/support/kb/a1691/how-do-i-add-ssl-to-my-cdn.aspx" target="_blank" rel="noreferrer">How do I activate free SSL from CloudFlare?</a>
+          <a href="http://www.smarterasp.net/support/kb/a345/redirect-http-to-https.aspx" target="_blank" rel="noreferrer">How do I force using https?</a>
+        </article>
+      )}
 
-      {isLoadingDomains && <p className="empty-state">Loading mapped domains from cp_config_Domains...</p>}
-      {isLoadingSecurity && <p className="empty-state">Loading {mode.toUpperCase()} legacy inventory...</p>}
+      {isLoadingDomains && <LoadingState label="Loading mapped domains" />}
+      {isLoadingSecurity && <LoadingState label={`Loading ${mode.toUpperCase()} legacy inventory`} />}
       {domainMessage && <p className="sandbox-message">{domainMessage}</p>}
       {serviceResult?.details?.records?.length > 0 && (
         <RuntimeRows
@@ -5963,7 +6613,7 @@ function DomainServicesSection({ mode, cpId }) {
       {domainError && (
         <div className="panel-card dashboard-error-panel">
           <p>{domainError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadDomainServices}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadDomainServices} />
         </div>
       )}
       {!isLoadingDomains && !domainError && !domains.length && (
@@ -5978,7 +6628,7 @@ function DomainServicesSection({ mode, cpId }) {
           {securityDashboard.warnings.map((warning) => <p key={warning}>{warning}</p>)}
         </div>
       )}
-      {securityRows.map((section) => (
+      {mode !== "ssl" && securityRows.map((section) => (
         <RuntimeRows key={section.title} title={section.title} rows={section.rows} emptyText={section.emptyText} />
       ))}
 
@@ -6003,8 +6653,8 @@ function DomainServicesSection({ mode, cpId }) {
                 <div><dt>SSL</dt><dd>{domain.ssl ? "Enabled" : "Pending"}</dd></div>
               </dl>
               <div className="database-action-row">
-                {modeCopy.actions.slice(0, 3).map((action) => (
-                  <button className="secondary-button compact" type="button" key={action} disabled={isTemporaryHostingDomain(domain.label)} onClick={() => runDomainServiceAction(mode, action, domain)}>{action}</button>
+                {domainServiceRowActions(mode, domain).map((action) => (
+                  <IconActionButton label={action} key={action} disabled={isTemporaryHostingDomain(domain.label)} onClick={() => runDomainServiceAction(mode, action, domain)} />
                 ))}
               </div>
             </article>
@@ -6036,10 +6686,8 @@ function DomainServicesSection({ mode, cpId }) {
                   <td>{domain.ssl ? "Enabled" : "Pending"}</td>
                   <td>
                     <div className="website-action-buttons compact-actions">
-                      {modeCopy.actions.slice(0, 3).map((action) => (
-                        <button className="secondary-button compact" type="button" key={action} disabled={isTemporaryHostingDomain(domain.label)} onClick={() => runDomainServiceAction(mode, action, domain)}>
-                          {action}
-                        </button>
+                      {domainServiceRowActions(mode, domain).map((action) => (
+                        <IconActionButton label={action} key={action} disabled={isTemporaryHostingDomain(domain.label)} onClick={() => runDomainServiceAction(mode, action, domain)} />
                       ))}
                     </div>
                   </td>
@@ -6054,8 +6702,207 @@ function DomainServicesSection({ mode, cpId }) {
   );
 }
 
+function domainServiceRowActions(mode, domain) {
+  if (mode === "dns") {
+    return ["Add Record"];
+  }
+
+  if (mode === "cdn") {
+    return domain?.cdn ? ["Disable CDN", "Purge Cache"] : ["Enable CDN"];
+  }
+
+  return ["CSR Request", "Request Free SSL", "Import SSL"];
+}
+
+function dnsRecordExample(type) {
+  switch (type) {
+    case "AAAA":
+      return "Name: blog, Address: 2001:0db8:85a3:0000:0000:8a2e:0370:7334";
+    case "CNAME":
+      return "Name: blog, Address: www.google.com";
+    case "MX":
+      return "Address: igw5002.site4now.net, Priority: 10";
+    case "TXT":
+      return "SPF: v=spf1 a mx include:_spf.site4now.net -all; DMARC: v=DMARC1; p=none";
+    case "SRV":
+      return "Name: _sip._tls, Address: sipdir.online.lync.com, Priority: 10, Weight: 1, Port: 443";
+    case "A":
+    default:
+      return "Name: blog, Address: 123.123.123.123";
+  }
+}
+
+function LoadingIcon({ label = "Loading" }) {
+  return (
+    <span className="loading-icon" role="status" aria-label={label} title={label}>
+      <span aria-hidden="true" />
+    </span>
+  );
+}
+
+function LoadingState({ label = "Loading" }) {
+  return (
+    <p className="empty-state loading-state">
+      <LoadingIcon label={label} />
+    </p>
+  );
+}
+
+function IconActionButton({ label, onClick, disabled = false, className = "secondary-button compact icon-only-button", type = "button" }) {
+  return (
+    <button
+      aria-label={label}
+      className={className}
+      disabled={disabled}
+      onClick={onClick}
+      title={label}
+      type={type}
+    >
+      <MenuIcon name={iconForAction(label)} />
+    </button>
+  );
+}
+
 function MenuIcon({ name }) {
   const icons = {
+    search: (
+      <>
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m15.5 15.5 4 4" />
+      </>
+    ),
+    menu: (
+      <>
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </>
+    ),
+    copy: (
+      <>
+        <rect x="8" y="8" width="11" height="11" rx="2" />
+        <rect x="5" y="5" width="11" height="11" rx="2" />
+      </>
+    ),
+    edit: (
+      <>
+        <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" />
+        <path d="m13.5 7.5 3 3" />
+      </>
+    ),
+    open: (
+      <>
+        <path d="M8 7H5.5A1.5 1.5 0 0 0 4 8.5v10A1.5 1.5 0 0 0 5.5 20h10a1.5 1.5 0 0 0 1.5-1.5V16" />
+        <path d="M13 4h7v7M20 4l-9 9" />
+      </>
+    ),
+    upload: (
+      <>
+        <path d="M12 16V4" />
+        <path d="m8 8 4-4 4 4" />
+        <path d="M5 16v3h14v-3" />
+      </>
+    ),
+    download: (
+      <>
+        <path d="M12 4v12" />
+        <path d="m8 12 4 4 4-4" />
+        <path d="M5 16v3h14v-3" />
+      </>
+    ),
+    zip: (
+      <>
+        <path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5Z" />
+        <path d="M14 3.5V8h4M10 7h2M12 9h2M10 11h2M12 13h2M10 15h2" />
+      </>
+    ),
+    unzip: (
+      <>
+        <path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5Z" />
+        <path d="M14 3.5V8h4M10 7h2M12 9h2M10 11h2M9 16h6M12 13v6" />
+      </>
+    ),
+    permissions: (
+      <>
+        <rect x="5" y="10" width="14" height="10" rx="2" />
+        <path d="M8 10V7.5a4 4 0 0 1 7.5-1.9M12 14v2" />
+      </>
+    ),
+    lock: (
+      <>
+        <rect x="5" y="10" width="14" height="10" rx="2" />
+        <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" />
+      </>
+    ),
+    unlock: (
+      <>
+        <rect x="5" y="10" width="14" height="10" rx="2" />
+        <path d="M15.5 10V7.5a3.5 3.5 0 0 0-6.6-1.6" />
+      </>
+    ),
+    virus: (
+      <>
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3M6 6l2.1 2.1M15.9 15.9 18 18M18 6l-2.1 2.1M8.1 15.9 6 18" />
+      </>
+    ),
+    "new-folder": (
+      <>
+        <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5V17A2.5 2.5 0 0 1 18 19.5H6A2.5 2.5 0 0 1 3.5 17Z" />
+        <path d="M12 10.5v6M9 13.5h6" />
+      </>
+    ),
+    "folder-search": (
+      <>
+        <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5V12" />
+        <path d="M4 10h10" />
+        <circle cx="15" cy="16" r="3.2" />
+        <path d="m17.4 18.4 2.1 2.1" />
+      </>
+    ),
+    "website-plus": (
+      <>
+        <rect x="3.5" y="5" width="17" height="14" rx="2" />
+        <path d="M3.5 9h17M15 12v5M12.5 14.5h5" />
+      </>
+    ),
+    backup: (
+      <>
+        <path d="M20 13a6 6 0 0 0-11.5-2.4A4.5 4.5 0 0 0 5 19h13" />
+        <path d="M12 13v5M9.5 15.5 12 13l2.5 2.5" />
+      </>
+    ),
+    invoice: (
+      <>
+        <path d="M7 4h10a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2-2-1.4V6a2 2 0 0 1 2-2Z" />
+        <path d="M8 9h8M8 13h8M8 17h4" />
+      </>
+    ),
+    retry: (
+      <>
+        <path d="M20 7v5h-5" />
+        <path d="M20 12a8 8 0 1 1-2.35-5.65L20 8.7" />
+      </>
+    ),
+    renew: (
+      <>
+        <path d="M20 6v5h-5" />
+        <path d="M4 18v-5h5" />
+        <path d="M18.1 9A7 7 0 0 0 6.3 6.4L4 8.8" />
+        <path d="M5.9 15A7 7 0 0 0 17.7 17.6L20 15.2" />
+      </>
+    ),
+    reset: (
+      <>
+        <path d="M4 6v5h5" />
+        <path d="M4 11a8 8 0 1 0 2.35-5.65L4 7.7" />
+      </>
+    ),
+    "power-off": (
+      <>
+        <path d="M12 4v5" />
+        <path d="M8 6.5a7 7 0 1 0 8 0" />
+        <path d="M4 4l16 16" />
+      </>
+    ),
     server: (
       <>
         <rect x="3.5" y="4" width="17" height="6" rx="1.5" />
@@ -6631,7 +7478,7 @@ function NewOrderSection({ onChangeSection }) {
                   onChange={(event) => setTransferDomain(event.target.value)}
                 />
                 <button className="primary-button compact" type="button" disabled={isTransferBusy} onClick={createTransferCheckout}>
-                  {isTransferBusy ? "Creating..." : "Create Checkout"}
+                  {isTransferBusy ? <LoadingIcon label="Creating checkout" /> : "Create Checkout"}
                 </button>
               </div>
               <label className="new-order-checkbox">
@@ -6643,7 +7490,7 @@ function NewOrderSection({ onChangeSection }) {
 
           {activeOption.catalog && (
             <>
-              {isLoading && <p className="inline-status">Loading live catalog...</p>}
+              {isLoading && <LoadingState label="Loading live catalog" />}
               {message && <p className="inline-status">{message}</p>}
               {!isLoading && !message && catalog?.products?.length === 0 && (
                 <p className="inline-status">No active products were found for this legacy catalog.</p>
@@ -6679,7 +7526,7 @@ function NewOrderSection({ onChangeSection }) {
                           disabled={!selectedPrice || busyProductId === product.productId}
                           onClick={() => createNewOrder(product)}
                         >
-                          {busyProductId === product.productId ? "Creating..." : "Create Checkout"}
+                          {busyProductId === product.productId ? <LoadingIcon label="Creating checkout" /> : "Create Checkout"}
                         </button>
                       </div>
                     </article>
@@ -6771,7 +7618,7 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
           <span className="status-pill blue">Live account data</span>
           <h2>{dashboard?.customer?.login ?? "Account"}</h2>
           <p>
-            Customer ID {dashboard?.customer?.customerId ?? "loading"} · {dashboard?.customer?.customerType ?? "loading"}
+            Customer ID {dashboard?.customer?.customerId ?? <LoadingIcon label="Loading customer ID" />} · {dashboard?.customer?.customerType ?? <LoadingIcon label="Loading customer type" />}
           </p>
         </div>
         <div className="account-summary-stats">
@@ -6792,7 +7639,7 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
       {dashboardError && (
         <article className="panel-card dashboard-error-panel">
           <p>{dashboardError}</p>
-          <button className="secondary-button compact" type="button" onClick={onReloadDashboard}>Retry</button>
+          <IconActionButton label="Retry" onClick={onReloadDashboard} />
         </article>
       )}
 
@@ -6800,10 +7647,10 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
         <div className="panel-card urgent-panel">
           <div className="renewal-panel-header">
             <h2>Urgent Notices</h2>
-            <span>{isDashboardLoading ? "Loading" : `${urgentLogs.length} items`}</span>
+            <span>{isDashboardLoading ? <LoadingIcon label="Loading urgent notices" /> : `${urgentLogs.length} items`}</span>
           </div>
           <div className="urgent-list">
-            {isDashboardLoading && <p className="empty-state">Loading urgent notices...</p>}
+            {isDashboardLoading && <LoadingState label="Loading urgent notices" />}
             {!isDashboardLoading && urgentLogs.map((log) => (
               <article className="urgent-item" key={log.id}>
                 <div>
@@ -6816,7 +7663,7 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                   disabled={urgentBusyId !== null}
                   onClick={() => hideUrgentLog(log.id)}
                 >
-                  {urgentBusyId === log.id ? "Hiding..." : "Dismiss"}
+                  {urgentBusyId === log.id ? <LoadingIcon label="Hiding urgent notice" /> : <MenuIcon name="x" />}
                 </button>
               </article>
             ))}
@@ -6828,10 +7675,10 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
       <div className="panel-card renewal-panel">
         <div className="renewal-panel-header">
           <h2>Renewal Notice</h2>
-          <span>{isDashboardLoading ? "Loading" : `${notices.length} items`}</span>
+          <span>{isDashboardLoading ? <LoadingIcon label="Loading renewal notices" /> : `${notices.length} items`}</span>
         </div>
         <div className="renewal-list">
-          {isDashboardLoading && <p className="empty-state">Loading renewal notices...</p>}
+          {isDashboardLoading && <LoadingState label="Loading renewal notices" />}
           {!isDashboardLoading && !notices.length && <p className="empty-state">No renewal notices found for this account.</p>}
           {notices.map((notice) => (
             <article className="renewal-item" key={notice.name}>
@@ -6851,7 +7698,7 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                   disabled={renewalBusyId !== null}
                   onClick={() => loadHostingRenewalPreview(notice)}
                 >
-                  {renewalBusyId === notice.clientProductId ? "Checking..." : "Renew"}
+                  {renewalBusyId === notice.clientProductId ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="renew" />}
                 </button>
               </div>
             </article>
@@ -6864,8 +7711,8 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
       <div className="card-grid">
         {isDashboardLoading && (
           <article className="service-card">
-            <span className="status-pill blue">Loading</span>
-            <h2>Loading hosting plans...</h2>
+            <span className="status-pill blue"><LoadingIcon label="Loading hosting plans" /></span>
+            <h2><LoadingIcon label="Loading hosting plans" /></h2>
             <p>Pulling your hosting accounts from ehbconfig.</p>
           </article>
         )}
@@ -6900,7 +7747,7 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                   name: account.cpLogin
                 })}
               >
-                {renewalBusyId === account.clientProductId ? "Checking..." : "Renew"}
+                {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="renew" />}
               </button>
               <button className="primary-button" type="button" onClick={onOpenNewOrder}>
                 Upgrade
@@ -6934,11 +7781,30 @@ function formatDate(value) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+function addYears(date, years) {
+  const copy = new Date(date.getTime());
+  copy.setFullYear(copy.getFullYear() + years);
+  return copy;
+}
+
+function formatDateForInput(date) {
+  return date.toISOString().slice(0, 10);
+}
+
 function formatDateTime(value) {
   if (!value) return "Not available";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function formatFileSize(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const amount = bytes / 1024 ** index;
+  return `${amount >= 10 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
 }
 
 function cleanLegacyText(value) {
@@ -7012,6 +7878,10 @@ function DomainSection() {
   const [isDomainSearching, setIsDomainSearching] = useState(false);
   const [isDomainCheckingOut, setIsDomainCheckingOut] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState(null);
+  const [selectedDomainProfile, setSelectedDomainProfile] = useState(null);
+  const [domainProfileError, setDomainProfileError] = useState("");
+  const [isLoadingDomainProfile, setIsLoadingDomainProfile] = useState(false);
+  const [domainPanelView, setDomainPanelView] = useState("list");
   const [domainServiceStatus, setDomainServiceStatus] = useState(null);
   const [domainRenewalPreview, setDomainRenewalPreview] = useState(null);
   const [domainActionMessage, setDomainActionMessage] = useState("");
@@ -7047,6 +7917,43 @@ function DomainSection() {
     loadAccountDomains();
     loadDomainServiceStatus();
   }, []);
+
+  useEffect(() => {
+    if (!selectedDomain?.id) {
+      setSelectedDomainProfile(null);
+      setDomainProfileError("");
+      return;
+    }
+
+    let isCurrent = true;
+    async function loadDomainProfile() {
+      setIsLoadingDomainProfile(true);
+      setDomainProfileError("");
+      try {
+        const response = await fetch(`/api/account/domains/${selectedDomain.id}/profile`);
+        const result = await response.json().catch(() => null);
+        if (!isCurrent) return;
+        if (!response.ok || !result?.success) {
+          setSelectedDomainProfile(null);
+          setDomainProfileError(result?.message ?? "Unable to load domain profile.");
+          return;
+        }
+        setSelectedDomainProfile(result.profile);
+      } catch {
+        if (isCurrent) {
+          setSelectedDomainProfile(null);
+          setDomainProfileError("Unable to reach domain profile service.");
+        }
+      } finally {
+        if (isCurrent) setIsLoadingDomainProfile(false);
+      }
+    }
+
+    loadDomainProfile();
+    return () => {
+      isCurrent = false;
+    };
+  }, [selectedDomain?.id]);
 
   async function loadDomainServiceStatus() {
     try {
@@ -7203,14 +8110,15 @@ function DomainSection() {
     }
   }
 
-  async function renewSelectedDomain() {
-    if (!selectedDomain?.clientProductId) return;
+  async function renewSelectedDomain(domain = selectedDomain) {
+    if (!domain?.clientProductId) return;
+    setSelectedDomain(domain);
     setIsDomainActionBusy(true);
     setDomainActionMessage("");
     setDomainRenewalPreview(null);
 
     try {
-      const response = await fetch(`/api/account/renewals/${selectedDomain.clientProductId}/renew`, { method: "POST" });
+      const response = await fetch(`/api/account/renewals/${domain.clientProductId}/renew`, { method: "POST" });
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.success) {
         setDomainActionMessage(result?.message ?? "Unable to prepare domain renewal.");
@@ -7221,6 +8129,63 @@ function DomainSection() {
       setDomainActionMessage(result.message);
     } catch {
       setDomainActionMessage("Unable to reach domain renewal service.");
+    } finally {
+      setIsDomainActionBusy(false);
+    }
+  }
+
+  function openDomainSettings(domain) {
+    setSelectedDomain(domain);
+    setDomainPanelView("settings");
+    setDomainActionMessage("");
+    setDomainDnsPreview([]);
+    setDomainRegistrarForm({
+      action: "nameservers",
+      value: domainRegistrarActionDefaults.nameservers
+    });
+  }
+
+  function openDomainDnsManager(domain) {
+    setSelectedDomain(domain);
+    setDomainPanelView("settings");
+    setDomainActionMessage("");
+    setDomainDnsPreview([]);
+    setDomainRegistrarForm({
+      action: "dns",
+      value: [
+        "A @ 208.98.35.146",
+        `CNAME www ${domain.domainName}`,
+        `MX @ mail.${domain.domainName} 10`,
+        "TXT @ v=spf1 a mx include:_spf.site4now.net -all"
+      ].join("\n")
+    });
+  }
+
+  async function toggleDomainPrivacy(domain, enabled) {
+    if (!domain?.id || !domain.whoisPrivacySupported) return;
+    if (!domain.whoisPrivacyPurchased && enabled) {
+      setSelectedDomain(domain);
+      setDomainPanelView("settings");
+      setDomainActionMessage("Whois Privacy is supported for this domain, but the privacy add-on must be purchased before it can be enabled.");
+      return;
+    }
+
+    setSelectedDomain(domain);
+    setIsDomainActionBusy(true);
+    setDomainActionMessage("");
+    try {
+      const response = await fetch(`/api/account/domains/${domain.id}/registrar-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: enabled ? "privacy-on" : "privacy-off", value: "" })
+      });
+      const result = await response.json().catch(() => null);
+      setDomainActionMessage(result?.message ?? "Unable to update Whois Privacy.");
+      if (response.ok && result?.success) {
+        await loadAccountDomains();
+      }
+    } catch {
+      setDomainActionMessage("Unable to reach Whois Privacy service.");
     } finally {
       setIsDomainActionBusy(false);
     }
@@ -7271,9 +8236,32 @@ function DomainSection() {
           "TXT @ v=spf1 a mx include:_spf.site4now.net -all"
         ].join("\n")
       : domainRegistrarActionDefaults.dns;
+    const contact = selectedDomainProfile?.registrant;
+    const contactDefault = contact
+      ? [
+          `first_name=${contact.firstName ?? ""}`,
+          `last_name=${contact.lastName ?? ""}`,
+          `org_name=${contact.organization ?? ""}`,
+          `address1=${contact.address1 ?? ""}`,
+          `address2=${contact.address2 ?? ""}`,
+          "address3=",
+          `city=${contact.city ?? ""}`,
+          `state=${contact.state || contact.province || ""}`,
+          `postal_code=${contact.postalCode ?? ""}`,
+          `country=${contact.country ?? ""}`,
+          `phone=${contact.phone ?? ""}`,
+          `fax=${contact.fax ?? ""}`,
+          `email=${contact.email ?? ""}`,
+          "url="
+        ].join("\n")
+      : domainRegistrarActionDefaults.contact;
     setDomainRegistrarForm({
       action,
-      value: action === "dns" ? dnsDefault : domainRegistrarActionDefaults[action] ?? ""
+      value: action === "dns"
+        ? dnsDefault
+        : action === "contact"
+          ? contactDefault
+          : domainRegistrarActionDefaults[action] ?? ""
     });
     setDomainActionMessage("");
     setDomainDnsPreview([]);
@@ -7464,7 +8452,7 @@ function DomainSection() {
             )}
           </div>
           <button className="primary-button" type="submit" disabled={isDomainSearching}>
-            {isDomainSearching ? "Searching..." : "Search"}
+            {isDomainSearching ? <LoadingIcon label="Searching domains" /> : "Search"}
           </button>
         </form>
         {domainLookupMessage && <p className="renewal-action-message">{domainLookupMessage}</p>}
@@ -7504,7 +8492,7 @@ function DomainSection() {
               </div>
             ))}
             <button className="primary-button" type="button" disabled={isDomainCheckingOut} onClick={checkoutDomains}>
-              {isDomainCheckingOut ? "Checking..." : "Checkout Domains"}
+              {isDomainCheckingOut ? <LoadingIcon label="Checking domains" /> : "Checkout Domains"}
             </button>
             {domainCheckoutMessage && <p className="renewal-action-message">{domainCheckoutMessage}</p>}
             {domainCheckoutPreview && <CheckoutPreviewCard preview={domainCheckoutPreview} onClose={() => setDomainCheckoutPreview(null)} />}
@@ -7536,7 +8524,7 @@ function DomainSection() {
             <span>Add Whois Privacy (+$8)</span>
           </label>
           <button className="primary-button compact" type="submit" disabled={isDomainTransferBusy}>
-            {isDomainTransferBusy ? "Creating..." : "Create Transfer Checkout"}
+            {isDomainTransferBusy ? <LoadingIcon label="Creating transfer checkout" /> : "Create Transfer Checkout"}
           </button>
         </form>
         {domainTransferMessage && <p className="inline-status">{domainTransferMessage}</p>}
@@ -7572,33 +8560,63 @@ function DomainSection() {
             onChange={(event) => setDomainSearch(event.target.value)}
           />
         </div>
-        {isLoadingDomains && <p className="empty-state">Loading domains from domain_profile...</p>}
+        {isLoadingDomains && <LoadingState label="Loading domains" />}
         {domainError && (
           <div className="dashboard-error-panel inline-error">
             <p>{domainError}</p>
-            <button className="secondary-button compact" type="button" onClick={loadAccountDomains}>Retry</button>
+            <IconActionButton label="Retry" onClick={loadAccountDomains} />
           </div>
         )}
         {!isLoadingDomains && !domainError && !filteredDomains.length && (
           <p className="empty-state">No domains found for this account.</p>
         )}
-        {!!filteredDomains.length && (
+        {!!filteredDomains.length && domainPanelView === "list" && (
           <DataTable
-            columns={["Domain Name", "Status", "Expiration", "Days Left", "Action"]}
-            rows={filteredDomains.map((domain) => [
-              domain.domainName,
-              <span className={domain.status === "completed" ? "status-pill" : "status-pill muted"}>{domain.status}</span>,
-              formatDate(domain.expirationDate),
-              domain.daysLeft ?? "N/A",
-              <button className="secondary-button compact" type="button" onClick={() => setSelectedDomain(domain)}>Manage</button>
-            ])}
+            columns={["Domain", "Status", "Whois Privacy", "Action"]}
+            rows={filteredDomains.map((domain) => {
+              const canRenew = !!domain.clientProductId && (domain.status === "completed" || domain.status === "expired");
+              const privacyLabel = !domain.whoisPrivacySupported
+                ? "Privacy N/A"
+                : domain.whoisPrivacyPurchased
+                  ? "Privacy On"
+                  : "Privacy Off";
+              return [
+                <div className="domain-name-cell">
+                  <span>{domain.domainName}</span>
+                  <small>Expiration Date: {formatDate(domain.expirationDate)}{domain.daysLeft < 0 ? " - Expired" : ""}</small>
+                </div>,
+                <span className={domain.status === "completed" ? "status-pill" : domain.status === "expired" ? "status-pill warning" : "status-pill muted"}>
+                  {domain.registerStatus && domain.registerStatus !== "verified" ? domain.registerStatus : domain.status}
+                </span>,
+                <button
+                  aria-pressed={domain.whoisPrivacyPurchased}
+                  className={domain.whoisPrivacySupported ? "domain-privacy-toggle" : "domain-privacy-toggle disabled"}
+                  disabled={!domain.whoisPrivacySupported || isDomainActionBusy}
+                  title={privacyLabel}
+                  type="button"
+                  onClick={() => toggleDomainPrivacy(domain, !domain.whoisPrivacyPurchased)}
+                >
+                  <span>{privacyLabel}</span>
+                </button>,
+                <div className="domain-table-actions">
+                  {canRenew && (
+                    <IconActionButton label="Renew" disabled={isDomainActionBusy} onClick={() => renewSelectedDomain(domain)} />
+                  )}
+                  <IconActionButton label="DNS Manager" onClick={() => openDomainDnsManager(domain)} />
+                  <IconActionButton label="Domain Settings" onClick={() => openDomainSettings(domain)} />
+                </div>
+              ];
+            })}
           />
         )}
-        {selectedDomain && (
-          <aside className="billing-detail-card">
-            <div className="billing-detail-header">
-              <span className="status-pill blue">Domain</span>
-              <button className="ghost-button compact" type="button" onClick={() => setSelectedDomain(null)}>Close</button>
+        {selectedDomain && domainPanelView === "settings" && (
+          <aside className="domain-settings-page">
+            <div className="domain-settings-header">
+              <button className="secondary-button compact" type="button" onClick={() => setDomainPanelView("list")}>
+                <MenuIcon name="back" />
+                Back to Domains
+              </button>
+              <span className="status-pill blue">Domain Settings</span>
             </div>
             <h3>{selectedDomain.domainName}</h3>
             <dl className="card-meta single">
@@ -7608,7 +8626,35 @@ function DomainSection() {
               <div><dt>Registrar Status</dt><dd>{selectedDomain.registerStatus || "N/A"}</dd></div>
               <div><dt>Expiration</dt><dd>{formatDate(selectedDomain.expirationDate)}</dd></div>
               <div><dt>Days Left</dt><dd>{selectedDomain.daysLeft ?? "N/A"}</dd></div>
+              <div><dt>Whois Privacy</dt><dd>{selectedDomain.whoisPrivacySupported ? selectedDomain.whoisPrivacyPurchased ? "Purchased" : "Not purchased" : "N/A"}</dd></div>
+              <div><dt>Grace Period</dt><dd>{selectedDomain.gracePeriodDays ?? 0} days</dd></div>
             </dl>
+            <div className="domain-profile-block">
+              <div className="billing-detail-header compact">
+                <span className="status-pill muted">Domain Profile</span>
+                {isLoadingDomainProfile && <LoadingIcon label="Loading domain profile" />}
+              </div>
+              {domainProfileError && <p className="inline-status">{domainProfileError}</p>}
+              {selectedDomainProfile && (
+                <div className="domain-contact-grid">
+                  {[
+                    ["Registrant", selectedDomainProfile.registrant],
+                    ["Admin", selectedDomainProfile.admin],
+                    ["Billing", selectedDomainProfile.billing],
+                    ["Technical", selectedDomainProfile.technical]
+                  ].map(([label, contact]) => (
+                    <article className="domain-contact-card" key={label}>
+                      <span>{label}</span>
+                      <strong>{[contact?.firstName, contact?.lastName].filter(Boolean).join(" ") || contact?.organization || "N/A"}</strong>
+                      <p>{contact?.organization || "N/A"}</p>
+                      <p>{contact?.email || "N/A"}</p>
+                      <p>{[contact?.address1, contact?.address2, contact?.city, contact?.state || contact?.province, contact?.postalCode, contact?.country].filter(Boolean).join(", ") || "N/A"}</p>
+                      <p>{contact?.phone || "N/A"}</p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="billing-action-row">
               <button
                 className="primary-button"
@@ -7616,7 +8662,7 @@ function DomainSection() {
                 disabled={!selectedDomain.clientProductId || isDomainActionBusy}
                 onClick={renewSelectedDomain}
               >
-                {isDomainActionBusy ? "Checking..." : "Renew Domain"}
+                {isDomainActionBusy ? <LoadingIcon label="Checking domain renewal" /> : "Renew Domain"}
               </button>
             </div>
             <div className="domain-quick-actions" aria-label="Domain quick actions">
@@ -7846,11 +8892,11 @@ function VpnSection() {
         </div>
       </article>
 
-      {isLoadingVpn && <p className="empty-state">Loading VPN services...</p>}
+      {isLoadingVpn && <LoadingState label="Loading VPN services" />}
       {vpnError && (
         <div className="dashboard-error-panel inline-error">
           <p>{vpnError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadVpn}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadVpn} />
         </div>
       )}
 
@@ -8009,7 +9055,7 @@ function VpnSection() {
             disabled={isVpnCheckingOut || !vpnCatalog.length}
             onClick={checkoutVpn}
           >
-            {isVpnCheckingOut ? "Creating..." : "Buy VPN"}
+            {isVpnCheckingOut ? <LoadingIcon label="Creating VPN checkout" /> : "Buy VPN"}
           </button>
         </article>
 
@@ -8224,11 +9270,11 @@ function AddonSection() {
             ))}
           </div>
         )}
-        {isLoadingAddons && <p className="empty-state">Loading add-on catalog...</p>}
+        {isLoadingAddons && <LoadingState label="Loading add-on catalog" />}
         {addonError && (
           <div className="dashboard-error-panel inline-error">
             <p>{addonError}</p>
-            <button className="secondary-button compact" type="button" onClick={loadAddons}>Retry</button>
+            <IconActionButton label="Retry" onClick={loadAddons} />
           </div>
         )}
         {!isLoadingAddons && !addonError && !visibleCatalog.length && (
@@ -8294,7 +9340,7 @@ function AddonSection() {
               </div>
             ))}
             <button className="primary-button" type="button" disabled={isAddonCheckingOut} onClick={checkoutAddons}>
-              {isAddonCheckingOut ? "Checking..." : "Checkout Add-Ons"}
+              {isAddonCheckingOut ? <LoadingIcon label="Checking add-ons" /> : "Checkout Add-Ons"}
             </button>
             {addonCheckoutMessage && <p className="renewal-action-message">{addonCheckoutMessage}</p>}
             {addonCheckoutPreview && <CheckoutPreviewCard preview={addonCheckoutPreview} onClose={() => setAddonCheckoutPreview(null)} />}
@@ -8310,7 +9356,7 @@ function AddonSection() {
           </div>
           <span className="muted-count">{activeAddons.length} items</span>
         </div>
-        {isLoadingAddons && <p className="empty-state">Loading active add-ons...</p>}
+        {isLoadingAddons && <LoadingState label="Loading active add-ons" />}
         {!isLoadingAddons && !activeAddons.length && <p className="empty-state">No active add-ons found for this account.</p>}
         {!!activeAddons.length && (
           <DataTable
@@ -8343,7 +9389,7 @@ function AddonSection() {
             </dl>
             <div className="billing-action-row">
               <button className="primary-button" type="button" disabled={isAddonActionBusy} onClick={renewSelectedAddon}>
-                {isAddonActionBusy ? "Checking..." : "Renew Add-On"}
+                {isAddonActionBusy ? <LoadingIcon label="Checking add-on renewal" /> : "Renew Add-On"}
               </button>
               <button className="secondary-button" type="button" onClick={() => findMatchingAddons(selectedAddon)}>
                 Find Matching Add-Ons
@@ -8375,12 +9421,22 @@ function BillingSection({ onChangeSection }) {
   const [billing, setBilling] = useState(null);
   const [isLoadingBilling, setIsLoadingBilling] = useState(true);
   const [billingError, setBillingError] = useState("");
+  const [purchaseDates, setPurchaseDates] = useState(() => {
+    const now = new Date();
+    return {
+      start: formatDateForInput(addYears(now, -1)),
+      end: formatDateForInput(addYears(now, 1))
+    };
+  });
 
   async function loadBilling() {
     setIsLoadingBilling(true);
     setBillingError("");
     try {
-      const response = await fetch("/api/account/billing");
+      const params = new URLSearchParams();
+      if (purchaseDates.start) params.set("purchaseStart", purchaseDates.start);
+      if (purchaseDates.end) params.set("purchaseEnd", purchaseDates.end);
+      const response = await fetch(`/api/account/billing?${params.toString()}`);
       const result = await response.json();
       if (!response.ok || !result.success) {
         setBillingError(result?.message ?? "Unable to load billing.");
@@ -8398,6 +9454,10 @@ function BillingSection({ onChangeSection }) {
   useEffect(() => {
     loadBilling();
   }, []);
+
+  function updatePurchaseDate(field, value) {
+    setPurchaseDates((current) => ({ ...current, [field]: value }));
+  }
 
   return (
     <section className="panel-card billing-panel">
@@ -8423,21 +9483,27 @@ function BillingSection({ onChangeSection }) {
         ))}
       </div>
 
-      {isLoadingBilling && <p className="empty-state">Loading billing data...</p>}
+      {isLoadingBilling && <LoadingState label="Loading billing data" />}
       {billingError && (
         <div className="dashboard-error-panel inline-error">
           <p>{billingError}</p>
-          <button className="secondary-button compact" type="button" onClick={loadBilling}>Retry</button>
+          <IconActionButton label="Retry" onClick={loadBilling} />
         </div>
       )}
       {!isLoadingBilling && !billingError && (
-        <BillingTabPanel activeTab={activeTab} billing={billing} onReloadBilling={loadBilling} />
+        <BillingTabPanel
+          activeTab={activeTab}
+          billing={billing}
+          onReloadBilling={loadBilling}
+          purchaseDates={purchaseDates}
+          onPurchaseDateChange={updatePurchaseDate}
+        />
       )}
     </section>
   );
 }
 
-function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
+function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, onPurchaseDateChange }) {
   const [selectedPurchase, setSelectedPurchase] = useState(null);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [renewalPreview, setRenewalPreview] = useState(null);
@@ -8448,10 +9514,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
   const [invoiceBusyId, setInvoiceBusyId] = useState(null);
   const [balanceActionMessage, setBalanceActionMessage] = useState("");
   const [depositAmount, setDepositAmount] = useState("25.00");
-  const [transferAmount, setTransferAmount] = useState("10.00");
-  const [transferTarget, setTransferTarget] = useState("");
   const [balanceCheckoutPreview, setBalanceCheckoutPreview] = useState(null);
-  const [transferPreview, setTransferPreview] = useState(null);
   const [isBalanceActionBusy, setIsBalanceActionBusy] = useState(false);
   const [productActionMessage, setProductActionMessage] = useState("");
   const [selectedRenewalIds, setSelectedRenewalIds] = useState([]);
@@ -8520,7 +9583,6 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
     setIsBalanceActionBusy(true);
     setBalanceActionMessage("");
     setBalanceCheckoutPreview(null);
-    setTransferPreview(null);
 
     try {
       const response = await fetch("/api/account/billing/deposit", {
@@ -8538,33 +9600,6 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
       setBalanceActionMessage(result.message);
     } catch {
       setBalanceActionMessage("Unable to reach deposit checkout service.");
-    } finally {
-      setIsBalanceActionBusy(false);
-    }
-  }
-
-  async function checkTransferCredit() {
-    setIsBalanceActionBusy(true);
-    setBalanceActionMessage("");
-    setBalanceCheckoutPreview(null);
-    setTransferPreview(null);
-
-    try {
-      const response = await fetch("/api/account/billing/transfer-preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: Number(transferAmount), targetLogin: transferTarget })
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !result?.success) {
-        setBalanceActionMessage(result?.message ?? "Unable to check transfer.");
-        return;
-      }
-
-      setTransferPreview(result.preview);
-      setBalanceActionMessage(result.preview?.note ?? result.message);
-    } catch {
-      setBalanceActionMessage("Unable to reach transfer service.");
     } finally {
       setIsBalanceActionBusy(false);
     }
@@ -8639,42 +9674,18 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
         </div>
         <div className="billing-action-card">
           <h3>Add Funds</h3>
-          <p>Deposit money into the account balance or check whether a credit transfer can be made to another account.</p>
+          <p>Deposit money into the account balance before planned purchases.</p>
           <div className="balance-action-grid">
             <label>
               Deposit Amount
               <input type="number" min="1" step="0.01" value={depositAmount} onChange={(event) => setDepositAmount(event.target.value)} />
             </label>
             <button className="primary-button" type="button" disabled={isBalanceActionBusy} onClick={createDepositCheckout}>
-              {isBalanceActionBusy ? "Checking..." : "Deposit Money"}
-            </button>
-            <label>
-              Transfer To
-              <input type="text" placeholder="customer login" value={transferTarget} onChange={(event) => setTransferTarget(event.target.value)} />
-            </label>
-            <label>
-              Transfer Amount
-              <input type="number" min="1" step="0.01" value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} />
-            </label>
-            <button className="secondary-button" type="button" disabled={isBalanceActionBusy || !transferTarget.trim()} onClick={checkTransferCredit}>
-              {isBalanceActionBusy ? "Checking..." : "Check Transfer"}
+              {isBalanceActionBusy ? <LoadingIcon label="Checking balance deposit" /> : "Deposit Money"}
             </button>
           </div>
           {balanceActionMessage && <p className="renewal-action-message">{balanceActionMessage}</p>}
           {balanceCheckoutPreview && <CheckoutPreviewCard preview={balanceCheckoutPreview} onClose={() => setBalanceCheckoutPreview(null)} />}
-          {transferPreview && (
-            <div className="transfer-preview-card">
-              <span className={transferPreview.eligible ? "status-pill" : "status-pill muted"}>
-                {transferPreview.eligible ? "Eligible" : "Not eligible"}
-              </span>
-              <dl className="card-meta single">
-                <div><dt>Target</dt><dd>{transferPreview.targetLogin}</dd></div>
-                <div><dt>Target ID</dt><dd>{transferPreview.targetCustomerId ?? "N/A"}</dd></div>
-                <div><dt>Amount</dt><dd>{formatMoney(transferPreview.amount)}</dd></div>
-                <div><dt>Available Balance</dt><dd>{formatMoney(transferPreview.availableBalance)}</dd></div>
-              </dl>
-            </div>
-          )}
         </div>
         <div className="billing-action-card alternate-deposit-card">
           <h3>Other Deposit Methods</h3>
@@ -8781,7 +9792,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
             disabled={!selectedRenewalIds.length || renewalBusyId !== null}
             onClick={createSelectedRenewalCheckout}
           >
-            {renewalBusyId === "many" ? "Creating..." : "Renew Selected"}
+            {renewalBusyId === "many" ? <LoadingIcon label="Creating renewal checkout" /> : "Renew Selected"}
           </button>
         </div>
         {renewalMessage && <p className="renewal-action-message">{renewalMessage}</p>}
@@ -8805,7 +9816,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
                 disabled={renewalBusyId !== null}
                 onClick={() => runRenewalAction(product, "renew")}
               >
-                {renewalBusyId === `renew-${product.clientProductId}` ? "Checking..." : "Renew"}
+                {renewalBusyId === `renew-${product.clientProductId}` ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="renew" />}
               </button>
               <button
                 className="ghost-button compact"
@@ -8813,7 +9824,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
                 disabled={renewalBusyId !== null}
                 onClick={() => runRenewalAction(product, "hide")}
               >
-                {renewalBusyId === `hide-${product.clientProductId}` ? "Hiding..." : "Hide"}
+                {renewalBusyId === `hide-${product.clientProductId}` ? <LoadingIcon label="Hiding renewal notice" /> : <MenuIcon name="x" />}
               </button>
             </div>
           ])}
@@ -8863,6 +9874,27 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
         </section>
       )}
       {invoiceMessage && <p className="renewal-action-message">{invoiceMessage}</p>}
+      <div className="billing-filter-bar">
+        <label>
+          From
+          <input
+            type="date"
+            value={purchaseDates.start}
+            onChange={(event) => onPurchaseDateChange("start", event.target.value)}
+          />
+        </label>
+        <label>
+          To
+          <input
+            type="date"
+            value={purchaseDates.end}
+            onChange={(event) => onPurchaseDateChange("end", event.target.value)}
+          />
+        </label>
+        <button className="secondary-button compact icon-only-button" type="button" title="Search Purchases" aria-label="Search Purchases" onClick={onReloadBilling}>
+          <MenuIcon name="search" />
+        </button>
+      </div>
       {purchases.length ? (
         <DataTable
           columns={["Date", "Product", "Term", "Amount", "Status", "Action"]}
@@ -8873,12 +9905,14 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling }) {
             formatMoney(purchase.amount),
             <span className={purchase.paymentStatus === "completed" ? "status-pill" : "status-pill muted"}>{purchase.paymentStatus}</span>,
             <button
-              className="secondary-button compact"
+              className="secondary-button compact icon-only-button"
               type="button"
               disabled={invoiceBusyId !== null}
               onClick={() => loadInvoice(purchase)}
+              aria-label="Invoice"
+              title="Invoice"
             >
-              {invoiceBusyId === purchase.orderId ? "Loading..." : "Invoice"}
+              {invoiceBusyId === purchase.orderId ? <LoadingIcon label="Loading invoice" /> : <MenuIcon name="invoice" />}
             </button>
           ])}
         />
@@ -8894,7 +9928,7 @@ function CheckoutPreviewCard({ preview, onClose }) {
   return (
     <aside className="billing-detail-card checkout-preview-card">
       <div className="billing-detail-header">
-        <span className="status-pill blue">{preview.isOrder ? "Checkout Ready" : "Checkout Preview"}</span>
+        <span className="status-pill blue">{preview.isOrder ? "Checkout Order" : "Checkout Check"}</span>
         <button className="ghost-button compact" type="button" onClick={onClose}>Close</button>
       </div>
       <h3>{preview.title}</h3>
@@ -8905,7 +9939,7 @@ function CheckoutPreviewCard({ preview, onClose }) {
       </dl>
       <p>{preview.note}</p>
       {preview.checkoutUrl ? (
-        <a className="primary-button as-link" href={preview.checkoutUrl}>Open Checkout</a>
+        <a className="primary-button as-link" href={preview.checkoutUrl}>Continue Checkout</a>
       ) : (
         <button className="primary-button" type="button" disabled>Checkout unavailable</button>
       )}
@@ -8952,7 +9986,7 @@ function RenewalCheckoutPreview({ renewal, onClose, onCheckout }) {
       <p>{renewal.note}</p>
       {!checkoutOrder && (
         <button className="primary-button" type="button" disabled={isCheckingOut || !onCheckout} onClick={createCheckout}>
-          {isCheckingOut ? "Creating..." : "Create Checkout"}
+          {isCheckingOut ? <LoadingIcon label="Creating checkout" /> : "Create Checkout"}
         </button>
       )}
       {checkoutMessage && <p className="renewal-action-message">{checkoutMessage}</p>}
@@ -8976,6 +10010,10 @@ function BillingPurchaseDetail({ purchase, onClose }) {
       <h3>{purchase.name}</h3>
       <dl className="card-meta single">
         <div><dt>Order ID</dt><dd>{purchase.orderId}</dd></div>
+        <div><dt>Account Name</dt><dd>{purchase.accountName || "N/A"}</dd></div>
+        <div><dt>Receipt Name</dt><dd>{purchase.receiptName || "N/A"}</dd></div>
+        <div><dt>Receipt Address</dt><dd>{[purchase.receiptAddress, purchase.receiptCity, purchase.receiptProvince, purchase.receiptPostcode, purchase.receiptCountry].filter(Boolean).join(", ") || "N/A"}</dd></div>
+        {purchase.vat && <div><dt>VAT No.</dt><dd>{purchase.vat}</dd></div>}
         <div><dt>Product ID</dt><dd>{purchase.productId}</dd></div>
         <div><dt>Description</dt><dd>{purchase.description}</dd></div>
         <div><dt>Payment Term</dt><dd>{purchase.paymentTerm}</dd></div>
@@ -9089,7 +10127,19 @@ function profileFormFromSettings(profile) {
     companyName: editableAccountValue(profile?.companyName),
     mobileNumber: editableAccountValue(profile?.mobileNumber),
     browserLanguage: editableAccountValue(profile?.browserLanguage),
-    vat: editableAccountValue(profile?.vat)
+    vat: editableAccountValue(profile?.vat),
+    contactCountry: editableAccountValue(profile?.contactCountry),
+    contactProvince: editableAccountValue(profile?.contactProvince),
+    contactCity: editableAccountValue(profile?.contactCity),
+    contactArea: editableAccountValue(profile?.contactArea),
+    contactAddress: editableAccountValue(profile?.contactAddress),
+    contactPostcode: editableAccountValue(profile?.contactPostcode),
+    billingCountry: editableAccountValue(profile?.billingCountry),
+    billingProvince: editableAccountValue(profile?.billingProvince),
+    billingCity: editableAccountValue(profile?.billingCity),
+    billingArea: editableAccountValue(profile?.billingArea),
+    billingAddress: editableAccountValue(profile?.billingAddress),
+    billingPostcode: editableAccountValue(profile?.billingPostcode)
   };
 }
 
@@ -9102,7 +10152,19 @@ function SettingsSection() {
     companyName: "",
     mobileNumber: "",
     browserLanguage: "",
-    vat: ""
+    vat: "",
+    contactCountry: "",
+    contactProvince: "",
+    contactCity: "",
+    contactArea: "",
+    contactAddress: "",
+    contactPostcode: "",
+    billingCountry: "",
+    billingProvince: "",
+    billingCity: "",
+    billingArea: "",
+    billingAddress: "",
+    billingPostcode: ""
   });
   const [profileMessage, setProfileMessage] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -9149,6 +10211,18 @@ function SettingsSection() {
 
   function updateProfileField(field, value) {
     setProfileForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function copyContactAddressToBilling() {
+    setProfileForm((current) => ({
+      ...current,
+      billingCountry: current.contactCountry,
+      billingProvince: current.contactProvince,
+      billingCity: current.contactCity,
+      billingArea: current.contactArea,
+      billingAddress: current.contactAddress,
+      billingPostcode: current.contactPostcode
+    }));
   }
 
   async function saveProfile(event) {
@@ -9256,11 +10330,11 @@ function SettingsSection() {
           </div>
           <RefreshButton onClick={loadSettings} />
         </div>
-        {isLoadingSettings && <p className="empty-state">Loading account settings...</p>}
+        {isLoadingSettings && <LoadingState label="Loading account settings" />}
         {settingsError && (
           <div className="dashboard-error-panel inline-error">
             <p>{settingsError}</p>
-            <button className="secondary-button compact" type="button" onClick={loadSettings}>Retry</button>
+            <IconActionButton label="Retry" onClick={loadSettings} />
           </div>
         )}
         {profile && (
@@ -9321,6 +10395,8 @@ function SettingsSection() {
             <input
               type="tel"
               value={profileForm.mobileNumber}
+              disabled
+              title="Mobile changes require SMS PIN verification in the Classic ASP flow."
               onChange={(event) => updateProfileField("mobileNumber", event.target.value)}
             />
           </label>
@@ -9340,13 +10416,67 @@ function SettingsSection() {
               onChange={(event) => updateProfileField("vat", event.target.value)}
             />
           </label>
+          <div className="settings-form-section-title">Contact Address</div>
+          <label>
+            Country
+            <input type="text" value={profileForm.contactCountry} onChange={(event) => updateProfileField("contactCountry", event.target.value)} />
+          </label>
+          <label>
+            Province / State
+            <input type="text" value={profileForm.contactProvince} onChange={(event) => updateProfileField("contactProvince", event.target.value)} />
+          </label>
+          <label>
+            City
+            <input type="text" value={profileForm.contactCity} onChange={(event) => updateProfileField("contactCity", event.target.value)} />
+          </label>
+          <label>
+            Area
+            <input type="text" value={profileForm.contactArea} onChange={(event) => updateProfileField("contactArea", event.target.value)} />
+          </label>
+          <label className="settings-wide-field">
+            Address
+            <input type="text" value={profileForm.contactAddress} onChange={(event) => updateProfileField("contactAddress", event.target.value)} />
+          </label>
+          <label>
+            Postal Code
+            <input type="text" value={profileForm.contactPostcode} onChange={(event) => updateProfileField("contactPostcode", event.target.value)} />
+          </label>
+          <div className="settings-form-section-title with-action">
+            <span>Billing Address</span>
+            <button className="secondary-button compact" type="button" onClick={copyContactAddressToBilling}>Use Contact</button>
+          </div>
+          <label>
+            Billing Country
+            <input type="text" value={profileForm.billingCountry} onChange={(event) => updateProfileField("billingCountry", event.target.value)} />
+          </label>
+          <label>
+            Billing Province / State
+            <input type="text" value={profileForm.billingProvince} onChange={(event) => updateProfileField("billingProvince", event.target.value)} />
+          </label>
+          <label>
+            Billing City
+            <input type="text" value={profileForm.billingCity} onChange={(event) => updateProfileField("billingCity", event.target.value)} />
+          </label>
+          <label>
+            Billing Area
+            <input type="text" value={profileForm.billingArea} onChange={(event) => updateProfileField("billingArea", event.target.value)} />
+          </label>
+          <label className="settings-wide-field">
+            Billing Address
+            <input type="text" value={profileForm.billingAddress} onChange={(event) => updateProfileField("billingAddress", event.target.value)} />
+          </label>
+          <label>
+            Billing Postal Code
+            <input type="text" value={profileForm.billingPostcode} onChange={(event) => updateProfileField("billingPostcode", event.target.value)} />
+          </label>
           <div className="settings-form-actions">
             <button className="primary-button" type="submit" disabled={isSavingProfile || !profileForm.name.trim()}>
-              {isSavingProfile ? "Saving..." : "Save Profile"}
+              {isSavingProfile ? <LoadingIcon label="Saving profile" /> : "Save Profile"}
             </button>
           </div>
         </form>
         {profileMessage && <p className="renewal-action-message">{profileMessage}</p>}
+        <p className="settings-helper-text">Mobile changes require SMS PIN verification; that write path is blocked until the legacy SMS gateway test target is confirmed.</p>
       </article>
 
       <article className="panel-card password-card">
@@ -9366,7 +10496,7 @@ function SettingsSection() {
             />
           </label>
           <button className="primary-button" type="submit" disabled={isRequestingEmailChange || !emailChange.trim()}>
-            {isRequestingEmailChange ? "Creating..." : "Create Verification Request"}
+            {isRequestingEmailChange ? <LoadingIcon label="Creating verification request" /> : "Create Verification Request"}
           </button>
         </form>
         {emailChangeMessage && <p className="renewal-action-message">{emailChangeMessage}</p>}
@@ -9516,22 +10646,22 @@ function AffiliateSection() {
           ))}
         </div>
 
-        {isLoadingAffiliate && <p className="empty-state">Loading affiliate data...</p>}
+        {isLoadingAffiliate && <LoadingState label="Loading affiliate data" />}
         {affiliateError && (
           <div className="dashboard-error-panel inline-error">
             <p>{affiliateError}</p>
-            <button className="secondary-button compact" type="button" onClick={loadAffiliate}>Retry</button>
+            <IconActionButton label="Retry" onClick={loadAffiliate} />
           </div>
         )}
         {!isLoadingAffiliate && !affiliateError && (
           <div className="tab-panel" role="tabpanel">
-            {activeTab === "getting-started" && <AffiliateGettingStarted />}
+            {activeTab === "getting-started" && <AffiliateGettingStarted affiliate={affiliate} />}
             {activeTab === "referrals" && <AffiliateReferrals referrals={affiliate?.referrals ?? []} />}
             {activeTab === "pending" && <AffiliateCommissions commissions={pendingCommissions} emptyText="No pending commissions found." showRelease />}
             {activeTab === "current" && <AffiliateCommissions commissions={currentCommissions} emptyText="No released commissions found." />}
             {activeTab === "withdraw" && <AffiliateWithdraw summary={summary} />}
             {activeTab === "pay-log" && <AffiliatePayLog payouts={affiliate?.payouts ?? []} />}
-            {activeTab === "promo-assets" && <AffiliatePromoAssets />}
+            {activeTab === "promo-assets" && <AffiliatePromoAssets affiliate={affiliate} />}
           </div>
         )}
       </article>
@@ -9600,32 +10730,6 @@ function AffiliateWithdraw({ summary }) {
     setPaypalAmount(Math.max(available, 0).toFixed(2));
   }, [available]);
 
-  async function checkWithdraw(method, amountText) {
-    setIsCheckingWithdraw(true);
-    setWithdrawMessage("");
-    setWithdrawPreview(null);
-
-    try {
-      const response = await fetch("/api/account/affiliate/withdraw-preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: Number(amountText), method })
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !result?.success) {
-        setWithdrawMessage(result?.message ?? "Unable to check withdraw.");
-        return;
-      }
-
-      setWithdrawPreview(result.preview);
-      setWithdrawMessage(result.preview?.note ?? result.message);
-    } catch {
-      setWithdrawMessage("Unable to reach affiliate withdraw service.");
-    } finally {
-      setIsCheckingWithdraw(false);
-    }
-  }
-
   async function submitPaypalWithdraw() {
     setIsCheckingWithdraw(true);
     setWithdrawMessage("");
@@ -9653,6 +10757,33 @@ function AffiliateWithdraw({ summary }) {
     }
   }
 
+  async function submitCreditWithdraw() {
+    setIsCheckingWithdraw(true);
+    setWithdrawMessage("");
+    setWithdrawPreview(null);
+
+    try {
+      const response = await fetch("/api/account/affiliate/withdraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(creditAmount), method: "account-credit", paypal: "" })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setWithdrawPreview(result?.preview ?? null);
+        setWithdrawMessage(result?.message ?? "Unable to convert commission.");
+        return;
+      }
+
+      setWithdrawPreview(result.preview);
+      setWithdrawMessage(result.preview?.note ?? result.message);
+    } catch {
+      setWithdrawMessage("Unable to reach affiliate withdraw service.");
+    } finally {
+      setIsCheckingWithdraw(false);
+    }
+  }
+
   return (
     <div className="affiliate-withdraw-grid">
       <article className="affiliate-withdraw-card">
@@ -9662,8 +10793,8 @@ function AffiliateWithdraw({ summary }) {
           Amount
           <input type="number" min="0" step="0.01" value={creditAmount} onChange={(event) => setCreditAmount(event.target.value)} />
         </label>
-        <button className="primary-button" type="button" disabled={isCheckingWithdraw} onClick={() => checkWithdraw("account-credit", creditAmount)}>
-          {isCheckingWithdraw ? "Checking..." : "Convert to Credit"}
+        <button className="primary-button" type="button" disabled={isCheckingWithdraw} onClick={submitCreditWithdraw}>
+          {isCheckingWithdraw ? <LoadingIcon label="Converting commission" /> : "Convert to Credit"}
         </button>
       </article>
       <article className="affiliate-withdraw-card">
@@ -9716,8 +10847,10 @@ function AffiliatePayLog({ payouts }) {
   );
 }
 
-function AffiliatePromoAssets() {
+function AffiliatePromoAssets({ affiliate }) {
   const [copiedSize, setCopiedSize] = useState("");
+  const referralCode = affiliate?.login || "jyu001";
+  const banners = buildAffiliateBanners(referralCode);
 
   async function copyBannerCode(banner) {
     if (await writeTextToClipboard(banner.code)) {
@@ -9731,7 +10864,7 @@ function AffiliatePromoAssets() {
 
   return (
     <div className="promo-assets-grid">
-      {affiliateBanners.map((banner) => (
+      {banners.map((banner) => (
         <article className="promo-asset-card" key={banner.size}>
           <span className="status-pill">{banner.size}</span>
           <p>{banner.url}</p>
@@ -9745,14 +10878,18 @@ function AffiliatePromoAssets() {
   );
 }
 
-function AffiliateGettingStarted() {
-  const [activeBanner, setActiveBanner] = useState(affiliateBanners[0]);
+function AffiliateGettingStarted({ affiliate }) {
+  const referralCode = affiliate?.login || "jyu001";
+  const referralCustomerId = affiliate?.customerId ? String(affiliate.customerId) : "";
+  const banners = buildAffiliateBanners(referralCode);
+  const [activeBannerSize, setActiveBannerSize] = useState(banners[0]?.size ?? "728X90");
   const [copiedBanner, setCopiedBanner] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteCopied, setInviteCopied] = useState("");
-  const referralUrl = "https://www.SmarterASP.NET/index?r=openreward";
-  const referralIdUrl = "https://www.SmarterASP.NET/index?r=100468564";
+  const activeBanner = banners.find((banner) => banner.size === activeBannerSize) ?? banners[0];
+  const referralUrl = `https://www.SmarterASP.NET/index?r=${encodeURIComponent(referralCode)}`;
+  const referralIdUrl = referralCustomerId ? `https://www.SmarterASP.NET/index?r=${encodeURIComponent(referralCustomerId)}` : "";
   const inviteSubject = "Try SmarterASP.NET hosting";
   const inviteBody = [
     `Hi${inviteName.trim() ? ` ${inviteName.trim()}` : ""},`,
@@ -9787,6 +10924,7 @@ function AffiliateGettingStarted() {
 
   async function copyReferralUrl(urlKey) {
     const url = urlKey === "id" ? referralIdUrl : referralUrl;
+    if (!url) return;
     if (await writeTextToClipboard(url)) {
       setInviteCopied(urlKey);
       window.setTimeout(() => setInviteCopied(""), 1600);
@@ -9818,10 +10956,12 @@ function AffiliateGettingStarted() {
               <span>{referralUrl}</span>
               <button type="button" onClick={() => copyReferralUrl("login")}>{inviteCopied === "login" ? "Copied" : "Copy"}</button>
             </div>
-            <div>
-              <span>{referralIdUrl}</span>
-              <button type="button" onClick={() => copyReferralUrl("id")}>{inviteCopied === "id" ? "Copied" : "Copy"}</button>
-            </div>
+            {referralIdUrl && (
+              <div>
+                <span>{referralIdUrl}</span>
+                <button type="button" onClick={() => copyReferralUrl("id")}>{inviteCopied === "id" ? "Copied" : "Copy"}</button>
+              </div>
+            )}
           </div>
           <p className="affiliate-note">
             <strong>Note:</strong> Once your customer visits our site through the URL above, your referral ID will be recorded in their browser's cookie. Anytime your customer decides to signup, you'll get credited.
@@ -9845,12 +10985,12 @@ function AffiliateGettingStarted() {
           </div>
           <p>You can also use the following banners we provide:</p>
           <div className="banner-tabs" aria-label="Banner sizes">
-            {affiliateBanners.map((banner) => (
+            {banners.map((banner) => (
               <button
-                className={activeBanner.size === banner.size ? "active" : ""}
+                className={activeBanner?.size === banner.size ? "active" : ""}
                 key={banner.size}
                 type="button"
-                onClick={() => setActiveBanner(banner)}
+                onClick={() => setActiveBannerSize(banner.size)}
               >
                 {banner.size}
               </button>
@@ -9862,10 +11002,10 @@ function AffiliateGettingStarted() {
               {copiedBanner === activeBanner.size ? "Copied" : copiedBanner === "failed" ? "Copy Failed" : "Copy"}
             </button>
           </div>
-          <textarea readOnly value={activeBanner.code} aria-label="Affiliate banner code" />
+          <textarea readOnly value={activeBanner?.code ?? ""} aria-label="Affiliate banner code" />
           <p>Example:</p>
           <div className="affiliate-real-banner-preview">
-            <img src={activeBanner.url} alt={`${activeBanner.size} affiliate banner preview`} />
+            <img src={activeBanner?.url ?? ""} alt={`${activeBanner?.size ?? "Affiliate"} banner preview`} />
           </div>
         </div>
         <a className="affiliate-terms" href="#affiliate-terms">*Click here to see our Affiliate Terms and Condition</a>
