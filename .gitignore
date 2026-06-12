@@ -4,3 +4,5 @@ obj/
 ClientApp/node_modules/
 ClientApp/.vite/
 .env
+.env.*
+!.env.example

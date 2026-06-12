@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -168,44 +168,73 @@ const deployActions = [
   { label: "VSDeploy", icon: "deploy" }
 ];
 
-const websiteMoreFunctionGroups = [
+const websiteMoreFunctionColumns = [
   {
-    badge: "Domains",
-    title: "Domain and Site Binding",
-    description: "Add, move, remove, and bind domains or subdomains to this website.",
-    actions: ["Add Domain", "Add Subdomain", "Move Domain", "Remove Domain", "Change Site Path", "Bind VPS Domain"]
+    title: "Settings",
+    items: [
+      { label: "Site Name", icon: "site-name" },
+      { label: "Mapped Path", icon: "folder" },
+      { label: "ASP.NET Version", icon: "aspnet" },
+      { label: ".NET Core Mode", icon: "core" },
+      { label: "Node.js App", icon: "node" },
+      { label: "PHP Version", icon: "php" },
+      { label: "PHP Settings", icon: "checklist" },
+      { label: "Detail Error", icon: "warning" },
+      { label: "Site On/Off", icon: "power" },
+      { label: "Delete Website", icon: "trash" }
+    ]
   },
   {
-    badge: "Runtime",
-    title: "Runtime and IIS Features",
-    description: "Review ASP.NET, .NET Core, PHP, custom errors, caching, compression, and directory browsing changes.",
-    actions: ["Change Runtime", "Detailed Errors", "HTTP Compression", "Output Caching", "Directory Browsing", "Encrypt web.config"]
+    title: "Basic",
+    items: [
+      { label: "Domain Manager", icon: "globe" },
+      { label: "Visitor Stats", icon: "stats" },
+      { label: "FTP Access", icon: "ftp" },
+      { label: "VS Webdeploy", icon: "deploy" },
+      { label: "Github Deploy", icon: "git" },
+      { label: "SMTP Sample Code", icon: "mail" },
+      { label: "IP Deny", icon: "shield" },
+      { label: "IIS Log Manager", icon: "logs" },
+      { label: "Application Pool 🔥", icon: "server" },
+      { label: "Outgoing Port", icon: "outgoing" }
+    ]
   },
   {
-    badge: "Pool",
-    title: "Application Pool",
-    description: "Recycle, start, stop, isolate, resize, and adjust app pool platform options.",
-    actions: ["Recycle Pool", "Start Pool", "Stop Pool", "Create Dedicated Pool", "Pool Memory", "32/64-bit Mode"]
-  },
-  {
-    badge: "Security",
-    title: "Security and Access",
-    description: "Review Site Guard, IP restrictions, executable/API flags, password protection, and lock-state changes.",
-    actions: ["Site Guard", "IP Deny", "Dynamic IP Protection", "Allow EXE", "Allow FB API", "Lock Site"]
-  },
-  {
-    badge: "Ops",
-    title: "Operations",
-    description: "Visitor statistics, raw logs, automated backups, migration, related DB cleanup, and site removal planning.",
-    actions: ["Visitor Stats", "Raw Logs", "Automated Backups", "WP Migration", "Remove Related DB", "Delete Website"]
+    title: "Advanced Features",
+    items: [
+      { label: "Create .Net App", icon: "apps" },
+      { label: "Create Virtual Dir", icon: "virtual-dir" },
+      { label: "Force HTTPS", icon: "force-https" },
+      { label: "Default Doc", icon: "default-doc" },
+      { label: "Custom Errors", icon: "warning" },
+      { label: "Mime Type", icon: "mime" },
+      { label: "ScriptMap", icon: "scriptmap" },
+      { label: "Remote IIS Manager", icon: "remote-iis" },
+      { label: "Site Guard", icon: "shield" },
+      { label: "Schedule Tasks", icon: "tasks" }
+    ]
   }
 ];
+
+const websiteMoreFunctionKeyByLabel = Object.fromEntries(
+  websiteMoreFunctionColumns
+    .flatMap((column) => column.items)
+    .map((item) => [item.label, item.label.toLowerCase().replace("🔥", "").trim().replace(/\./g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")])
+);
+
+websiteMoreFunctionKeyByLabel["ASP.NET Version"] = "aspnet-version";
+websiteMoreFunctionKeyByLabel[".NET Core Mode"] = "core-mode";
+websiteMoreFunctionKeyByLabel["Node.js App"] = "nodejs-app";
+websiteMoreFunctionKeyByLabel["Create .Net App"] = "create-net-app";
+websiteMoreFunctionKeyByLabel["Create Virtual Dir"] = "virtual-dir";
+websiteMoreFunctionKeyByLabel["ScriptMap"] = "script-map";
+websiteMoreFunctionKeyByLabel["Application Pool 🔥"] = "application-pool";
 
 const websites = [
   {
     siteName: "agapepapa",
     mappedDomains: [
-      { label: "openreward-001-site29.etempurl.com", url: "http://openreward-001-site29.etempurl.com/" },
+      { label: "site29.etempurl.com", url: "http://site29.etempurl.com/" },
       { label: "agapepapa.com", url: "http://agapepapa.com/" },
       { label: "yesjesus.app", url: "https://yesjesus.app/" }
     ],
@@ -252,7 +281,7 @@ const websites = [
     siteName: "api-service",
     mappedDomains: [
       { label: "api.openreward.com", url: "https://api.openreward.com/" },
-      { label: "openreward-001-api.etempurl.com", url: "http://openreward-001-api.etempurl.com/" }
+      { label: "api-preview.etempurl.com", url: "http://api-preview.etempurl.com/" }
     ],
     runtime: "ASP.NET Web API",
     status: "Active"
@@ -885,7 +914,7 @@ function PasswordResetConfirm({ theme, onBackToLogin, onToggleTheme }) {
 
 function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
   const [login, setLogin] = useState("openreward");
-  const [password, setPassword] = useState("abcd1234");
+  const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -1213,6 +1242,7 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
   const [hostingPlanOptions, setHostingPlanOptions] = useState([]);
   const [selectedCpId, setSelectedCpId] = useState(0);
   const [isHostingPlanMenuOpen, setIsHostingPlanMenuOpen] = useState(false);
+  const [accountFunds, setAccountFunds] = useState(null);
   const activeTitle = useMemo(
     () => controlPanelSections.find((section) => section.id === activeSection)?.label ?? "Dashboard",
     [activeSection]
@@ -1225,12 +1255,19 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
 
     async function loadHostingPlans() {
       try {
-        const response = await fetch("/api/account/dashboard");
-        const result = await response.json().catch(() => null);
-        if (!isMounted || !response.ok || !result?.success) return;
+        const [dashboardResponse, billingResponse] = await Promise.all([
+          fetch("/api/account/dashboard"),
+          fetch("/api/account/billing")
+        ]);
+        const result = await dashboardResponse.json().catch(() => null);
+        const billingResult = await billingResponse.json().catch(() => null);
+        if (!isMounted || !dashboardResponse.ok || !result?.success) return;
 
         const plans = result.dashboard?.hostingAccounts ?? [];
         setHostingPlanOptions(plans);
+        if (billingResponse.ok && billingResult?.success) {
+          setAccountFunds(formatUsdFull(billingResult.dashboard?.balance?.amount ?? 0));
+        }
         if (plans.length) {
           setSelectedCpId((currentCpId) => currentCpId || plans[0].cpId);
         }
@@ -1335,10 +1372,10 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
           </a>
         </div>
         <div className="reward-card" aria-label="Account balance">
-          <ProfileAvatar username="OPENREWARD" />
+          <ProfileAvatar username={currentUser?.login ?? "Account"} />
           <div>
-            <strong>OPENREWARD</strong>
-            <span>Funds $179.92</span>
+            <strong>{(currentUser?.login ?? "Account").toUpperCase()}</strong>
+            <span>Funds {accountFunds ?? "--"}</span>
           </div>
         </div>
       </aside>
@@ -1376,6 +1413,63 @@ function hostingApiUrl(path, cpId) {
   return cpId ? `${path}?cpId=${encodeURIComponent(cpId)}` : path;
 }
 
+function useSectionViewMode(sectionKey, itemCount) {
+  const storageKey = `controlpanel-view-${sectionKey}`;
+  const automaticMode = itemCount > 4 ? "table" : "cards";
+  const [viewMode, setViewModeState] = useState(() => {
+    const saved = localStorage.getItem(storageKey);
+    return saved === "cards" || saved === "table" ? saved : automaticMode;
+  });
+  const [hasUserPreference, setHasUserPreference] = useState(() => {
+    const saved = localStorage.getItem(storageKey);
+    return saved === "cards" || saved === "table";
+  });
+
+  useEffect(() => {
+    if (!hasUserPreference) {
+      setViewModeState(automaticMode);
+    }
+  }, [automaticMode, hasUserPreference]);
+
+  function setViewMode(nextMode) {
+    setHasUserPreference(true);
+    setViewModeState(nextMode);
+    localStorage.setItem(storageKey, nextMode);
+  }
+
+  return [viewMode, setViewMode];
+}
+
+function ViewModeToggle({ viewMode, onChange, label }) {
+  return (
+    <div className="view-toggle" aria-label={label}>
+      <button
+        className={viewMode === "cards" ? "active" : ""}
+        type="button"
+        onClick={() => onChange("cards")}
+        title="Cards"
+        aria-label="Cards"
+      >
+        <MenuIcon name="cards" />
+      </button>
+      <button
+        className={viewMode === "table" ? "active" : ""}
+        type="button"
+        onClick={() => onChange("table")}
+        title="Table"
+        aria-label="Table"
+      >
+        <MenuIcon name="table" />
+      </button>
+    </div>
+  );
+}
+
+function isTemporaryHostingDomain(value) {
+  const domain = String(value || "").toLowerCase();
+  return domain.includes("tempurl") || domain.includes("-site") || domain.includes(".site4now.net");
+}
+
 async function createPanelTestActivity(cpId, payload) {
   throw new Error(`${payload?.from || payload?.server || "This action"} needs a real provider gateway before it can run. No row was created.`);
 }
@@ -1408,6 +1502,20 @@ async function createHostingRealTest(cpId, area, fields) {
   return result;
 }
 
+async function provisionHosting(path, cpId, payload) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cpId, ...payload })
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.message ?? "Unable to run provisioning action.");
+  }
+
+  return result;
+}
+
 function HostingDashboard({ cpId }) {
   const [dashboard, setDashboard] = useState(null);
   const [securityDashboard, setSecurityDashboard] = useState(null);
@@ -1417,11 +1525,11 @@ function HostingDashboard({ cpId }) {
   const serverLogs = [
     {
       timeCreated: "6/10/2026 6:16:49 PM",
-      message: "A process serving application pool 'openreward-001' suffered a fatal communication error with the Windows Process Activation Service. The process id was '13612'. The data field contains the error number."
+      message: "A process serving the selected hosting application pool suffered a fatal communication error with the Windows Process Activation Service. The process id was '13612'. The data field contains the error number."
     },
     {
       timeCreated: "6/9/2026 2:16:59 PM",
-      message: "A process serving application pool 'openreward-001' suffered a fatal communication error with the Windows Process Activation Service. The process id was '84032'. The data field contains the error number."
+      message: "A process serving the selected hosting application pool suffered a fatal communication error with the Windows Process Activation Service. The process id was '84032'. The data field contains the error number."
     }
   ];
   const usageStats = dashboard?.metrics?.length
@@ -1482,7 +1590,7 @@ function HostingDashboard({ cpId }) {
       <article className="panel-card cp-context-card">
         <div>
           <span className="status-pill blue">{isLoadingDashboard ? "Loading" : dashboard?.status ?? "Live CP"}</span>
-          <h2>{dashboard?.cpLogin || "Mock Up Hosting"}</h2>
+          <h2>Hosting Overview</h2>
           <p>{dashboard?.primaryDomain || "Primary hosting context"}</p>
         </div>
         <dl className="cp-context-meta">
@@ -1615,26 +1723,38 @@ function HostingCpPlaceholder({ title }) {
 
 function WebsitesSection({ cpId }) {
   const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
-  const [viewMode, setViewMode] = useState("cards");
-  const [siteRecords, setSiteRecords] = useState(websites);
+  const sitesRequestId = useRef(0);
+  const [siteRecords, setSiteRecords] = useState([]);
+  const [viewMode, setViewMode] = useSectionViewMode("cp-websites", siteRecords.length);
   const [sitesDashboard, setSitesDashboard] = useState(null);
   const [isLoadingSites, setIsLoadingSites] = useState(true);
   const [sitesError, setSitesError] = useState("");
   const [websiteMessage, setWebsiteMessage] = useState("");
   const [selectedSiteKey, setSelectedSiteKey] = useState("");
-  const [newSiteDraft, setNewSiteDraft] = useState({ name: "newsite", folder: "/www/newsite", runtime: "ASP.NET 4.x Integrated" });
+  const [newSiteDraft, setNewSiteDraft] = useState({ name: "codex-test-site", domain: "codex-test.local", folder: "www\\codex-test-site", runtime: "v4.0" });
   const [domainDraft, setDomainDraft] = useState({ domain: "newdomain.com", mode: "Add Domain", createDns: true });
   const [pathDraft, setPathDraft] = useState({ path: "/www/sample.com", runtime: "ASP.NET 4.x Integrated", coreMode: "In Process" });
   const [ipDenyDraft, setIpDenyDraft] = useState({ ip: "203.0.113.10", mask: "255.255.255.255", mode: "Deny IP" });
   const [envDraft, setEnvDraft] = useState({ key: "ASPNETCORE_ENVIRONMENT", value: "Production", scope: "Site" });
   const [poolDraft, setPoolDraft] = useState({ action: "Recycle Pool", memory: "1024", mode: "64-bit" });
+  const [activeWebsiteFunction, setActiveWebsiteFunction] = useState(null);
+  const [isLoadingWebsiteFunction, setIsLoadingWebsiteFunction] = useState(false);
+  const [websiteFunctionError, setWebsiteFunctionError] = useState("");
+  const [websiteFunctionFields, setWebsiteFunctionFields] = useState({});
+  const [websiteFunctionMessage, setWebsiteFunctionMessage] = useState("");
 
   async function loadHostingSites() {
+    const requestId = ++sitesRequestId.current;
     setIsLoadingSites(true);
+    setSiteRecords([]);
+    setSitesDashboard(null);
+    setSelectedSiteKey("");
     setSitesError("");
     try {
       const response = await fetch(hostingApiUrl("/api/hosting/sites", cpId));
       const result = await response.json();
+      if (requestId !== sitesRequestId.current) return;
+
       if (!response.ok || !result.success) {
         setSitesError(result?.message ?? "Unable to load websites.");
         return;
@@ -1650,13 +1770,20 @@ function WebsitesSection({ cpId }) {
         setSelectedSiteKey("");
       }
     } catch {
+      if (requestId !== sitesRequestId.current) return;
       setSitesError("Unable to reach website service.");
     } finally {
+      if (requestId !== sitesRequestId.current) return;
       setIsLoadingSites(false);
     }
   }
 
   useEffect(() => {
+    setSiteRecords([]);
+    setSitesDashboard(null);
+    setSelectedSiteKey("");
+    setSitesError("");
+    setIsLoadingSites(true);
     loadHostingSites();
   }, [cpId]);
 
@@ -1737,18 +1864,87 @@ function WebsitesSection({ cpId }) {
     queueWebsiteTest(action, selectedSite, "", details);
   }
 
-  function submitNewSiteDraft(event) {
-    event.preventDefault();
-    queueWebsiteTest(
-      "+ New Site",
-      null,
-      newSiteDraft.folder,
-      `Add site request: site ${newSiteDraft.name}; folder ${newSiteDraft.folder}; runtime ${newSiteDraft.runtime}`
-    );
+  async function openWebsiteFunction(action, site = null) {
+    const selected = site ?? selectedSite;
+    const key = websiteMoreFunctionKeyByLabel[action] ?? action;
+    if (!selected?.siteUid || !key) {
+      queueWebsiteTest(action, selected);
+      return;
+    }
+
+    setWebsiteFunctionError("");
+    setWebsiteFunctionMessage("");
+    setWebsiteFunctionFields({});
+    setIsLoadingWebsiteFunction(true);
+    setActiveWebsiteFunction({ site: selected, label: action, key, details: null });
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/sites/${selected.siteUid}/functions/${key}`, cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setWebsiteFunctionError(result?.message ?? "Unable to load website function.");
+        return;
+      }
+
+      const fields = Object.fromEntries((result.function?.fields ?? []).map((field) => [field, defaultWebsiteFunctionField(field, selected)]));
+      setWebsiteFunctionFields(fields);
+      setActiveWebsiteFunction({ site: selected, label: result.function?.label ?? action, key, details: result.function });
+    } catch {
+      setWebsiteFunctionError("Unable to reach website function API.");
+    } finally {
+      setIsLoadingWebsiteFunction(false);
+    }
+  }
+
+  async function submitWebsiteFunction(action = "") {
+    if (!activeWebsiteFunction?.site?.siteUid || !activeWebsiteFunction?.key) return;
+    setWebsiteFunctionMessage("");
+    setWebsiteFunctionError("");
+    try {
+      const response = await fetch(`/api/hosting/sites/${activeWebsiteFunction.site.siteUid}/functions/${activeWebsiteFunction.key}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId, action, fields: websiteFunctionFields })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setWebsiteFunctionError(result?.message ?? "Website function failed.");
+        return;
+      }
+
+      setWebsiteFunctionMessage(result.message);
+      await loadHostingSites();
+      await reloadActivity();
+      await openWebsiteFunction(activeWebsiteFunction.label, activeWebsiteFunction.site);
+    } catch {
+      setWebsiteFunctionError("Unable to run website function.");
+    }
+  }
+
+  async function submitNewSiteDraft(event) {
+    event?.preventDefault();
+    setWebsiteMessage("");
+    try {
+      const result = await provisionHosting("/api/hosting/sites/provision", cpId, {
+        siteName: newSiteDraft.name,
+        domain: newSiteDraft.domain,
+        folder: newSiteDraft.folder,
+        netVersion: newSiteDraft.runtime,
+        serverId: ""
+      });
+      setWebsiteMessage(result.message);
+      await loadHostingSites();
+      await reloadActivity();
+    } catch (error) {
+      setWebsiteMessage(error.message);
+    }
   }
 
   function submitDomainDraft(event) {
     event.preventDefault();
+    if (isTemporaryHostingDomain(domainDraft.domain)) {
+      setWebsiteMessage("Domain functions are not tested on temporary hosting URLs. Use a mapped customer domain instead.");
+      return;
+    }
     queueSelectedWebsiteAction(
       domainDraft.mode,
       `Domain binding request: site ${selectedSite?.siteName || "selected site"}; domain ${domainDraft.domain}; action ${domainDraft.mode}; create DNS ${domainDraft.createDns ? "yes" : "no"}`
@@ -1796,36 +1992,17 @@ function WebsitesSection({ cpId }) {
     <section className="websites-section">
       <div className="website-toolbar panel-card">
         <div className="website-actions">
-          <button className="primary-button compact" type="button" onClick={() => queueWebsiteTest("+ New Site")}>+ New Site</button>
+          <button className="primary-button compact" type="button" onClick={() => submitNewSiteDraft()}>+ New Site</button>
           <button className="secondary-button compact" type="button" onClick={() => queueWebsiteTest("+ Sub Domain")}>+ Sub Domain</button>
           <button className="secondary-button compact" type="button" onClick={() => queueWebsiteTest("+ Automated Backups")}>+ Automated Backups</button>
         </div>
-        <div className="view-toggle" aria-label="Website view mode">
-          <button
-            className={viewMode === "cards" ? "active" : ""}
-            type="button"
-            onClick={() => setViewMode("cards")}
-            title="Cards"
-            aria-label="Cards"
-          >
-            <MenuIcon name="cards" />
-          </button>
-          <button
-            className={viewMode === "table" ? "active" : ""}
-            type="button"
-            onClick={() => setViewMode("table")}
-            title="Table"
-            aria-label="Table"
-          >
-            <MenuIcon name="table" />
-          </button>
-        </div>
+        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Website view mode" />
       </div>
 
       <div className="panel-card website-live-summary">
         <div>
           <span className="status-pill blue">Live websites</span>
-          <p>{sitesDashboard?.cpLogin ? `${sitesDashboard.cpLogin} · ${siteRecords.length} sites` : "Loading hosting websites"}</p>
+          <p>{sitesDashboard ? `${siteRecords.length} sites` : "Loading hosting websites"}</p>
         </div>
         <RefreshButton onClick={refreshWebsitesSection} />
       </div>
@@ -1847,9 +2024,9 @@ function WebsitesSection({ cpId }) {
       )}
 
       {!!siteRecords.length && (viewMode === "cards" ? (
-        <WebsiteCards sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} />
+        <WebsiteCards sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} onFunctionAction={openWebsiteFunction} />
       ) : (
-        <WebsiteTable sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} />
+        <WebsiteTable sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} onFunctionAction={openWebsiteFunction} />
       ))}
 
       {!!siteRecords.length && (
@@ -1870,25 +2047,6 @@ function WebsitesSection({ cpId }) {
             </label>
           </div>
 
-          <div className="website-more-grid">
-            {websiteMoreFunctionGroups.map((group) => (
-              <article className="website-more-card" key={group.title}>
-                <div>
-                  <span className="status-pill muted">{group.badge}</span>
-                  <h3>{group.title}</h3>
-                  <p>{group.description}</p>
-                </div>
-                <div className="website-more-actions">
-                  {group.actions.map((action) => (
-                    <button className="secondary-button compact" type="button" key={action} onClick={() => queueSelectedWebsiteAction(action)}>
-                      {action}
-                    </button>
-                  ))}
-                </div>
-              </article>
-            ))}
-          </div>
-
           <div className="website-function-form-grid">
             <form className="website-function-form" onSubmit={submitNewSiteDraft}>
               <span className="status-pill blue">New Site</span>
@@ -1897,19 +2055,23 @@ function WebsitesSection({ cpId }) {
                 <input value={newSiteDraft.name} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, name: event.target.value }))} />
               </label>
               <label>
+                Domain
+                <input value={newSiteDraft.domain} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+              </label>
+              <label>
                 Folder
                 <input value={newSiteDraft.folder} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, folder: event.target.value }))} />
               </label>
               <label>
                 Runtime
                 <select value={newSiteDraft.runtime} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, runtime: event.target.value }))}>
-                  <option>ASP.NET 4.x Integrated</option>
-                  <option>ASP.NET 4.x Classic</option>
-                  <option>.NET Core</option>
-                  <option>PHP</option>
+                  <option value="v4.0">ASP.NET 4.x Integrated</option>
+                  <option value="v4.0-Classic">ASP.NET 4.x Classic</option>
+                  <option value="core">.NET Core</option>
+                  <option value="php">PHP</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Check Gateway</button>
+              <button className="primary-button compact" type="submit">Create Site</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitDomainDraft}>
@@ -1932,7 +2094,7 @@ function WebsitesSection({ cpId }) {
                 <input type="checkbox" checked={domainDraft.createDns} onChange={(event) => setDomainDraft((draft) => ({ ...draft, createDns: event.target.checked }))} />
                 Create DNS zone
               </label>
-              <button className="primary-button compact" type="submit">Check Gateway</button>
+              <button className="primary-button compact" type="submit">Review Action</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitPathRuntimeDraft}>
@@ -1958,7 +2120,7 @@ function WebsitesSection({ cpId }) {
                   <option>Out of Process</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Check Gateway</button>
+              <button className="primary-button compact" type="submit">Review Action</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitIpDenyDraft}>
@@ -1979,7 +2141,7 @@ function WebsitesSection({ cpId }) {
                   <option>Dynamic IP Protection</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Check Gateway</button>
+              <button className="primary-button compact" type="submit">Review Action</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitEnvDraft}>
@@ -1999,7 +2161,7 @@ function WebsitesSection({ cpId }) {
                   <option>Application Pool</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Check Gateway</button>
+              <button className="primary-button compact" type="submit">Review Action</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitPoolDraft}>
@@ -2033,6 +2195,20 @@ function WebsitesSection({ cpId }) {
         </section>
       )}
 
+      {activeWebsiteFunction && (
+        <WebsiteFunctionDrawer
+          activeFunction={activeWebsiteFunction}
+          fields={websiteFunctionFields}
+          error={websiteFunctionError}
+          isLoading={isLoadingWebsiteFunction}
+          message={websiteFunctionMessage}
+          onChangeField={(field, value) => setWebsiteFunctionFields((current) => ({ ...current, [field]: value }))}
+          onClose={() => setActiveWebsiteFunction(null)}
+          onRefresh={() => openWebsiteFunction(activeWebsiteFunction.label, activeWebsiteFunction.site)}
+          onSubmit={submitWebsiteFunction}
+        />
+      )}
+
       <ActivityList jobs={websiteJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent website jobs" onRetry={reloadActivity} />
     </section>
   );
@@ -2061,7 +2237,7 @@ function mapHostingSiteToUi(site) {
   };
 }
 
-function WebsiteCards({ sites, onUpdateSiteName, onQueueAction }) {
+function WebsiteCards({ sites, onUpdateSiteName, onQueueAction, onFunctionAction }) {
   return (
     <div className="website-card-grid">
       {sites.map((site, siteIndex) => (
@@ -2090,14 +2266,17 @@ function WebsiteCards({ sites, onUpdateSiteName, onQueueAction }) {
               </button>
             </div>
           </div>
-          <WebsiteActionButtons onAction={(action) => onQueueAction(action, site)} />
+          <WebsiteActionButtons
+            onAction={(action) => onQueueAction(action, site)}
+            onFunctionAction={(action) => onFunctionAction(action, site)}
+          />
         </article>
       ))}
     </div>
   );
 }
 
-function WebsiteTable({ sites, onUpdateSiteName, onQueueAction }) {
+function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction }) {
   return (
     <div className="table-wrap website-table">
       <table>
@@ -2134,7 +2313,13 @@ function WebsiteTable({ sites, onUpdateSiteName, onQueueAction }) {
               </td>
               <td>{site.runtime}</td>
               <td>{site.status}</td>
-              <td><WebsiteActionButtons compact onAction={(action) => onQueueAction(action, site)} /></td>
+              <td>
+                <WebsiteActionButtons
+                  compact
+                  onAction={(action) => onQueueAction(action, site)}
+                  onFunctionAction={(action) => onFunctionAction(action, site)}
+                />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -2193,10 +2378,59 @@ function DeployButtons({ onAction }) {
   );
 }
 
-function WebsiteActionButtons({ compact = false, onAction }) {
+function WebsiteActionButtons({ compact = false, onAction, onFunctionAction }) {
+  const [morePopoverStyle, setMorePopoverStyle] = useState(null);
+
+  const openMorePopover = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const sidebar = document.querySelector(".cp-sidebar, .sidebar, aside");
+    const sidebarRight = sidebar?.getBoundingClientRect().right ?? 0;
+    const gutter = 24;
+    const minLeft = Math.max(sidebarRight + 28, gutter);
+    const availableWidth = window.innerWidth - minLeft - gutter;
+    const width = Math.min(720, Math.max(360, availableWidth));
+    const left = Math.min(Math.max(rect.right - width, minLeft), window.innerWidth - width - gutter);
+    const estimatedHeight = 520;
+    const preferredTop = rect.bottom + 12;
+    const top = Math.min(preferredTop, Math.max(gutter, window.innerHeight - estimatedHeight - gutter));
+
+    setMorePopoverStyle({
+      "--popover-arrow-left": `${Math.min(Math.max(rect.left + rect.width / 2 - left - 7, 18), width - 32)}px`,
+      left: `${left}px`,
+      maxHeight: `calc(100vh - ${Math.round(top + gutter)}px)`,
+      top: `${top}px`,
+      width: `${width}px`
+    });
+  };
+
+  const closeMorePopover = () => setMorePopoverStyle(null);
+
   return (
     <div className={compact ? "website-action-buttons compact-actions" : "website-action-buttons"}>
-      {websiteActions.map((action) => (
+      {websiteActions.map((action) => action.label === "More Functions" ? (
+        <div
+          className="website-action-more"
+          key={action.label}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              closeMorePopover();
+            }
+          }}
+          onFocus={openMorePopover}
+          onMouseEnter={openMorePopover}
+          onMouseLeave={closeMorePopover}
+        >
+          <button
+            aria-label={action.label}
+            className="secondary-button compact icon-only-button"
+            title={action.label}
+            type="button"
+          >
+            <MenuIcon name={action.icon} />
+          </button>
+          <WebsiteMoreFunctionsPopover isOpen={Boolean(morePopoverStyle)} onAction={onFunctionAction ?? onAction} style={morePopoverStyle} />
+        </div>
+      ) : (
         <button
           aria-label={action.label}
           className="secondary-button compact icon-only-button"
@@ -2212,6 +2446,185 @@ function WebsiteActionButtons({ compact = false, onAction }) {
   );
 }
 
+function WebsiteMoreFunctionsPopover({ isOpen, onAction, style }) {
+  return (
+    <div
+      className={`website-more-popover${isOpen ? " is-open" : ""}`}
+      role="menu"
+      aria-label="More website functions"
+      style={style ?? undefined}
+    >
+      {websiteMoreFunctionColumns.map((column) => (
+        <section className="website-more-column" key={column.title}>
+          <h3>{column.title}</h3>
+          <div className="website-more-list">
+            {column.items.map((item) => (
+              <button type="button" role="menuitem" key={item.label} onClick={() => onAction(item.label)}>
+                <MenuIcon name={item.icon} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, message, onChangeField, onClose, onRefresh, onSubmit }) {
+  const details = activeFunction.details;
+  const data = details?.data ?? {};
+  const visibleGroups = Object.entries(data).filter(([, value]) => {
+    if (Array.isArray(value)) return value.length > 0;
+    if (value && typeof value === "object") return Object.keys(value).length > 0;
+    return value !== null && value !== undefined && value !== "";
+  });
+
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="function-drawer panel-card" aria-label={`${activeFunction.label} function`} role="dialog">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">{details?.group ?? "More Functions"}</span>
+            <h2>{activeFunction.label}</h2>
+            <p>{details?.description ?? "Loading website function details..."}</p>
+          </div>
+          <div className="function-drawer-actions">
+            <RefreshButton onClick={onRefresh} />
+            <button className="secondary-button compact icon-only-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+              <MenuIcon name="x" />
+            </button>
+          </div>
+        </header>
+
+        {isLoading && <p className="empty-state">Loading live website data...</p>}
+        {error && <p className="sandbox-message danger">{error}</p>}
+        {message && <p className="sandbox-message">{message}</p>}
+
+        {details && (
+          <>
+            <dl className="function-meta">
+              <div><dt>Site</dt><dd>{activeFunction.site?.siteName}</dd></div>
+              <div><dt>Legacy Entry</dt><dd>{details.legacyEntry}</dd></div>
+              <div><dt>Underlying API</dt><dd>{details.underlyingApi}</dd></div>
+              <div><dt>Remote Agent</dt><dd>{details.usesRemoteAgent ? "Required" : "Not required"}</dd></div>
+            </dl>
+
+            {!!details.warnings?.length && (
+              <div className="function-warning-list">
+                {details.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+              </div>
+            )}
+
+            {!!details.fields?.length && (
+              <form className="function-field-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit(fields.action || "save");
+              }}>
+                <h3>Action Fields</h3>
+                {details.fields.map((field) => (
+                  <label key={field}>
+                    {humanizeFunctionField(field)}
+                    <input
+                      value={fields[field] ?? ""}
+                      onChange={(event) => onChangeField(field, event.target.value)}
+                      placeholder={humanizeFunctionField(field)}
+                    />
+                  </label>
+                ))}
+                <div className="function-submit-row">
+                  {details.key === "site-on-off" ? (
+                    <>
+                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("start")}>Start</button>
+                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("stop")}>Stop</button>
+                    </>
+                  ) : details.supportsWrite ? (
+                    <button className="primary-button compact" type="submit">Run Function</button>
+                  ) : (
+                    <span className="status-pill muted">Read only</span>
+                  )}
+                </div>
+              </form>
+            )}
+
+            <div className="function-data-stack">
+              {visibleGroups.map(([name, value]) => (
+                <WebsiteFunctionDataGroup key={name} name={name} value={value} />
+              ))}
+            </div>
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function WebsiteFunctionDataGroup({ name, value }) {
+  if (Array.isArray(value)) {
+    return (
+      <section className="function-data-group">
+        <h3>{humanizeFunctionField(name)}</h3>
+        <div className="function-row-list">
+          {value.slice(0, 12).map((row, index) => (
+            <dl key={`${name}-${index}`} className="function-row-card">
+              {Object.entries(row).slice(0, 8).map(([key, cell]) => (
+                <div key={key}>
+                  <dt>{humanizeFunctionField(key)}</dt>
+                  <dd>{formatFunctionValue(cell)}</dd>
+                </div>
+              ))}
+            </dl>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (value && typeof value === "object") {
+    return (
+      <section className="function-data-group">
+        <h3>{humanizeFunctionField(name)}</h3>
+        <dl className="function-row-card">
+          {Object.entries(value).map(([key, cell]) => (
+            <div key={key}>
+              <dt>{humanizeFunctionField(key)}</dt>
+              <dd>{formatFunctionValue(cell)}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+    );
+  }
+
+  return null;
+}
+
+function defaultWebsiteFunctionField(field, site) {
+  if (field === "siteName") return site?.siteName ?? "";
+  if (field === "source" || field === "target" || field === "path" || field === "physicalPath") return site?.sitePath ?? "";
+  if (field === "enabled") return "true";
+  if (field === "action") return "save";
+  if (field === "permission") return "write";
+  if (field === "password") return "";
+  return "";
+}
+
+function humanizeFunctionField(value) {
+  return String(value ?? "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatFunctionValue(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
 function DatabasesSection({ cpId }) {
   const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
   const [databaseDashboard, setDatabaseDashboard] = useState(null);
@@ -2220,10 +2633,13 @@ function DatabasesSection({ cpId }) {
   const [databaseError, setDatabaseError] = useState("");
   const [databaseMessage, setDatabaseMessage] = useState("");
   const [connectionPreview, setConnectionPreview] = useState(null);
-  const [backupDraft, setBackupDraft] = useState({ databaseKey: "", hour: "2", name: "codex-test-dbbackup" });
-  const [newDatabaseDraft, setNewDatabaseDraft] = useState({ engine: "MSSQL", name: "codex-test-db", login: "codex-test-user", quota: "100" });
-  const [restoreDraft, setRestoreDraft] = useState({ databaseKey: "", backupFile: "/db_backup/testdb.bak", mode: "Restore from backup" });
-  const [sqlDraft, setSqlDraft] = useState({ databaseKey: "", filePath: "/www/sql/update.sql", action: "Run SQL File" });
+  const [deletedDatabases, setDeletedDatabases] = useState([]);
+  const [showDeletedDatabases, setShowDeletedDatabases] = useState(false);
+  const [backupSchedules, setBackupSchedules] = useState([]);
+  const [backupDraft, setBackupDraft] = useState({ databaseKey: "", hour: "2", retentionDays: "7" });
+  const [newDatabaseDraft, setNewDatabaseDraft] = useState({ engine: "MSSQL", name: "codex_test_db", login: "codex_test_user", password: "CodexTest123!", quota: "100", serverId: "" });
+  const [restoreDraft, setRestoreDraft] = useState({ databaseKey: "", backupFile: "/db/testdb.bak", mode: "Restore from backup" });
+  const [sqlDraft, setSqlDraft] = useState({ databaseKey: "", filePath: "/sql/update.sql", action: "Run SQL File" });
 
   async function loadDatabases() {
     setIsLoadingDatabases(true);
@@ -2246,12 +2662,14 @@ function DatabasesSection({ cpId }) {
 
   useEffect(() => {
     loadDatabases();
+    loadBackupSchedules();
   }, [cpId]);
 
   const databases = databaseDashboard?.databases ?? [];
   const visibleDatabases = activeEngine === "All"
     ? databases
     : databases.filter((database) => database.engine === activeEngine);
+  const [viewMode, setViewMode] = useSectionViewMode("cp-databases", visibleDatabases.length);
   const totals = databaseDashboard?.totals ?? { total: 0, mssql: 0, mysql: 0 };
   const databaseJobs = (activity?.jobs ?? []).filter((job) =>
     ["Queue MSSQL Backup", "Queue MSSQL Restore", "Queue MySQL Backup", "Queue MySQL Restore", "Run MSSQL File", "panel-test"].includes(job.type)
@@ -2274,31 +2692,73 @@ function DatabasesSection({ cpId }) {
     }
   }
 
-  async function queueDatabaseWorker(type, database, payload = {}) {
-    const serverId = legacyServerToken(database?.host);
-    const result = await createHostingWorkqueue(cpId, {
-      type,
-      zipFile: payload.zipFile ?? serverId,
-      dstFolder: payload.dstFolder ?? "\\www\\db\\",
-      serverId,
-      data1: payload.data1 ?? database?.name ?? "",
-      siteOwner: database?.name ?? "",
-      notifyEmail: "database-manager"
+  async function postDatabaseAction(database, action, payload = {}) {
+    const response = await fetch(hostingApiUrl(`/api/hosting/databases/${encodeURIComponent(database.engine)}/${database.databaseId}/${action}`, cpId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cpId, ...payload })
     });
-    setDatabaseMessage(result.message);
-    await reloadActivity();
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.message ?? "Unable to run database action.");
+    }
+
+    return result;
   }
 
-  function showConnectionString(database) {
-    setConnectionPreview({
-      name: database.name,
-      engine: database.engine,
-      host: database.host || (database.engine === "MSSQL" ? "mssql.site4now.net" : "mysql.site4now.net"),
-      login: database.login,
-      text: database.engine === "MSSQL"
-        ? `Server=${database.host || "mssql.site4now.net"};Database=${database.name};User ID=${database.login};Password=YOUR_DB_PASSWORD;TrustServerCertificate=True;`
-        : `Driver={MySQL ODBC 8.0 UNICODE Driver};Server=${database.host || "mysql.site4now.net"};Database=${database.name};Uid=${database.login};Password=YOUR_DB_PASSWORD;`
-    });
+  async function loadBackupSchedules() {
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/databases/backup-schedules", cpId));
+      const result = await response.json().catch(() => null);
+      if (response.ok && result?.success) {
+        setBackupSchedules(result.schedules ?? []);
+      }
+    } catch {
+      setBackupSchedules([]);
+    }
+  }
+
+  async function backupDatabaseNow(database) {
+    setDatabaseMessage("");
+    try {
+      const result = await postDatabaseAction(database, "backup");
+      setDatabaseMessage(result.message);
+      await reloadActivity();
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
+  }
+
+  async function showConnectionString(database) {
+    setDatabaseMessage("");
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/databases/${encodeURIComponent(database.engine)}/${database.databaseId}/connection-string`, cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to load connection strings.");
+      }
+
+      setConnectionPreview(result.connection);
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
+  }
+
+  async function loadDeletedDatabases() {
+    setDatabaseMessage("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/databases/deleted", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to load deleted databases.");
+      }
+
+      setDeletedDatabases(result.databases ?? []);
+      setShowDeletedDatabases(true);
+      setDatabaseMessage((result.databases ?? []).length ? "Deleted databases loaded." : "No recoverable deleted databases were found.");
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
   }
 
   async function submitBackupDraft(event) {
@@ -2310,8 +2770,31 @@ function DatabasesSection({ cpId }) {
     }
 
     const hour = Math.max(0, Math.min(23, Number(backupDraft.hour) || 0));
+    const retentionDays = Math.max(1, Math.min(7, Number(backupDraft.retentionDays) || 7));
     try {
-      const result = await createHostingRealTest(cpId, "db-backup", { name: backupDraft.name, hour: String(hour) });
+      const result = await postDatabaseAction(database, "backup-schedules", { hour, retentionDays });
+      setDatabaseMessage(result.message);
+      await loadBackupSchedules();
+      await loadDatabases();
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
+  }
+
+  async function submitNewDatabaseDraft(event) {
+    event.preventDefault();
+    setDatabaseMessage("");
+    const quota = Math.max(10, Math.min(10240, Number(newDatabaseDraft.quota) || 100));
+    try {
+      const result = await provisionHosting("/api/hosting/databases/provision", cpId, {
+        engine: newDatabaseDraft.engine,
+        name: newDatabaseDraft.name,
+        login: newDatabaseDraft.login,
+        password: newDatabaseDraft.password,
+        quotaMb: quota,
+        collation: "SQL_Latin1_General_CP1_CI_AS",
+        serverId: newDatabaseDraft.serverId
+      });
       setDatabaseMessage(result.message);
       await loadDatabases();
     } catch (error) {
@@ -2319,17 +2802,25 @@ function DatabasesSection({ cpId }) {
     }
   }
 
-  function submitNewDatabaseDraft(event) {
-    event.preventDefault();
-    const quota = Math.max(10, Math.min(10240, Number(newDatabaseDraft.quota) || 100));
-    queueDatabaseTest(
-      `Create ${newDatabaseDraft.engine} Database`,
-      null,
-      `Database create request: engine ${newDatabaseDraft.engine}; name ${newDatabaseDraft.name}; login ${newDatabaseDraft.login}; quota ${quota} MB; cpid ${cpId}`
-    );
+  async function deleteBackupSchedule(schedule) {
+    setDatabaseMessage("");
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/databases/backup-schedules/${schedule.id}`, cpId), {
+        method: "DELETE"
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to disable backup schedule.");
+      }
+
+      setDatabaseMessage(result.message);
+      await loadBackupSchedules();
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
   }
 
-  function submitRestoreDraft(event) {
+  async function submitRestoreDraft(event) {
     event.preventDefault();
     const database = databases.find((item) => `${item.engine}:${item.databaseId}` === restoreDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
     if (!database) {
@@ -2338,22 +2829,22 @@ function DatabasesSection({ cpId }) {
     }
 
     if (restoreDraft.mode === "Show Deleted DBs") {
-      setDatabaseMessage("Deleted database recovery is read-only here until the old deleted-DB restore gateway is mapped.");
+      await loadDeletedDatabases();
       return;
     }
 
-    const type = restoreDraft.mode === "Restore from backup"
-      ? database.engine === "MSSQL" ? "Queue MSSQL Restore" : "Queue MySQL Restore"
-      : restoreDraft.mode;
-
-    queueDatabaseWorker(type, database, {
-      zipFile: restoreDraft.mode === "Restore from backup" ? restoreDraft.backupFile : legacyServerToken(database.host),
-      dstFolder: restoreDraft.mode === "Restore from backup" ? String(database.databaseId) : "\\www\\db\\",
-      data1: restoreDraft.mode === "Restore from backup" ? "" : database.engine === "MSSQL" ? `${database.name}.bak` : `${database.name}.sql`
-    }).catch((error) => setDatabaseMessage(error.message));
+    try {
+      const result = restoreDraft.mode === "Backup now"
+        ? await postDatabaseAction(database, "backup")
+        : await postDatabaseAction(database, "restore", { path: restoreDraft.backupFile });
+      setDatabaseMessage(result.message);
+      await reloadActivity();
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
   }
 
-  function submitSqlDraft(event) {
+  async function submitSqlDraft(event) {
     event.preventDefault();
     const database = databases.find((item) => `${item.engine}:${item.databaseId}` === sqlDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
     if (!database) {
@@ -2371,11 +2862,22 @@ function DatabasesSection({ cpId }) {
       return;
     }
 
-    queueDatabaseWorker("Run MSSQL File", database, {
-      zipFile: sqlDraft.filePath,
-      dstFolder: String(database.databaseId),
-      data1: database.name
-    }).catch((error) => setDatabaseMessage(error.message));
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/databases/mssql/${database.databaseId}/run-sql-file`, cpId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId, path: sqlDraft.filePath })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to queue SQL file.");
+      }
+
+      setDatabaseMessage(result.message);
+      await reloadActivity();
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
   }
 
   return (
@@ -2383,7 +2885,7 @@ function DatabasesSection({ cpId }) {
       <article className="panel-card database-summary-card">
         <div>
           <span className="status-pill blue">Live databases</span>
-          <h2>{databaseDashboard?.cpLogin || "Database Manager"}</h2>
+          <h2>Database Manager</h2>
           <p>Unified MSSQL and MySQL inventory from the hosting control panel.</p>
         </div>
         <div className="database-total-grid">
@@ -2400,7 +2902,7 @@ function DatabasesSection({ cpId }) {
           <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("+ Quota")}>+ Quota</button>
           <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("+ Advanced Backup")}>+ Advanced Backup</button>
           <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("Run SQL File")}>Run SQL File</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueDatabaseTest("Deleted DBs")}>Deleted DBs</button>
+          <button className="secondary-button compact" type="button" onClick={loadDeletedDatabases}>Deleted DBs</button>
         </div>
         <div className="engine-tabs" aria-label="Database engine filter">
           {["All", "MSSQL", "MySQL"].map((engine) => (
@@ -2414,14 +2916,15 @@ function DatabasesSection({ cpId }) {
             </button>
           ))}
         </div>
+        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Database view mode" />
       </div>
 
       {!!visibleDatabases.length && (
         <article className="panel-card database-schedule-card">
           <div>
             <span className="status-pill blue">Scheduled database backups</span>
-            <h3>Custom Backup Draft</h3>
-            <p>Creates a guarded test row in the legacy `customDBBackup` table.</p>
+            <h3>Automated Backups</h3>
+            <p>Enable the legacy custom database backup schedule for a selected MSSQL or MySQL database.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitBackupDraft}>
             <label>
@@ -2439,11 +2942,22 @@ function DatabasesSection({ cpId }) {
               <input type="number" min="0" max="23" value={backupDraft.hour} onChange={(event) => setBackupDraft((draft) => ({ ...draft, hour: event.target.value }))} />
             </label>
             <label>
-              Test Name
-              <input value={backupDraft.name} onChange={(event) => setBackupDraft((draft) => ({ ...draft, name: event.target.value }))} />
+              Retention Days
+              <input type="number" min="1" max="7" value={backupDraft.retentionDays} onChange={(event) => setBackupDraft((draft) => ({ ...draft, retentionDays: event.target.value }))} />
             </label>
-            <button className="primary-button compact" type="submit">Create Test Schedule</button>
+            <button className="primary-button compact" type="submit">Enable Backup</button>
           </form>
+          {!!backupSchedules.length && (
+            <div className="database-schedule-list">
+              {backupSchedules.map((schedule) => (
+                <div className="database-schedule-row" key={schedule.id}>
+                  <span>{schedule.engine} · {schedule.name}</span>
+                  <small>{schedule.hour}:00 · keep {schedule.retentionDays} days</small>
+                  <button className="secondary-button compact" type="button" onClick={() => deleteBackupSchedule(schedule)}>Disable</button>
+                </div>
+              ))}
+            </div>
+          )}
         </article>
       )}
 
@@ -2471,17 +2985,25 @@ function DatabasesSection({ cpId }) {
               <input value={newDatabaseDraft.login} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, login: event.target.value }))} />
             </label>
             <label>
+              Password
+              <input type="password" value={newDatabaseDraft.password} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, password: event.target.value }))} />
+            </label>
+            <label>
               Quota MB
               <input type="number" min="10" max="10240" value={newDatabaseDraft.quota} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, quota: event.target.value }))} />
             </label>
-            <button className="primary-button compact" type="submit">Check Gateway</button>
+            <label>
+              Server ID
+              <input placeholder="Optional, defaults to hosting server" value={newDatabaseDraft.serverId} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, serverId: event.target.value }))} />
+            </label>
+            <button className="primary-button compact" type="submit">Create Database</button>
           </form>
         </article>
 
         <article className="panel-card advance-form-card">
           <div>
             <span className="status-pill blue">Restore / Backup</span>
-            <h3>Server Backup Draft</h3>
+            <h3>Server Backup</h3>
             <p>Queues backup, restore, and compatible database worker jobs through the legacy worker.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitRestoreDraft}>
@@ -2503,8 +3025,7 @@ function DatabasesSection({ cpId }) {
               Mode
               <select value={restoreDraft.mode} onChange={(event) => setRestoreDraft((draft) => ({ ...draft, mode: event.target.value }))}>
                 <option>Restore from backup</option>
-                <option>Queue MSSQL Backup</option>
-                <option>Queue MySQL Backup</option>
+                <option>Backup now</option>
                 <option>Show Deleted DBs</option>
               </select>
             </label>
@@ -2553,12 +3074,61 @@ function DatabasesSection({ cpId }) {
           <div className="database-card-header">
             <div>
               <span className="status-pill blue">{connectionPreview.engine}</span>
-              <h3>{connectionPreview.name} connection string</h3>
+              <h3>{connectionPreview.name} connection strings</h3>
               <p>Password is intentionally not displayed.</p>
             </div>
             <button className="secondary-button compact" type="button" onClick={() => setConnectionPreview(null)}>Close</button>
           </div>
-          <code>{connectionPreview.text}</code>
+          <dl className="connection-snippet-list">
+            <div><dt>Server Name</dt><dd>{connectionPreview.host}</dd></div>
+            <div><dt>Database Name</dt><dd>{connectionPreview.name}</dd></div>
+            <div><dt>User Name</dt><dd>{connectionPreview.login}</dd></div>
+          </dl>
+          {Object.entries(connectionPreview.snippets ?? {}).map(([label, value]) => (
+            <div className="connection-snippet" key={label}>
+              <span>{label}</span>
+              <code>{value}</code>
+            </div>
+          ))}
+        </article>
+      )}
+      {showDeletedDatabases && (
+        <article className="panel-card connection-preview-card">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill orange">Recovery</span>
+              <h3>Deleted Databases</h3>
+              <p>Recoverable deleted database rows from the seven-day legacy recovery window.</p>
+            </div>
+            <button className="secondary-button compact" type="button" onClick={() => setShowDeletedDatabases(false)}>Close</button>
+          </div>
+          {!deletedDatabases.length && <p className="empty-state">No recoverable deleted databases found.</p>}
+          {!!deletedDatabases.length && (
+            <div className="table-wrap website-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Database</th>
+                    <th>Engine</th>
+                    <th>Server</th>
+                    <th>Deleted</th>
+                    <th>Days Left</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deletedDatabases.map((database) => (
+                    <tr key={`${database.engine}-${database.databaseId}`}>
+                      <td>{database.name}</td>
+                      <td>{database.engine}</td>
+                      <td>{database.host || "Server pending"}</td>
+                      <td>{formatDate(database.deletedAt)}</td>
+                      <td><span className="status-pill orange">{database.daysLeft}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </article>
       )}
       {databaseError && (
@@ -2575,7 +3145,7 @@ function DatabasesSection({ cpId }) {
         </div>
       )}
 
-      {!!visibleDatabases.length && (
+      {!!visibleDatabases.length && viewMode === "cards" && (
         <div className="database-card-grid">
           {visibleDatabases.map((database) => (
             <article className="panel-card database-card" key={`${database.engine}-${database.databaseId}`}>
@@ -2594,13 +3164,82 @@ function DatabasesSection({ cpId }) {
               </dl>
               <div className="database-action-row">
                 {["Backup", "Restore", "Connection String", "More"].map((action) => (
-                  <button className="secondary-button compact" type="button" key={action} onClick={() => action === "Connection String" ? showConnectionString(database) : queueDatabaseTest(action, database)}>
+                  <button
+                    className="secondary-button compact"
+                    type="button"
+                    key={action}
+                    onClick={() => {
+                      if (action === "Connection String") {
+                        showConnectionString(database);
+                        return;
+                      }
+
+                      if (action === "Backup") {
+                        backupDatabaseNow(database);
+                        return;
+                      }
+
+                      if (action === "Restore") {
+                        setRestoreDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}`, backupFile: database.engine === "MSSQL" ? "/db/backup.bak" : "/db/backup.sql", mode: "Restore from backup" }));
+                        setDatabaseMessage("Enter the backup file path in Server Backup, then queue the restore.");
+                        return;
+                      }
+
+                      setSqlDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}` }));
+                      setDatabaseMessage(database.engine === "MSSQL" ? "Use Run SQL to queue a SQL file for this database." : "MySQL import needs the exact legacy import gateway before it can be enabled.");
+                    }}
+                  >
                     {action}
                   </button>
                 ))}
               </div>
             </article>
           ))}
+        </div>
+      )}
+      {!!visibleDatabases.length && viewMode === "table" && (
+        <div className="table-wrap website-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Database</th>
+                <th>Engine</th>
+                <th>Server</th>
+                <th>Login</th>
+                <th>Quota</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleDatabases.map((database) => (
+                <tr key={`${database.engine}-${database.databaseId}`}>
+                  <td>{database.name}</td>
+                  <td>{database.engine}</td>
+                  <td>{database.host || "Server pending"}</td>
+                  <td>{database.login}</td>
+                  <td>{database.spaceQuotaMb} MB</td>
+                  <td><span className={database.status === "Active" ? "status-pill" : "status-pill muted"}>{database.status}</span></td>
+                  <td>{formatDate(database.createDate)}</td>
+                  <td>
+                    <div className="website-action-buttons compact-actions">
+                      <button className="secondary-button compact" type="button" onClick={() => backupDatabaseNow(database)}>Backup</button>
+                      <button className="secondary-button compact" type="button" onClick={() => {
+                        setRestoreDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}`, backupFile: database.engine === "MSSQL" ? "/db/backup.bak" : "/db/backup.sql", mode: "Restore from backup" }));
+                        setDatabaseMessage("Enter the backup file path in Server Backup, then queue the restore.");
+                      }}>Restore</button>
+                      <button className="secondary-button compact" type="button" onClick={() => showConnectionString(database)}>Connection</button>
+                      <button className="secondary-button compact" type="button" onClick={() => {
+                        setSqlDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}` }));
+                        setDatabaseMessage(database.engine === "MSSQL" ? "Use Run SQL to queue a SQL file for this database." : "MySQL import needs the exact legacy import gateway before it can be enabled.");
+                      }}>More</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       <ActivityList jobs={databaseJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent database jobs" onRetry={reloadActivity} />
@@ -2640,7 +3279,7 @@ function EmailsSection({ cpId }) {
   const [isLoadingEmails, setIsLoadingEmails] = useState(true);
   const [emailError, setEmailError] = useState("");
   const [emailMessage, setEmailMessage] = useState("");
-  const [emailDomainDraft, setEmailDomainDraft] = useState({ domain: "mail.example.com", type: "Hosted Email", quota: "1000" });
+  const [emailDomainDraft, setEmailDomainDraft] = useState({ domain: "codex-test-mail.local", type: "Hosted Email", password: "CodexMail123!", quota: "1000", mailboxQuota: "2", mailServer: "" });
   const [mailboxDraft, setMailboxDraft] = useState({ domain: "", mailbox: "info", quota: "500", action: "Create Mailbox" });
 
   async function loadEmails() {
@@ -2668,6 +3307,7 @@ function EmailsSection({ cpId }) {
 
   const domains = emailDashboard?.domains ?? [];
   const visibleDomains = activeType === "All" ? domains : domains.filter((domain) => domain.type === activeType);
+  const [viewMode, setViewMode] = useSectionViewMode("cp-emails", visibleDomains.length);
   const totals = emailDashboard?.totals ?? { total: 0, hosted: 0, corporate: 0, dailyLimits: 0 };
   const primaryDomain = visibleDomains[0] ?? domains[0] ?? null;
   const mailSetupRows = buildMailSetupRows(primaryDomain);
@@ -2693,13 +3333,22 @@ function EmailsSection({ cpId }) {
     }
   }
 
-  function submitEmailDomainDraft(event) {
+  async function submitEmailDomainDraft(event) {
     event.preventDefault();
-    queueEmailTest(
-      `Add ${emailDomainDraft.type}`,
-      { domain: emailDomainDraft.domain, mailHost: "mail-manager" },
-      `Email domain request: domain ${emailDomainDraft.domain}; type ${emailDomainDraft.type}; quota ${emailDomainDraft.quota} MB`
-    );
+    setEmailMessage("");
+    try {
+      const result = await provisionHosting("/api/hosting/emails/provision", cpId, {
+        domain: emailDomainDraft.domain,
+        password: emailDomainDraft.password,
+        quotaMb: Number(emailDomainDraft.quota) || 1000,
+        mailboxQuota: Number(emailDomainDraft.mailboxQuota) || 2,
+        mailServer: emailDomainDraft.mailServer
+      });
+      setEmailMessage(result.message);
+      await loadEmails();
+    } catch (error) {
+      setEmailMessage(error.message);
+    }
   }
 
   function submitMailboxDraft(event) {
@@ -2712,6 +3361,110 @@ function EmailsSection({ cpId }) {
     );
   }
 
+  async function runEmailDomainRequest(domain, path, options = {}) {
+    setEmailMessage("");
+    try {
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        }
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? `Unable to update ${domain.domain}.`);
+      }
+
+      setEmailMessage(result.message);
+      await loadEmails();
+      await reloadActivity();
+    } catch (error) {
+      setEmailMessage(error.message);
+    }
+  }
+
+  function resetPostmasterPassword(domain) {
+    const password = window.prompt(`New postmaster password for ${domain.domain}. Leave blank to generate one.`, "");
+    if (password === null) return;
+    runEmailDomainRequest(
+      domain,
+      `/api/hosting/emails/${encodeURIComponent(domain.domain)}/password-reset`,
+      {
+        method: "POST",
+        body: JSON.stringify({ cpId, password, quotaMb: 0 })
+      }
+    );
+  }
+
+  function updateEmailQuota(domain) {
+    const quota = window.prompt(`Quota MB for ${domain.domain}`, String(domain.spaceMb > 0 ? domain.spaceMb : 100));
+    if (quota === null) return;
+    runEmailDomainRequest(
+      domain,
+      `/api/hosting/emails/${encodeURIComponent(domain.domain)}/quota`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ cpId, password: "", quotaMb: Number(quota) || 100 })
+      }
+    );
+  }
+
+  function deleteEmailDomain(domain) {
+    if (!window.confirm(`Delete email domain ${domain.domain}? This calls the legacy SmarterMail delete flow and then removes the hosted email DB row.`)) return;
+    runEmailDomainRequest(
+      domain,
+      `/api/hosting/emails/${encodeURIComponent(domain.domain)}?cpId=${encodeURIComponent(cpId)}`,
+      { method: "DELETE" }
+    );
+  }
+
+  function handleEmailDomainAction(action, domain) {
+    if (action === "Manage Mailboxes") {
+      setMailboxDraft((draft) => ({ ...draft, domain: domain.domain, action: "Create Mailbox" }));
+      setEmailMessage(`Mailbox tools are ready for ${domain.domain}. Choose the mailbox action below.`);
+      return;
+    }
+
+    if (action === "Alias" || action === "Forwarding") {
+      setMailboxDraft((draft) => ({ ...draft, domain: domain.domain, action: action === "Alias" ? "Create Alias" : "Create Forwarding" }));
+      setEmailMessage(`${action} setup selected for ${domain.domain}. Complete the mailbox draft below.`);
+      return;
+    }
+
+    if (action === "DNS") {
+      setEmailMessage(`DNS records for ${domain.domain}: ${buildMailSetupRows(domain).map((record) => `${record.label}: ${record.value}`).join(" | ")}`);
+      return;
+    }
+
+    if (action === "Webmail") {
+      if (domain.webmailUrl) {
+        window.open(domain.webmailUrl, "_blank", "noopener,noreferrer");
+        setEmailMessage(`Opened webmail for ${domain.domain}.`);
+      } else {
+        setEmailMessage(`No webmail URL is available for ${domain.domain}.`);
+      }
+      return;
+    }
+
+    if (action === "Password") {
+      resetPostmasterPassword(domain);
+      return;
+    }
+
+    if (action === "Quota") {
+      updateEmailQuota(domain);
+      return;
+    }
+
+    if (action === "Delete") {
+      deleteEmailDomain(domain);
+      return;
+    }
+
+    queueEmailTest(action, domain);
+  }
+
   function refreshEmailSection() {
     loadEmails();
     reloadActivity();
@@ -2722,7 +3475,7 @@ function EmailsSection({ cpId }) {
       <article className="panel-card cp-inventory-summary">
         <div>
           <span className="status-pill blue">Live email</span>
-          <h2>{emailDashboard?.cpLogin || "Email Manager"}</h2>
+          <h2>Email Manager</h2>
           <p>Hosted email and corporate email domains from the hosting control panel.</p>
         </div>
         <div className="database-total-grid">
@@ -2756,6 +3509,7 @@ function EmailsSection({ cpId }) {
             </button>
           ))}
         </div>
+        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Email view mode" />
       </div>
 
       <div className="email-tools-grid">
@@ -2803,10 +3557,22 @@ function EmailsSection({ cpId }) {
               </select>
             </label>
             <label>
+              Postmaster Password
+              <input type="password" value={emailDomainDraft.password} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, password: event.target.value }))} />
+            </label>
+            <label>
               Quota MB
               <input type="number" min="100" max="10240" value={emailDomainDraft.quota} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, quota: event.target.value }))} />
             </label>
-            <button className="primary-button compact" type="submit">Check Gateway</button>
+            <label>
+              Mailboxes
+              <input type="number" min="1" max="5000" value={emailDomainDraft.mailboxQuota} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, mailboxQuota: event.target.value }))} />
+            </label>
+            <label>
+              Mail Server
+              <input placeholder="Optional default server" value={emailDomainDraft.mailServer} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, mailServer: event.target.value }))} />
+            </label>
+            <button className="primary-button compact" type="submit">Create Email Domain</button>
           </form>
         </article>
 
@@ -2844,7 +3610,7 @@ function EmailsSection({ cpId }) {
                 <option>Delete Mailbox</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Check Gateway</button>
+            <button className="primary-button compact" type="submit">Review Action</button>
           </form>
         </article>
       </div>
@@ -2865,7 +3631,7 @@ function EmailsSection({ cpId }) {
         </div>
       )}
 
-      {!!visibleDomains.length && (
+      {!!visibleDomains.length && viewMode === "cards" && (
         <div className="database-card-grid">
           {visibleDomains.map((domain) => (
             <article className="panel-card database-card" key={`${domain.type}-${domain.domain}`}>
@@ -2884,14 +3650,54 @@ function EmailsSection({ cpId }) {
                 <div><dt>Created</dt><dd>{formatDate(domain.createDate)}</dd></div>
               </dl>
               <div className="database-action-row">
-                {["Manage Mailboxes", "Alias", "Forwarding", "Password", "DNS", "Webmail", "Delete"].map((action) => (
-                  <button className="secondary-button compact" type="button" key={action} onClick={() => queueEmailTest(action, domain)}>
+                {["Manage Mailboxes", "Alias", "Forwarding", "Password", "Quota", "DNS", "Webmail", "Delete"].map((action) => (
+                  <button className="secondary-button compact" type="button" key={action} onClick={() => handleEmailDomainAction(action, domain)}>
                     {action}
                   </button>
                 ))}
               </div>
             </article>
           ))}
+        </div>
+      )}
+      {!!visibleDomains.length && viewMode === "table" && (
+        <div className="table-wrap website-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Type</th>
+                <th>Server</th>
+                <th>Webmail</th>
+                <th>Mail Host</th>
+                <th>Space</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleDomains.map((domain) => (
+                <tr key={`${domain.type}-${domain.domain}`}>
+                  <td>{domain.domain}</td>
+                  <td>{domain.type}</td>
+                  <td>{domain.server || "Mail server pending"}</td>
+                  <td>{domain.webmailUrl || "Pending"}</td>
+                  <td>{domain.mailHost || "Pending"}</td>
+                  <td>{domain.spaceMb > 0 ? `${domain.spaceMb} MB` : "Product quota"}</td>
+                  <td><span className={domain.status === "Active" ? "status-pill" : "status-pill muted"}>{domain.status}</span></td>
+                  <td>
+                    <div className="website-action-buttons compact-actions">
+                      {["Password", "Quota", "DNS", "Webmail", "Delete"].map((action) => (
+                        <button className="secondary-button compact" type="button" key={action} onClick={() => handleEmailDomainAction(action, domain)}>
+                          {action}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -2927,7 +3733,9 @@ function FtpSection({ cpId }) {
   const [isLoadingFtp, setIsLoadingFtp] = useState(true);
   const [ftpError, setFtpError] = useState("");
   const [ftpMessage, setFtpMessage] = useState("");
-  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", path: "h:/root/home/openreward-001/www/codex-test", quota: "500", permission: "write" });
+  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test", quota: "500", permission: "write" });
+  const [editingFtpLogin, setEditingFtpLogin] = useState("");
+  const [isFtpMutating, setIsFtpMutating] = useState(false);
 
   async function loadFtp() {
     setIsLoadingFtp(true);
@@ -2960,34 +3768,113 @@ function FtpSection({ cpId }) {
     String(job.type ?? "").toLowerCase().includes("ftp")
   );
 
+  useEffect(() => {
+    if (!ftpDashboard?.cpLogin || editingFtpLogin) return;
+    setFtpDraft((draft) => {
+      if (draft.path && !draft.path.includes("openreward-001") && !draft.path.includes("jyu001-001")) return draft;
+      return { ...draft, path: "www\\codex-test" };
+    });
+  }, [ftpDashboard?.cpLogin, editingFtpLogin]);
+
+  async function runFtpRequest(path, options = {}) {
+    setFtpMessage("");
+    setIsFtpMutating(true);
+    try {
+      const response = await fetch(path, {
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        ...options
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to run FTP action.");
+      }
+
+      setFtpMessage(result.message);
+      await loadFtp();
+      await reloadActivity();
+      return result;
+    } finally {
+      setIsFtpMutating(false);
+    }
+  }
+
   async function queueFtpTest(action, user = null, details = "") {
     setFtpMessage("");
-    try {
-      await createPanelTestActivity(cpId, {
-        from: user ? `ftp:${user.login}` : `ftp:${action}`,
-        to: user ? user.path || "/www" : "/panel-test/ftp",
-        server: user?.server || "ftp-manager",
-        note: details || `FTP gateway required for ${action}`
-      });
-      setFtpMessage(`${action} needs the FTP gateway before it can run.`);
-      await reloadActivity();
-    } catch (error) {
-      setFtpMessage(error.message);
-    }
+    setFtpMessage(details || `${action} is not wired to a legacy bulk source yet. Use the live FTP user actions below.`);
   }
 
   async function submitFtpDraft(event) {
     event.preventDefault();
     setFtpMessage("");
     try {
-      const result = await createHostingRealTest(cpId, "ftp", {
-        name: ftpDraft.login,
+      const payload = {
+        cpId,
+        login: ftpDraft.login,
+        password: ftpDraft.password,
         path: ftpDraft.path,
-        quota: ftpDraft.quota,
+        quotaMb: Number(ftpDraft.quota) || 0,
         permission: ftpDraft.permission
-      });
+      };
+      const result = editingFtpLogin
+        ? await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(editingFtpLogin)}`, {
+            method: "PUT",
+            body: JSON.stringify(payload)
+          })
+        : await provisionHosting("/api/hosting/ftp/users", cpId, payload);
       setFtpMessage(result.message);
+      setEditingFtpLogin("");
+      setFtpDraft((draft) => ({ ...draft, login: "codex-test-ftp", password: "CodexFtp123!" }));
       await loadFtp();
+    } catch (error) {
+      setFtpMessage(error.message);
+    }
+  }
+
+  function editFtpUser(user) {
+    setEditingFtpLogin(user.login);
+    setFtpDraft({
+      login: user.login,
+      password: "",
+      path: simplifySitePath(user.rawPath || user.path || "", ftpDashboard?.cpLogin),
+      quota: String(user.quotaMb || 0),
+      permission: String(user.permission || "write").toLowerCase().includes("read") && !String(user.permission || "").toLowerCase().includes("write") ? "read" : "write"
+    });
+    setFtpMessage("Editing live FTP user. Leave password blank to keep the current password.");
+  }
+
+  async function setFtpUserStatus(user, action) {
+    try {
+      await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(user.login)}/status`, {
+        method: "POST",
+        body: JSON.stringify({ cpId, login: user.login, action })
+      });
+    } catch (error) {
+      setFtpMessage(error.message);
+    }
+  }
+
+  async function resetFtpUserPermissions(user) {
+    try {
+      await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(user.login)}/permissions/reset`, {
+        method: "POST",
+        body: JSON.stringify({ cpId, login: user.login, path: user.rawPath || "" })
+      });
+    } catch (error) {
+      setFtpMessage(error.message);
+    }
+  }
+
+  async function deleteFtpUser(user) {
+    if (user.isRootUser) {
+      setFtpMessage("Root FTP user cannot be deleted.");
+      return;
+    }
+
+    if (!window.confirm(`Delete FTP user ${displayFtpLogin(user.login, ftpDashboard?.cpLogin)}? This deletes the cp_config_FTP row, matching active Classic ASP behavior.`)) return;
+    try {
+      await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(user.login)}?cpId=${encodeURIComponent(cpId)}`, {
+        method: "DELETE"
+      });
     } catch (error) {
       setFtpMessage(error.message);
     }
@@ -3003,8 +3890,8 @@ function FtpSection({ cpId }) {
       <article className="panel-card cp-inventory-summary">
         <div>
           <span className="status-pill blue">Live FTP</span>
-          <h2>{ftpDashboard?.cpLogin || "FTP Manager"}</h2>
-          <p>FTP account inventory from cp_config_FTP. Remote agent actions are requires real gateway for the next pass.</p>
+          <h2>FTP Manager</h2>
+          <p>FTP account inventory from cp_config_FTP. Active Classic ASP create/delete writes this table directly; password writes need Persits-compatible encryption before they are enabled.</p>
         </div>
         <div className="database-total-grid">
           <div><span>Total</span><strong>{totals.total}</strong></div>
@@ -3016,22 +3903,33 @@ function FtpSection({ cpId }) {
 
       <div className="database-toolbar panel-card">
         <div className="database-actions">
-          <button className="primary-button compact" type="button" onClick={() => queueFtpTest("+ FTP User")}>+ FTP User</button>
+          <button className="primary-button compact" type="button" onClick={() => {
+            setEditingFtpLogin("");
+            setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test", quota: "500", permission: "write" });
+          }}>+ FTP User</button>
           <button className="secondary-button compact" type="button" onClick={() => queueFtpTest("Import Users")}>Import Users</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueFtpTest("Reset Root Path")}>Reset Root Path</button>
+          <button className="secondary-button compact" type="button" onClick={() => {
+            const rootUser = users.find((user) => user.isRootUser);
+            if (rootUser) resetFtpUserPermissions(rootUser);
+            else setFtpMessage("Root FTP user was not found.");
+          }}>Reset Root Path</button>
         </div>
       </div>
 
       <article className="panel-card advance-form-card">
         <div>
           <span className="status-pill blue">FTP User Draft</span>
-          <h3>Create / Edit FTP</h3>
-          <p>Creates guarded `codex-test-*` FTP rows. Existing FTP users remain protected.</p>
+          <h3>{editingFtpLogin ? `Edit ${displayFtpLogin(editingFtpLogin, ftpDashboard?.cpLogin)}` : "Create FTP User"}</h3>
+          <p>Matches the active Classic ASP DB path. New passwords are paused until encryptpwd and encryptFTPpwd are reproduced exactly.</p>
         </div>
         <form className="advance-inline-form" onSubmit={submitFtpDraft}>
           <label>
             Login
             <input value={ftpDraft.login} onChange={(event) => setFtpDraft((draft) => ({ ...draft, login: event.target.value }))} />
+          </label>
+          <label>
+            Password
+            <input type="password" value={ftpDraft.password} onChange={(event) => setFtpDraft((draft) => ({ ...draft, password: event.target.value }))} />
           </label>
           <label>
             Path
@@ -3044,12 +3942,17 @@ function FtpSection({ cpId }) {
           <label>
             Permission
             <select value={ftpDraft.permission} onChange={(event) => setFtpDraft((draft) => ({ ...draft, permission: event.target.value }))}>
-              <option>Read / Write</option>
-              <option>Read Only</option>
-              <option>Write Only</option>
+              <option value="write">Read / Write</option>
+              <option value="read">Read Only</option>
             </select>
           </label>
-          <button className="primary-button compact" type="submit">Create Real Test</button>
+          <button className="primary-button compact" type="submit" disabled={isFtpMutating}>{editingFtpLogin ? "Save FTP User" : "Create FTP User"}</button>
+          {editingFtpLogin && (
+            <button className="secondary-button compact" type="button" onClick={() => {
+              setEditingFtpLogin("");
+              setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test", quota: "500", permission: "write" });
+            }}>Cancel</button>
+          )}
         </form>
       </article>
 
@@ -3089,22 +3992,22 @@ function FtpSection({ cpId }) {
                   <td>
                     <span className="ftp-login-cell">
                       <MenuIcon name="ftp" />
-                      {user.login}
+                      {displayFtpLogin(user.login, ftpDashboard?.cpLogin)}
                       {user.isRootUser && <span className="status-pill blue">Root</span>}
                     </span>
                   </td>
-                  <td>{user.path}</td>
+                  <td>{simplifySitePath(user.rawPath || user.path, ftpDashboard?.cpLogin)}</td>
                   <td>{user.quotaMb > 0 ? `${user.quotaMb} MB` : "Unlimited"}</td>
                   <td>{user.permission}</td>
                   <td>{user.server || "Default FTP server"}</td>
                   <td><span className="status-pill">{user.status}</span></td>
                   <td>
                     <div className="website-action-buttons compact-actions">
-                      {["Edit", "Password", "Enable", "Disable", "Delete"].map((action) => (
-                        <button className="secondary-button compact" type="button" key={action} onClick={() => queueFtpTest(action, user)}>
-                          {action}
-                        </button>
-                      ))}
+                      <button className="secondary-button compact" type="button" onClick={() => editFtpUser(user)}>Edit</button>
+                      <button className="secondary-button compact" type="button" disabled={isFtpMutating} onClick={() => setFtpUserStatus(user, "enable")}>Enable</button>
+                      <button className="secondary-button compact" type="button" disabled={isFtpMutating} onClick={() => setFtpUserStatus(user, "disable")}>Disable</button>
+                      <button className="secondary-button compact" type="button" disabled={isFtpMutating} onClick={() => resetFtpUserPermissions(user)}>Reset</button>
+                      <button className="secondary-button compact danger" type="button" disabled={isFtpMutating || user.isRootUser} onClick={() => deleteFtpUser(user)}>Delete</button>
                     </div>
                   </td>
                 </tr>
@@ -3119,12 +4022,21 @@ function FtpSection({ cpId }) {
   );
 }
 
+function displayFtpLogin(login, cpLogin) {
+  const text = String(login ?? "").trim();
+  if (cpLogin && text.toLowerCase() === String(cpLogin).toLowerCase()) {
+    return "Root FTP User";
+  }
+  return text || "FTP User";
+}
+
 function FilesSection({ cpId }) {
   const { activity, isLoading, error, reload } = useHostingActivity(cpId);
   const [sitesDashboard, setSitesDashboard] = useState(null);
   const [securityDashboard, setSecurityDashboard] = useState(null);
   const [sitesError, setSitesError] = useState("");
   const [filesMessage, setFilesMessage] = useState("");
+  const [fileManagerPreview, setFileManagerPreview] = useState(null);
   const [protectionDraft, setProtectionDraft] = useState({
     site: "sample.com",
     path: "/www/sample.com",
@@ -3172,6 +4084,7 @@ function FilesSection({ cpId }) {
   }, [cpId]);
 
   const siteFolders = (sitesDashboard?.sites ?? []).slice(0, 12);
+  const [viewMode, setViewMode] = useSectionViewMode("cp-files", siteFolders.length);
   const securityBySite = new Map((securityDashboard?.siteSecurityRows ?? []).map((row) => [String(row.siteUid), row]));
 
   async function queueFileTest(action, site = null, details = "") {
@@ -3231,6 +4144,42 @@ function FilesSection({ cpId }) {
     }
   }
 
+  async function browseFileManager(path = "") {
+    setFilesMessage("");
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/files/browse?path=${encodeURIComponent(path)}`, cpId));
+      const result = await response.json().catch(() => null);
+      setFileManagerPreview(result?.fileManager ?? null);
+      setFilesMessage(result?.message ?? "File manager browse completed.");
+    } catch {
+      setFilesMessage("Unable to reach file manager API.");
+    }
+  }
+
+  async function createTestFolder() {
+    setFilesMessage("");
+    try {
+      const response = await fetch("/api/hosting/files/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId,
+          action: "new-folder",
+          path: "",
+          name: `codex-test-${Date.now()}`,
+          targetPath: "",
+          targetName: "",
+          overwrite: false
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setFileManagerPreview(result?.fileManager ?? null);
+      setFilesMessage(result?.message ?? "File manager action completed.");
+    } catch {
+      setFilesMessage("Unable to reach file manager API.");
+    }
+  }
+
   function submitProtectionDraft(event) {
     event.preventDefault();
     queueFileTest(
@@ -3254,7 +4203,7 @@ function FilesSection({ cpId }) {
       <article className="panel-card cp-inventory-summary">
         <div>
           <span className="status-pill blue">File Manager</span>
-          <h2>{activity?.cpLogin || "Files"}</h2>
+          <h2>File Manager</h2>
           <p>File operations use the legacy work queue for long-running zip, unzip, permission, and scan jobs.</p>
         </div>
         <div className="database-total-grid">
@@ -3295,12 +4244,15 @@ function FilesSection({ cpId }) {
 
       <div className="database-toolbar panel-card">
         <div className="database-actions">
+          <button className="primary-button compact" type="button" onClick={() => browseFileManager("")}>Browse Root</button>
+          <button className="secondary-button compact" type="button" onClick={createTestFolder}>New Test Folder</button>
           {["Upload", "New Folder", "Zip", "Unzip", "Permissions", "Scan Virus", "Lock Site", "Unlock Site", "Raw Logs"].map((action, index) => (
-            <button className={index === 0 ? "primary-button compact" : "secondary-button compact"} type="button" key={action} onClick={() => queueFileTest(action)}>
+            <button className="secondary-button compact" type="button" key={action} onClick={() => queueFileTest(action)}>
               {action}
             </button>
           ))}
         </div>
+        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="File folder view mode" />
       </div>
       {filesMessage && <p className="sandbox-message">{filesMessage}</p>}
 
@@ -3316,7 +4268,10 @@ function FilesSection({ cpId }) {
         <dl className="card-meta single">
           <div><dt>Queue Types</dt><dd>zip, Unzip, perm, scanvirus</dd></div>
           <div><dt>Processing</dt><dd>Legacy worker-compatible workqueue rows</dd></div>
+          <div><dt>Home Root</dt><dd>{fileManagerPreview?.homePath || "Loaded from HOSTING_HOME_ROOT"}</dd></div>
+          <div><dt>Last Gateway</dt><dd>{fileManagerPreview?.url || "Not called yet"}</dd></div>
         </dl>
+        {fileManagerPreview?.preview && <pre className="gateway-preview">{fileManagerPreview.preview}</pre>}
       </article>
 
       <div className="advance-form-grid">
@@ -3389,7 +4344,7 @@ function FilesSection({ cpId }) {
         </div>
       )}
 
-      {!!siteFolders.length && (
+      {!!siteFolders.length && viewMode === "cards" && (
         <div className="domain-service-grid">
           {siteFolders.map((site) => {
             const security = securityBySite.get(String(site.siteUid));
@@ -3423,6 +4378,46 @@ function FilesSection({ cpId }) {
           })}
         </div>
       )}
+      {!!siteFolders.length && viewMode === "table" && (
+        <div className="table-wrap website-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Site</th>
+                <th>Root</th>
+                <th>Path</th>
+                <th>Status</th>
+                <th>Security</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {siteFolders.map((site) => {
+                const security = securityBySite.get(String(site.siteUid));
+                const locked = !!security?.hasAuditRow && !security?.isWritable;
+                return (
+                  <tr key={site.siteUid}>
+                    <td>{site.siteName}</td>
+                    <td>{site.rootName || "Website folder"}</td>
+                    <td>{simplifySitePath(site.sitePath, sitesDashboard?.cpLogin)}</td>
+                    <td><span className={site.status === "Running" ? "status-pill" : "status-pill muted"}>{site.status}</span></td>
+                    <td>{locked ? "Locked" : security?.webKnight ? "Firewall on" : "Standard"}</td>
+                    <td>
+                      <div className="website-action-buttons compact-actions">
+                        {["Zip", "Unzip", "Permissions", "Scan Virus"].map((action) => (
+                          <button className="secondary-button compact" type="button" key={action} onClick={() => queueFileTest(action, site)}>
+                            {action}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <ActivityList activity={activity} jobs={fileJobs} isLoading={isLoading} error={error} emptyTitle="No recent file jobs" onRetry={reload} />
     </section>
@@ -3432,18 +4427,13 @@ function FilesSection({ cpId }) {
 function AppsSection({ cpId }) {
   const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
   const [appsDashboard, setAppsDashboard] = useState(null);
-  const [securityDashboard, setSecurityDashboard] = useState(null);
   const [isLoadingApps, setIsLoadingApps] = useState(true);
   const [appsError, setAppsError] = useState("");
   const [appsMessage, setAppsMessage] = useState("");
   const [previewPluginId, setPreviewPluginId] = useState(null);
+  const [appRequirements, setAppRequirements] = useState(null);
   const [appSearch, setAppSearch] = useState("");
   const [activeAppType, setActiveAppType] = useState("All");
-  const [wpDraft, setWpDraft] = useState({
-    site: "sample.com",
-    url: "https://sample.com/wp-admin",
-    note: "WordPress Desk safe review"
-  });
   const [nodeDraft, setNodeDraft] = useState({
     site: "sample.com",
     source: "https://github.com/example/node-app.git",
@@ -3463,14 +4453,6 @@ function AppsSection({ cpId }) {
       }
 
       setAppsDashboard(result.dashboard);
-      fetch(hostingApiUrl("/api/hosting/security", cpId))
-        .then((response) => response.json().then((securityResult) => ({ response, securityResult })))
-        .then(({ response, securityResult }) => {
-          if (response.ok && securityResult?.success) {
-            setSecurityDashboard(securityResult.dashboard);
-          }
-        })
-        .catch(() => {});
     } catch {
       setAppsError("Unable to reach app catalog service.");
     } finally {
@@ -3490,19 +4472,15 @@ function AppsSection({ cpId }) {
     const haystack = `${plugin.name} ${plugin.version} ${plugin.language} ${plugin.category} ${plugin.description}`.toLowerCase();
     return matchesType && haystack.includes(appSearch.trim().toLowerCase());
   });
+  const [viewMode, setViewMode] = useSectionViewMode("cp-apps", filteredCatalog.length);
   const deployJobs = appsDashboard?.deployJobs ?? [];
-  const siteSecurityRows = securityDashboard?.siteSecurityRows ?? [];
-  const firewallSites = siteSecurityRows.filter((row) => row.webKnight);
-  const lockedSites = siteSecurityRows.filter((row) => row.hasAuditRow && !row.isWritable);
   const appJobs = [
     ...deployJobs,
     ...(activity?.jobs ?? []).filter((job) =>
       job.server === "plugin-installer" ||
-      job.server === "wordpress-manager" ||
       job.type === "nodejs" ||
       job.type === "deploy" ||
       String(job.from ?? "").toLowerCase().startsWith("plugin:") ||
-      String(job.from ?? "").toLowerCase().startsWith("wordpress:") ||
       String(job.from ?? "").toLowerCase().startsWith("requirements:")
     )
   ].filter((job, index, list) => list.findIndex((candidate) => candidate.id === job.id) === index);
@@ -3526,32 +4504,16 @@ function AppsSection({ cpId }) {
 
   async function createPluginRequirementTest(plugin) {
     setAppsMessage("");
+    setAppRequirements(null);
     try {
-      const result = await createPanelTestActivity(cpId, {
-        from: `requirements:${plugin.name}`,
-        to: plugin.language || "app-runtime",
-        server: "plugin-installer",
-        note: `Plugin requirements gateway required for ${plugin.name} ${plugin.version || ""}`.trim()
-      });
-      setAppsMessage(result.message);
-      await loadApps();
-      await reloadActivity();
-    } catch (error) {
-      setAppsMessage(error.message);
-    }
-  }
+      const response = await fetch(hostingApiUrl(`/api/hosting/apps/${plugin.pluginId}/requirements`, cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to load app requirements.");
+      }
 
-  async function createWordPressDeskTest(action) {
-    setAppsMessage("");
-    try {
-      const result = await createPanelTestActivity(cpId, {
-        from: `wordpress:${action}`,
-        to: wpDraft.site || "wordpress-site",
-        server: "wordpress-manager",
-        note: `WordPress Desk request: ${action}; site ${wpDraft.site}; admin ${wpDraft.url}; ${wpDraft.note}`
-      });
       setAppsMessage(result.message);
-      await reloadActivity();
+      setAppRequirements(result.requirements);
     } catch (error) {
       setAppsMessage(error.message);
     }
@@ -3584,8 +4546,8 @@ function AppsSection({ cpId }) {
       <article className="panel-card cp-inventory-summary">
         <div>
           <span className="status-pill blue">One-click Apps</span>
-          <h2>{appsDashboard?.cpLogin || "Application Installer"}</h2>
-          <p>Plugin catalog and deploy history for ASP.NET, PHP, WordPress, and Node.js installers.</p>
+          <h2>Application Installer</h2>
+          <p>Plugin catalog and deploy history for ASP.NET, PHP, CMS, and Node.js installers.</p>
         </div>
         <div className="database-total-grid">
           <div><span>Apps</span><strong>{catalog.length}</strong></div>
@@ -3617,6 +4579,7 @@ function AppsSection({ cpId }) {
             </button>
           ))}
         </div>
+        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="App catalog view mode" />
       </div>
 
       {isLoadingApps && <p className="empty-state">Loading app catalog...</p>}
@@ -3627,61 +4590,37 @@ function AppsSection({ cpId }) {
         </div>
       )}
       {appsMessage && <p className="sandbox-message">{appsMessage}</p>}
-
-      <article className="panel-card wordpress-desk-panel">
-        <div className="database-card-header">
-          <div>
-            <span className="status-pill blue">WordPress Desk</span>
-            <h3>Site Security and WordPress Tools</h3>
-            <p>Needs the WordPress Desk gateway for CDN, firewall, security checks, and site file changes.</p>
+      {appRequirements && (
+        <article className="panel-card app-requirements-panel">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill blue">Legacy Requirements</span>
+              <h3>{appRequirements.plugin?.name} {appRequirements.plugin?.version}</h3>
+              <p>Read from the same plugin tables used by the Classic ASP installer flow.</p>
+            </div>
+            <button className="secondary-button compact" type="button" onClick={() => setAppRequirements(null)}>Close</button>
           </div>
-          <MenuIcon name="apps" />
-        </div>
-        <form className="advance-inline-form" onSubmit={(event) => event.preventDefault()}>
-          <label>
-            Site
-            <input value={wpDraft.site} onChange={(event) => setWpDraft((draft) => ({ ...draft, site: event.target.value }))} />
-          </label>
-          <label>
-            Admin URL
-            <input value={wpDraft.url} onChange={(event) => setWpDraft((draft) => ({ ...draft, url: event.target.value }))} />
-          </label>
-          <label>
-            Note
-            <input value={wpDraft.note} onChange={(event) => setWpDraft((draft) => ({ ...draft, note: event.target.value }))} />
-          </label>
-        </form>
-        <div className="database-action-row">
-          {["Scan WordPress Sites", "Check Site Security", "Enable WordPress CDN", "Disable WordPress CDN", "Toggle Firewall", "Repair Permissions"].map((action, index) => (
-            <button
-              className={index === 0 ? "primary-button compact" : "secondary-button compact"}
-              type="button"
-              key={action}
-              onClick={() => createWordPressDeskTest(action)}
-            >
-              {action}
-            </button>
-          ))}
-        </div>
-        {!!siteSecurityRows.length && (
-          <div className="service-status-grid">
-            <div className="service-status-card">
-              <div><span>Known Sites</span><strong>{siteSecurityRows.length}</strong></div>
-              <p>Site rows available to WordPress Desk.</p>
+          <div className="app-requirement-grid">
+            <div>
+              <strong>Parameters</strong>
+              <code>{appRequirements.parameters || "No parameters row."}</code>
             </div>
-            <div className="service-status-card">
-              <div><span>Firewall On</span><strong>{firewallSites.length}</strong></div>
-              <p>WebKnight flags currently enabled.</p>
+            <div>
+              <strong>Config Files</strong>
+              <span>{appRequirements.configFiles?.length ?? 0}</span>
             </div>
-            <div className="service-status-card">
-              <div><span>Locked</span><strong>{lockedSites.length}</strong></div>
-              <p>Sites currently marked not writable.</p>
+            <div>
+              <strong>Permissions</strong>
+              <span>{appRequirements.permissions?.length ?? 0}</span>
             </div>
           </div>
-        )}
-      </article>
+          <WebsiteFunctionDataGroup name="configFiles" value={appRequirements.configFiles ?? []} />
+          <WebsiteFunctionDataGroup name="permissions" value={appRequirements.permissions ?? []} />
+          <WebsiteFunctionDataGroup name="legacySources" value={(appRequirements.legacySources ?? []).map((source) => ({ source }))} />
+        </article>
+      )}
 
-      <article className="panel-card wordpress-desk-panel">
+      <article className="panel-card app-deploy-panel">
         <div className="database-card-header">
           <div>
             <span className="status-pill blue">Node.js Deploy</span>
@@ -3720,7 +4659,7 @@ function AppsSection({ cpId }) {
         </form>
       </article>
 
-      {!!filteredCatalog.length && (
+      {!!filteredCatalog.length && viewMode === "cards" && (
         <div className="domain-service-grid">
           {filteredCatalog.map((plugin) => (
             <article className="panel-card domain-service-card" key={plugin.pluginId}>
@@ -3755,6 +4694,42 @@ function AppsSection({ cpId }) {
               </div>
             </article>
           ))}
+        </div>
+      )}
+      {!!filteredCatalog.length && viewMode === "table" && (
+        <div className="table-wrap website-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Application</th>
+                <th>Type</th>
+                <th>Version</th>
+                <th>Database</th>
+                <th>Installs</th>
+                <th>Rules</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCatalog.map((plugin) => (
+                <tr key={plugin.pluginId}>
+                  <td>{plugin.name}</td>
+                  <td>{appTypeName(plugin)}</td>
+                  <td>{plugin.version || "Latest"}</td>
+                  <td>{plugin.usesDatabase ? "Required" : "No"}</td>
+                  <td>{plugin.installCount}</td>
+                  <td>{plugin.configFiles} config · {plugin.parameterSets} params · {plugin.permissionRules} permissions</td>
+                  <td>
+                    <div className="website-action-buttons compact-actions">
+                      <button className="secondary-button compact" type="button" onClick={() => setPreviewPluginId((currentId) => currentId === plugin.pluginId ? null : plugin.pluginId)}>Preview</button>
+                      <button className="secondary-button compact" type="button" onClick={() => createPluginRequirementTest(plugin)}>Check</button>
+                      <button className="primary-button compact" type="button" onClick={() => createPluginInstallTest(plugin)}>Install</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       {!isLoadingApps && !appsError && !filteredCatalog.length && (
@@ -4014,7 +4989,7 @@ function AdvanceSection({ cpId }) {
       <article className="panel-card cp-inventory-summary">
         <div>
           <span className="status-pill blue">Advanced Tools</span>
-          <h2>{activity?.cpLogin || "Advance"}</h2>
+          <h2>Advanced Tools</h2>
           <p>Runtime and worker-backed operations for app pools, deployments, permissions, scheduled tasks, and long-running jobs.</p>
         </div>
         <div className="database-total-grid">
@@ -4030,7 +5005,7 @@ function AdvanceSection({ cpId }) {
         <div className="database-card-header">
           <div>
             <span className="status-pill blue">Read-only inventory</span>
-            <h3>{runtimeDashboard?.cpLogin || "Runtime Inventory"}</h3>
+            <h3>Runtime Inventory</h3>
             <p>Legacy runtime tables loaded without changing IIS, DNS, task, or deploy settings.</p>
           </div>
           <MenuIcon name="advance" />
@@ -4134,7 +5109,7 @@ function AdvanceSection({ cpId }) {
                 <option value="wintask">Dedicated Windows Task</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Check Gateway</button>
+            <button className="primary-button compact" type="submit">Review Action</button>
           </form>
         </article>
 
@@ -4246,7 +5221,7 @@ function AdvanceSection({ cpId }) {
                 <option value="Update Cloud Backup">Update Cloud Backup</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Check Gateway</button>
+            <button className="primary-button compact" type="submit">Review Action</button>
           </form>
         </article>
       </div>
@@ -4426,7 +5401,7 @@ function buildAdvanceWorkflowGroups(runtimeDashboard) {
       meta: [
         ["Interval Rule", "5-1440 minutes"],
         ["Timeout Rule", "20-300 seconds"],
-        ["Worker Name", "{cpLogin}-{taskID}"]
+        ["Worker Name", "{hosting-plan}-{taskID}"]
       ],
       actions: ["Add URL Task", "Add Windows Task", "Task Logs", "Delete Task"]
     },
@@ -4580,6 +5555,7 @@ function DomainServicesSection({ mode, cpId }) {
   const [domainError, setDomainError] = useState("");
   const [securityError, setSecurityError] = useState("");
   const [domainMessage, setDomainMessage] = useState("");
+  const [serviceResult, setServiceResult] = useState(null);
   const [dnsDraft, setDnsDraft] = useState({
     host: "@",
     type: "A",
@@ -4656,11 +5632,12 @@ function DomainServicesSection({ mode, cpId }) {
       runtime: site.version ? `.NET ${site.version}` : site.phpVersion ? `PHP ${site.phpVersion}` : "Website"
     }))
   );
+  const actionableDomains = domains.filter((domain) => !isTemporaryHostingDomain(domain.label));
   const modeCopy = {
     dns: {
       title: "DNS",
       label: "Live DNS",
-      description: "Mapped domains that can move into DNS record management once the DNS helper gateway is wired.",
+      description: "Mapped domains and safe DNS record previews. Publishing waits for the exact DNS gateway port.",
       actions: ["Preview Records", "Add A Record", "Add CNAME", "Add MX", "Import Zone", "Scan Records", "Publish DNS"],
       statOne: "Domains",
       statTwo: "Default Domains",
@@ -4669,7 +5646,7 @@ function DomainServicesSection({ mode, cpId }) {
     cdn: {
       title: "CDN",
       label: "Live CDN",
-      description: "Cloudflare/CDN readiness from mapped hosting domains. Purge and mode changes stay requires real gateway for the remote gateway pass.",
+      description: "Cloudflare/CDN readiness from mapped hosting domains. Live changes call the legacy shared API only when the exact command can be built.",
       actions: ["Create Tenant", "Invite User", "Add Zone", "Enable CDN", "Disable CDN", "Purge Cache", "SSL Mode", "WWW Redirect"],
       statOne: "Domains",
       statTwo: "CDN Enabled",
@@ -4678,7 +5655,7 @@ function DomainServicesSection({ mode, cpId }) {
     ssl: {
       title: "SSL",
       label: "Live SSL",
-      description: "SSL binding inventory from mapped domains. Free SSL and certificate install flows are requires real gateway for the Namecheap/LetSSL pass.",
+      description: "SSL binding inventory from mapped domains. Free SSL maps to the latest freessl.asp gateway; other certificate flows stay blocked until exact parity is ported.",
       actions: ["Free SSL", "Import SSL", "Install Certificate", "Reinstall", "Approver Email", "Renew SSL", "Delete SSL"],
       statOne: "Domains",
       statTwo: "SSL Ready",
@@ -4696,17 +5673,60 @@ function DomainServicesSection({ mode, cpId }) {
     job.server === `${mode}-manager` ||
     String(job.from ?? "").toLowerCase().startsWith(`${mode}:`)
   );
+  const [viewMode, setViewMode] = useSectionViewMode(`cp-${mode}`, domains.length);
 
-  async function queueDomainServiceTest(action, domain = null, details = "") {
+  const selectedDnsDomain = actionableDomains.find((domain) => domain.label === dnsDraft.domain) || actionableDomains[0] || null;
+  const selectedSslDomain = actionableDomains.find((domain) => domain.label === sslDraft.domain) || actionableDomains[0] || null;
+  const selectedCdnDomain = actionableDomains.find((domain) => domain.label === cdnDraft.domain) || actionableDomains[0] || null;
+
+  useEffect(() => {
+    if (!actionableDomains.length) return;
+    const first = actionableDomains[0].label;
+    setDnsDraft((draft) => ({ ...draft, domain: draft.domain || first }));
+    setSslDraft((draft) => ({
+      ...draft,
+      domain: draft.domain && draft.domain !== "sample.com" ? draft.domain : first,
+      approverEmail: draft.approverEmail && draft.approverEmail !== "admin@sample.com" ? draft.approverEmail : `admin@${first}`
+    }));
+    setCdnDraft((draft) => ({ ...draft, domain: draft.domain && draft.domain !== "sample.com" ? draft.domain : first }));
+  }, [actionableDomains.map((domain) => domain.label).join("|")]);
+
+  async function runDomainServiceAction(area, action, domain, fields = {}) {
     setDomainMessage("");
+    setServiceResult(null);
+    if (!domain) {
+      setDomainMessage(`${area.toUpperCase()} actions need a mapped customer domain. Temporary hosting URLs are skipped.`);
+      return;
+    }
+    if (isTemporaryHostingDomain(domain.label || fields.domain)) {
+      setDomainMessage(`${area.toUpperCase()} actions are not tested on temporary hosting URLs. Choose a mapped customer domain.`);
+      return;
+    }
     try {
-      await createPanelTestActivity(cpId, {
-        from: domain ? `${mode}:${domain.label}` : `${mode}:${action}`,
-        to: domain ? domain.siteName : `/panel-test/${mode}`,
-        server: `${mode}-manager`,
-        note: details || `${mode.toUpperCase()} gateway required for ${action}`
+      const endpoint = area === "dns"
+        ? "/api/hosting/dns/preview"
+        : area === "cdn"
+          ? "/api/hosting/cdn/action"
+          : "/api/hosting/ssl/action";
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId,
+          domain: domain?.label || fields.domain || "",
+          action,
+          fields
+        })
       });
-      setDomainMessage(`${action} needs the ${mode.toUpperCase()} gateway before it can run.`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setDomainMessage(result?.message ?? `${action} could not run.`);
+        setServiceResult(result?.details ? { area, action, details: result.details } : null);
+        return;
+      }
+
+      setDomainMessage(result.message);
+      setServiceResult({ area, action, details: result.details });
       await reloadActivity();
     } catch (error) {
       setDomainMessage(error.message);
@@ -4716,30 +5736,17 @@ function DomainServicesSection({ mode, cpId }) {
   function submitDnsDraft(event) {
     event.preventDefault();
     const ttl = Math.max(300, Math.min(86400, Number(dnsDraft.ttl) || 3600));
-    const priorityNote = ["MX", "SRV"].includes(dnsDraft.type) ? `; priority ${dnsDraft.priority || "10"}` : "";
-    queueDomainServiceTest(
-      `${dnsDraft.type} Record`,
-      null,
-      `DNS record request: host ${dnsDraft.host || "@"}; type ${dnsDraft.type}; value ${dnsDraft.value}; ttl ${ttl}${priorityNote}`
-    );
+    runDomainServiceAction("dns", `${dnsDraft.type} Record`, selectedDnsDomain, { ...dnsDraft, ttl: String(ttl) });
   }
 
   function submitSslDraft(event) {
     event.preventDefault();
-    queueDomainServiceTest(
-      sslDraft.action,
-      null,
-      `SSL certificate request: domain ${sslDraft.domain}; type ${sslDraft.certificateType}; approver ${sslDraft.approverEmail}; action ${sslDraft.action}`
-    );
+    runDomainServiceAction("ssl", sslDraft.action, selectedSslDomain, sslDraft);
   }
 
   function submitCdnDraft(event) {
     event.preventDefault();
-    queueDomainServiceTest(
-      cdnDraft.mode,
-      null,
-      `CDN/Cloudflare request: domain ${cdnDraft.domain}; mode ${cdnDraft.mode}; SSL mode ${cdnDraft.sslMode}; redirect www ${cdnDraft.redirectWww ? "yes" : "no"}`
-    );
+    runDomainServiceAction("cdn", cdnDraft.mode, selectedCdnDomain, cdnDraft);
   }
 
   function refreshDomainServiceSection() {
@@ -4753,7 +5760,7 @@ function DomainServicesSection({ mode, cpId }) {
       <article className="panel-card cp-inventory-summary">
         <div>
           <span className="status-pill blue">{modeCopy.label}</span>
-          <h2>{sitesDashboard?.cpLogin || `${modeCopy.title} Manager`}</h2>
+          <h2>{modeCopy.title} Manager</h2>
           <p>{modeCopy.description}</p>
         </div>
         <div className="database-total-grid">
@@ -4767,11 +5774,12 @@ function DomainServicesSection({ mode, cpId }) {
       <div className="database-toolbar panel-card">
         <div className="database-actions">
           {modeCopy.actions.map((action, index) => (
-            <button className={index === 0 ? "primary-button compact" : "secondary-button compact"} type="button" key={action} onClick={() => queueDomainServiceTest(action)}>
+            <button className={index === 0 ? "primary-button compact" : "secondary-button compact"} type="button" key={action} onClick={() => runDomainServiceAction(mode, action, actionableDomains[0] || null)}>
               {action}
             </button>
           ))}
         </div>
+        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label={`${modeCopy.title} view mode`} />
       </div>
 
       {mode === "dns" && (
@@ -4785,6 +5793,12 @@ function DomainServicesSection({ mode, cpId }) {
             <MenuIcon name="dns" />
           </div>
           <form className="advance-inline-form" onSubmit={submitDnsDraft}>
+            <label>
+              Domain
+              <select value={dnsDraft.domain || selectedDnsDomain?.label || ""} onChange={(event) => setDnsDraft((draft) => ({ ...draft, domain: event.target.value }))}>
+                {actionableDomains.map((domain) => <option key={domain.domainUid} value={domain.label}>{domain.label}</option>)}
+              </select>
+            </label>
             <label>
               Host
               <input value={dnsDraft.host} onChange={(event) => setDnsDraft((draft) => ({ ...draft, host: event.target.value }))} />
@@ -4814,7 +5828,7 @@ function DomainServicesSection({ mode, cpId }) {
                 <input type="number" min="0" max="100" value={dnsDraft.priority} onChange={(event) => setDnsDraft((draft) => ({ ...draft, priority: event.target.value }))} />
               </label>
             )}
-            <button className="primary-button compact" type="submit">Check Gateway</button>
+            <button className="primary-button compact" type="submit">Preview DNS</button>
           </form>
         </article>
       )}
@@ -4832,7 +5846,9 @@ function DomainServicesSection({ mode, cpId }) {
           <form className="advance-inline-form" onSubmit={submitSslDraft}>
             <label>
               Domain
-              <input value={sslDraft.domain} onChange={(event) => setSslDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+              <select value={sslDraft.domain || selectedSslDomain?.label || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, domain: event.target.value, approverEmail: `admin@${event.target.value}` }))}>
+                {actionableDomains.map((domain) => <option key={domain.domainUid} value={domain.label}>{domain.label}</option>)}
+              </select>
             </label>
             <label>
               Certificate
@@ -4859,7 +5875,7 @@ function DomainServicesSection({ mode, cpId }) {
                 <option>Delete SSL</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Check Gateway</button>
+            <button className="primary-button compact" type="submit">Run SSL Action</button>
           </form>
         </article>
       )}
@@ -4877,7 +5893,9 @@ function DomainServicesSection({ mode, cpId }) {
           <form className="advance-inline-form" onSubmit={submitCdnDraft}>
             <label>
               Domain
-              <input value={cdnDraft.domain} onChange={(event) => setCdnDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+              <select value={cdnDraft.domain || selectedCdnDomain?.label || ""} onChange={(event) => setCdnDraft((draft) => ({ ...draft, domain: event.target.value }))}>
+                {actionableDomains.map((domain) => <option key={domain.domainUid} value={domain.label}>{domain.label}</option>)}
+              </select>
             </label>
             <label>
               Mode
@@ -4903,7 +5921,7 @@ function DomainServicesSection({ mode, cpId }) {
               <input type="checkbox" checked={cdnDraft.redirectWww} onChange={(event) => setCdnDraft((draft) => ({ ...draft, redirectWww: event.target.checked }))} />
               Redirect non-www to www
             </label>
-            <button className="primary-button compact" type="submit">Check Gateway</button>
+            <button className="primary-button compact" type="submit">Run CDN Action</button>
           </form>
         </article>
       )}
@@ -4911,6 +5929,36 @@ function DomainServicesSection({ mode, cpId }) {
       {isLoadingDomains && <p className="empty-state">Loading mapped domains from cp_config_Domains...</p>}
       {isLoadingSecurity && <p className="empty-state">Loading {mode.toUpperCase()} legacy inventory...</p>}
       {domainMessage && <p className="sandbox-message">{domainMessage}</p>}
+      {serviceResult?.details?.records?.length > 0 && (
+        <RuntimeRows
+          title={`${serviceResult.area.toUpperCase()} Preview`}
+          rows={serviceResult.details.records.map((record) => ({
+            title: `${record.type} ${record.name}`,
+            subtitle: record.value,
+            status: record.priority == null ? `TTL ${record.ttl}` : `Priority ${record.priority} · TTL ${record.ttl}`,
+            details: {
+              Type: record.type,
+              Name: record.name,
+              Value: record.value,
+              Priority: record.priority == null ? "-" : String(record.priority),
+              TTL: String(record.ttl)
+            }
+          }))}
+          emptyText="No preview records."
+        />
+      )}
+      {serviceResult?.details && !serviceResult.details.records && (
+        <RuntimeRows
+          title={`${serviceResult.area.toUpperCase()} Action Detail`}
+          rows={[{
+            title: serviceResult.action,
+            subtitle: serviceResult.details.domain || serviceResult.details.legacySource || "Legacy action",
+            status: "Checked",
+            details: Object.fromEntries(Object.entries(serviceResult.details).map(([key, value]) => [key, typeof value === "object" ? JSON.stringify(value) : String(value)]))
+          }]}
+          emptyText="No action detail."
+        />
+      )}
       {securityError && <p className="inline-status">{securityError}</p>}
       {domainError && (
         <div className="panel-card dashboard-error-panel">
@@ -4934,14 +5982,14 @@ function DomainServicesSection({ mode, cpId }) {
         <RuntimeRows key={section.title} title={section.title} rows={section.rows} emptyText={section.emptyText} />
       ))}
 
-      {!!domains.length && (
+      {!!domains.length && viewMode === "cards" && (
         <div className="domain-service-grid">
           {domains.map((domain) => (
             <article className="panel-card domain-service-card" key={`${mode}-${domain.domainUid}-${domain.label}`}>
               <div className="database-card-header">
                 <div>
                   <span className={domain.ssl ? "status-pill" : "status-pill muted"}>
-                    {mode === "cdn" ? (domain.cdn ? "CDN on" : "CDN off") : mode === "ssl" ? (domain.ssl ? "SSL ready" : "SSL pending") : (domain.isDefault ? "Default" : "Mapped")}
+                    {isTemporaryHostingDomain(domain.label) ? "Temp URL" : mode === "cdn" ? (domain.cdn ? "CDN on" : "CDN off") : mode === "ssl" ? (domain.ssl ? "SSL ready" : "SSL pending") : (domain.isDefault ? "Default" : "Mapped")}
                   </span>
                   <h3>{domain.label}</h3>
                   <p>{domain.siteName} · {domain.runtime}</p>
@@ -4956,11 +6004,49 @@ function DomainServicesSection({ mode, cpId }) {
               </dl>
               <div className="database-action-row">
                 {modeCopy.actions.slice(0, 3).map((action) => (
-                  <button className="secondary-button compact" type="button" key={action} onClick={() => queueDomainServiceTest(action, domain)}>{action}</button>
+                  <button className="secondary-button compact" type="button" key={action} disabled={isTemporaryHostingDomain(domain.label)} onClick={() => runDomainServiceAction(mode, action, domain)}>{action}</button>
                 ))}
               </div>
             </article>
           ))}
+        </div>
+      )}
+      {!!domains.length && viewMode === "table" && (
+        <div className="table-wrap website-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Website</th>
+                <th>Runtime</th>
+                <th>Status</th>
+                <th>CDN</th>
+                <th>SSL</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {domains.map((domain) => (
+                <tr key={`${mode}-${domain.domainUid}-${domain.label}`}>
+                  <td>{domain.label}</td>
+                  <td>{domain.siteName}</td>
+                  <td>{domain.runtime}</td>
+                  <td>{domain.siteStatus}</td>
+                  <td>{domain.cdn ? "Enabled" : "Not enabled"}</td>
+                  <td>{domain.ssl ? "Enabled" : "Pending"}</td>
+                  <td>
+                    <div className="website-action-buttons compact-actions">
+                      {modeCopy.actions.slice(0, 3).map((action) => (
+                        <button className="secondary-button compact" type="button" key={action} disabled={isTemporaryHostingDomain(domain.label)} onClick={() => runDomainServiceAction(mode, action, domain)}>
+                          {action}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       <ActivityList jobs={domainJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle={`No recent ${mode.toUpperCase()} jobs`} onRetry={reloadActivity} />
@@ -4988,6 +6074,11 @@ function MenuIcon({ name }) {
         <path d="M4 18v-5h5" />
         <path d="M18.1 9A7 7 0 0 0 6.3 6.4L4 8.8" />
         <path d="M5.9 15A7 7 0 0 0 17.7 17.6L20 15.2" />
+      </>
+    ),
+    x: (
+      <>
+        <path d="M6 6l12 12M18 6 6 18" />
       </>
     ),
     back: (
@@ -5168,6 +6259,118 @@ function MenuIcon({ name }) {
         <circle cx="5.5" cy="12" r="1.6" />
         <circle cx="12" cy="12" r="1.6" />
         <circle cx="18.5" cy="12" r="1.6" />
+      </>
+    ),
+    "site-name": (
+      <>
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M8 10h8M8 14h5" />
+      </>
+    ),
+    aspnet: (
+      <>
+        <rect x="4" y="4" width="7" height="7" />
+        <rect x="13" y="4" width="7" height="7" />
+        <rect x="4" y="13" width="7" height="7" />
+        <rect x="13" y="13" width="7" height="7" />
+      </>
+    ),
+    core: (
+      <>
+        <circle cx="12" cy="12" r="8" />
+        <path d="M12 4v16M4 12h16" />
+      </>
+    ),
+    node: (
+      <>
+        <path d="M12 3.5 19 7.5v9L12 20.5 5 16.5v-9Z" />
+        <path d="M9 14V9l6 6V10" />
+      </>
+    ),
+    php: (
+      <>
+        <ellipse cx="12" cy="12" rx="9" ry="5.5" />
+        <path d="M7 14V9h2.8a1.6 1.6 0 0 1 0 3.2H7M12 14l1-5M14 14l1-5M16 9h2.5a1.5 1.5 0 0 1 0 3H16" />
+      </>
+    ),
+    checklist: (
+      <>
+        <path d="m5 7 1.6 1.6L10 5.5M5 12l1.6 1.6L10 10.5M5 17l1.6 1.6L10 15.5" />
+        <path d="M12.5 8h6M12.5 13h6M12.5 18h6" />
+      </>
+    ),
+    warning: (
+      <>
+        <path d="M12 4 21 20H3Z" />
+        <path d="M12 9v5M12 17h.01" />
+      </>
+    ),
+    power: (
+      <>
+        <path d="M12 4v8" />
+        <path d="M8 6.5a7 7 0 1 0 8 0" />
+      </>
+    ),
+    trash: (
+      <>
+        <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+      </>
+    ),
+    stats: (
+      <>
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M8 16V9M12 16V6M16 16v-4" />
+      </>
+    ),
+    outgoing: (
+      <>
+        <path d="M5 12h12" />
+        <path d="m13 7 5 5-5 5" />
+        <path d="M5 5v14" />
+      </>
+    ),
+    "virtual-dir": (
+      <>
+        <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5V17A2.5 2.5 0 0 1 18 19.5H6A2.5 2.5 0 0 1 3.5 17Z" />
+        <path d="M12 10v6M9 13h6" />
+      </>
+    ),
+    "force-https": (
+      <>
+        <path d="M20 4 4 11l7 2 2 7Z" />
+        <path d="m11 13 4-4" />
+      </>
+    ),
+    "default-doc": (
+      <>
+        <path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5Z" />
+        <path d="M14 3.5V8h4M9 12h6M9 16h6" />
+      </>
+    ),
+    mime: (
+      <>
+        <circle cx="12" cy="12" r="2" />
+        <path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.3 6.3l2.8 2.8M14.9 14.9l2.8 2.8M17.7 6.3l-2.8 2.8M9.1 14.9l-2.8 2.8" />
+      </>
+    ),
+    scriptmap: (
+      <>
+        <path d="M12 4v5M12 15v5M5 12h14" />
+        <circle cx="12" cy="12" r="3" />
+        <circle cx="5" cy="12" r="1.5" />
+        <circle cx="19" cy="12" r="1.5" />
+      </>
+    ),
+    "remote-iis": (
+      <>
+        <rect x="5" y="5" width="14" height="10" rx="1.5" />
+        <path d="M8 19h8M12 15v4M8 9h8M9 12h6" />
+      </>
+    ),
+    tasks: (
+      <>
+        <rect x="5" y="4" width="14" height="16" rx="2" />
+        <path d="M8 9h8M8 13h8M8 17h5" />
       </>
     ),
     settings: (
