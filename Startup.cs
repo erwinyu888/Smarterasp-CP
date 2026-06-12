@@ -140,6 +140,9 @@ namespace controlpanel
                 endpoints.MapPost("/api/hosting/activity/test", HandleHostingActivityTestCreateAsync);
                 endpoints.MapPut("/api/hosting/activity/test/{id:long}", HandleHostingActivityTestUpdateAsync);
                 endpoints.MapDelete("/api/hosting/activity/test/{id:long}", HandleHostingActivityTestDeleteAsync);
+                endpoints.MapPost("/api/hosting/real-test", HandleHostingRealTestCreateAsync);
+                endpoints.MapPut("/api/hosting/real-test/{id:long}", HandleHostingRealTestUpdateAsync);
+                endpoints.MapDelete("/api/hosting/real-test/{area}/{id:long}", HandleHostingRealTestDeleteAsync);
                 endpoints.MapGet("/api/hosting/apps", HandleHostingAppsAsync);
                 endpoints.MapFallbackToFile("index.html");
             });
@@ -2531,6 +2534,103 @@ WHERE customerID = @customerId";
             }
 
             await Results.Ok(new HostingActivityMutationResponse(true, "Panel test activity deleted.", id)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingRealTestCreateAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingRealTestResponse(false, "Not signed in.", null, "", 0), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<HostingRealTestRequest>() ?? new HostingRealTestRequest(0, "", new Dictionary<string, string>());
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, request.CpId);
+            if (cp.CpId == 0)
+            {
+                await Results.Json(new HostingRealTestResponse(false, "Hosting plan not found.", null, "", 0), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var result = await CreateHostingRealTestAsync(connection, cp, request);
+            var status = result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest;
+            await Results.Json(result, statusCode: status).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingRealTestUpdateAsync(HttpContext context, long id)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingRealTestResponse(false, "Not signed in.", null, "", 0), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<HostingRealTestRequest>() ?? new HostingRealTestRequest(0, "", new Dictionary<string, string>());
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, request.CpId);
+            if (cp.CpId == 0)
+            {
+                await Results.Json(new HostingRealTestResponse(false, "Hosting plan not found.", null, "", id), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var result = await UpdateHostingRealTestAsync(connection, cp, id, request);
+            var status = result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest;
+            await Results.Json(result, statusCode: status).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingRealTestDeleteAsync(HttpContext context, string area, long id)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingRealTestResponse(false, "Not signed in.", null, area, id), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var cpId = GetRequestedCpId(context);
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, cpId);
+            if (cp.CpId == 0)
+            {
+                await Results.Json(new HostingRealTestResponse(false, "Hosting plan not found.", null, area, id), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var marker = context.Request.Query["name"].ToString();
+            var result = await DeleteHostingRealTestAsync(connection, cp, area, id, marker);
+            var status = result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest;
+            await Results.Json(result, statusCode: status).ExecuteAsync(context);
         }
 
         private async Task HandleHostingAppsAsync(HttpContext context)
@@ -6229,7 +6329,7 @@ ORDER BY ftp_login";
 
             var warnings = new List<string>
             {
-                "Scheduled tasks use the legacy scheduletask connection, so this pass only stages task actions until that connection is configured."
+                "Scheduled tasks use the legacy scheduletask connection, so real task actions need that connection configured first."
             };
 
             var pools = await TryLoadRuntimeRowsAsync(
@@ -6779,6 +6879,398 @@ WHERE id = @id
             return text.Length <= 240 ? text : text[..240];
         }
 
+        private static async Task<HostingRealTestResponse> CreateHostingRealTestAsync(SqlConnection connection, SelectedHostingCp cp, HostingRealTestRequest request)
+        {
+            var area = NormalizeRealTestArea(request.Area);
+            var fields = request.Fields ?? new Dictionary<string, string>();
+            var marker = TestMarker(fields, "name");
+
+            if (!IsAllowedRealTestArea(area))
+            {
+                return new HostingRealTestResponse(false, "This action needs the real provider gateway before it can run. No row was created.", null, area, 0);
+            }
+
+            if (!IsCodexTestValue(marker))
+            {
+                return new HostingRealTestResponse(false, "Real test writes must use a codex-test-* name so existing data is protected.", null, area, 0);
+            }
+
+            try
+            {
+                return area switch
+                {
+                    "ftp" => await CreateRealTestFtpAsync(connection, cp, fields),
+                    "redirect" => await CreateRealTestRedirectAsync(connection, cp, fields),
+                    "web-deploy" => await CreateRealTestWebDeployAsync(connection, cp, fields),
+                    "team-access" => await CreateRealTestTeamAccessAsync(connection, cp, fields),
+                    "db-backup" => await CreateRealTestDbBackupAsync(connection, cp, fields),
+                    _ => new HostingRealTestResponse(false, "Unsupported real test area.", null, area, 0)
+                };
+            }
+            catch (SqlException ex)
+            {
+                return new HostingRealTestResponse(false, $"Real test write failed: {ex.Message}", null, area, 0);
+            }
+        }
+
+        private static async Task<HostingRealTestResponse> UpdateHostingRealTestAsync(SqlConnection connection, SelectedHostingCp cp, long id, HostingRealTestRequest request)
+        {
+            var area = NormalizeRealTestArea(request.Area);
+            var fields = request.Fields ?? new Dictionary<string, string>();
+            var marker = TestMarker(fields, "name");
+
+            if (!IsAllowedRealTestArea(area))
+            {
+                return new HostingRealTestResponse(false, "This action needs the real provider gateway before it can run.", null, area, id);
+            }
+
+            if (!IsCodexTestValue(marker))
+            {
+                return new HostingRealTestResponse(false, "Real test updates must use a codex-test-* name so existing data is protected.", null, area, id);
+            }
+
+            try
+            {
+                return area switch
+                {
+                    "ftp" => await UpdateRealTestFtpAsync(connection, cp, id, fields),
+                    "redirect" => await UpdateRealTestRedirectAsync(connection, cp, id, fields),
+                    "web-deploy" => await UpdateRealTestWebDeployAsync(connection, cp, id, fields),
+                    "team-access" => await UpdateRealTestTeamAccessAsync(connection, cp, id, fields),
+                    "db-backup" => await UpdateRealTestDbBackupAsync(connection, cp, id, fields),
+                    _ => new HostingRealTestResponse(false, "Unsupported real test area.", null, area, id)
+                };
+            }
+            catch (SqlException ex)
+            {
+                return new HostingRealTestResponse(false, $"Real test update failed: {ex.Message}", null, area, id);
+            }
+        }
+
+        private static async Task<HostingRealTestResponse> DeleteHostingRealTestAsync(SqlConnection connection, SelectedHostingCp cp, string rawArea, long id, string marker = "")
+        {
+            var area = NormalizeRealTestArea(rawArea);
+            if (!IsAllowedRealTestArea(area))
+            {
+                return new HostingRealTestResponse(false, "This action needs the real provider gateway before it can run.", null, area, id);
+            }
+
+            try
+            {
+                var deleted = area switch
+                {
+                    "ftp" => await DeleteBySqlAsync(connection, @"
+DELETE FROM dbo.cp_config_FTP
+WHERE ftp_uid = @id AND cpID = @cpId AND ftp_login LIKE 'codex-test-%'", cp.CpId, id),
+                    "redirect" => await DeleteBySqlAsync(connection, @"
+DELETE r
+FROM dbo.cp_config_redirect r
+INNER JOIN dbo.cp_config_Sites s ON s.site_Uid = r.site_uid
+WHERE r.id = @id AND s.cpID = @cpId AND r.rulename LIKE 'codex-test-%'", cp.CpId, id),
+                    "web-deploy" => IsCodexTestValue(marker) && await DeleteBySqlAsync(connection, @"
+DELETE FROM dbo.cp_config_site_users
+WHERE cpID = @cpId AND username = @marker AND username LIKE 'codex-test-%'", cp.CpId, id, "", marker),
+                    "team-access" => await DeleteBySqlAsync(connection, @"
+DELETE FROM dbo.cp_loginAlias
+WHERE id = @id AND LOWER(forloginid) = LOWER(@cpLogin) AND username LIKE 'codex-test-%'", cp.CpId, id, cp.CpLogin),
+                    "db-backup" => await DeleteBySqlAsync(connection, @"
+DELETE FROM dbo.customDBBackup
+WHERE id = @id AND cpid = CONVERT(varchar(50), @cpId) AND dbname LIKE 'codex-test-%'", cp.CpId, id),
+                    _ => false
+                };
+
+                return deleted
+                    ? new HostingRealTestResponse(true, "Real test row deleted.", null, area, id)
+                    : new HostingRealTestResponse(false, "No matching codex-test row was found. Existing rows are protected.", null, area, id);
+            }
+            catch (SqlException ex)
+            {
+                return new HostingRealTestResponse(false, $"Real test delete failed: {ex.Message}", null, area, id);
+            }
+        }
+
+        private static async Task<HostingRealTestResponse> CreateRealTestFtpAsync(SqlConnection connection, SelectedHostingCp cp, Dictionary<string, string> fields)
+        {
+            var login = SafeTestName(TestMarker(fields, "name"), "codex-test-ftp");
+            var path = Truncate(Field(fields, "path", $@"h:\root\home\{cp.CpLogin}\www\codex-test"), 300);
+            var quota = ClampInt(Field(fields, "quota", "100"), 0, 10240);
+            var permission = Truncate(Field(fields, "permission", "write"), 10);
+
+            const string sql = @"
+INSERT INTO dbo.cp_config_FTP (cpID, ftp_login, ftp_password, ftp_path, ftp_quota, ftp_permission, cpURL, pp1)
+OUTPUT INSERTED.ftp_uid
+VALUES (@cpId, @login, @password, @path, @quota, @permission, 'real-test-local', 'created-by-controlpanel-rebuild')";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cp.CpId);
+            command.Parameters.AddWithValue("@login", login);
+            command.Parameters.AddWithValue("@password", "codex-test-password-not-for-login");
+            command.Parameters.AddWithValue("@path", path);
+            command.Parameters.AddWithValue("@quota", quota);
+            command.Parameters.AddWithValue("@permission", permission);
+            var id = Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+            return new HostingRealTestResponse(true, "Real FTP test row created in cp_config_FTP.", new { login, path, quota, permission }, "ftp", id);
+        }
+
+        private static async Task<HostingRealTestResponse> UpdateRealTestFtpAsync(SqlConnection connection, SelectedHostingCp cp, long id, Dictionary<string, string> fields)
+        {
+            var login = SafeTestName(TestMarker(fields, "name"), "codex-test-ftp");
+            var path = Truncate(Field(fields, "path", $@"h:\root\home\{cp.CpLogin}\www\codex-test-edited"), 300);
+            var quota = ClampInt(Field(fields, "quota", "200"), 0, 10240);
+            const string sql = @"
+UPDATE dbo.cp_config_FTP
+SET ftp_login = @login, ftp_path = @path, ftp_quota = @quota
+WHERE ftp_uid = @id AND cpID = @cpId AND ftp_login LIKE 'codex-test-%'";
+            var updated = await ExecuteNonQueryAsync(connection, sql, command =>
+            {
+                command.Parameters.AddWithValue("@id", id);
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                command.Parameters.AddWithValue("@login", login);
+                command.Parameters.AddWithValue("@path", path);
+                command.Parameters.AddWithValue("@quota", quota);
+            }) > 0;
+            return updated
+                ? new HostingRealTestResponse(true, "Real FTP test row updated.", new { login, path, quota }, "ftp", id)
+                : new HostingRealTestResponse(false, "FTP test row not found, or it is not a codex-test row.", null, "ftp", id);
+        }
+
+        private static async Task<HostingRealTestResponse> CreateRealTestRedirectAsync(SqlConnection connection, SelectedHostingCp cp, Dictionary<string, string> fields)
+        {
+            var siteUid = await LoadFirstSiteUidAsync(connection, cp.CpId);
+            if (siteUid == 0)
+            {
+                return new HostingRealTestResponse(false, "No website exists for redirect testing.", null, "redirect", 0);
+            }
+
+            var rule = SafeTestName(TestMarker(fields, "name"), "codex-test-redirect");
+            var domain = Truncate(Field(fields, "domain", "codex-test.local"), 255);
+            var destination = Truncate(Field(fields, "destination", "https://example.com/codex-test"), 255);
+            const string sql = @"
+INSERT INTO dbo.cp_config_redirect (site_uid, rulename, domain, source, destination, rewritetype)
+OUTPUT INSERTED.id
+VALUES (@siteUid, @rule, @domain, @domain, @destination, 301)";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@siteUid", siteUid);
+            command.Parameters.AddWithValue("@rule", rule);
+            command.Parameters.AddWithValue("@domain", domain);
+            command.Parameters.AddWithValue("@destination", destination);
+            var id = Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+            return new HostingRealTestResponse(true, "Real redirect test row created in cp_config_redirect.", new { rule, domain, destination, siteUid }, "redirect", id);
+        }
+
+        private static async Task<HostingRealTestResponse> UpdateRealTestRedirectAsync(SqlConnection connection, SelectedHostingCp cp, long id, Dictionary<string, string> fields)
+        {
+            var rule = SafeTestName(TestMarker(fields, "name"), "codex-test-redirect");
+            var destination = Truncate(Field(fields, "destination", "https://example.com/codex-test-edited"), 255);
+            const string sql = @"
+UPDATE r
+SET r.rulename = @rule, r.destination = @destination
+FROM dbo.cp_config_redirect r
+INNER JOIN dbo.cp_config_Sites s ON s.site_Uid = r.site_uid
+WHERE r.id = @id AND s.cpID = @cpId AND r.rulename LIKE 'codex-test-%'";
+            var updated = await ExecuteNonQueryAsync(connection, sql, command =>
+            {
+                command.Parameters.AddWithValue("@id", id);
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                command.Parameters.AddWithValue("@rule", rule);
+                command.Parameters.AddWithValue("@destination", destination);
+            }) > 0;
+            return updated
+                ? new HostingRealTestResponse(true, "Real redirect test row updated.", new { rule, destination }, "redirect", id)
+                : new HostingRealTestResponse(false, "Redirect test row not found, or it is not a codex-test row.", null, "redirect", id);
+        }
+
+        private static async Task<HostingRealTestResponse> CreateRealTestWebDeployAsync(SqlConnection connection, SelectedHostingCp cp, Dictionary<string, string> fields)
+        {
+            var username = SafeTestName(TestMarker(fields, "name"), "codex-test-webdeploy");
+            const string sql = @"
+INSERT INTO dbo.cp_config_site_users (cpid, username, password, createdate)
+VALUES (@cpId, @username, 'codex-test-password-not-for-login', GETDATE())";
+            await ExecuteNonQueryAsync(connection, sql, command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                command.Parameters.AddWithValue("@username", username);
+            });
+            return new HostingRealTestResponse(true, "Real Web Deploy test user row created in cp_config_site_users.", new { username }, "web-deploy", 0);
+        }
+
+        private static async Task<HostingRealTestResponse> UpdateRealTestWebDeployAsync(SqlConnection connection, SelectedHostingCp cp, long id, Dictionary<string, string> fields)
+        {
+            var username = SafeTestName(TestMarker(fields, "name"), "codex-test-webdeploy");
+            const string sql = @"
+UPDATE dbo.cp_config_site_users
+SET password = 'codex-test-password-edited'
+WHERE cpID = @cpId AND username = @username AND username LIKE 'codex-test-%'";
+            var updated = await ExecuteNonQueryAsync(connection, sql, command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                command.Parameters.AddWithValue("@username", username);
+            }) > 0;
+            return updated
+                ? new HostingRealTestResponse(true, "Real Web Deploy test user row updated.", new { username }, "web-deploy", id)
+                : new HostingRealTestResponse(false, "Web Deploy test row not found, or it is not a codex-test row.", null, "web-deploy", id);
+        }
+
+        private static async Task<HostingRealTestResponse> CreateRealTestTeamAccessAsync(SqlConnection connection, SelectedHostingCp cp, Dictionary<string, string> fields)
+        {
+            var username = SafeTestName(TestMarker(fields, "name"), "codex-test-user");
+            var accessList = Truncate(Field(fields, "accessList", "websites,databases,email"), 50);
+            var siteList = Truncate(Field(fields, "siteList", "all"), 1000);
+            const string sql = @"
+INSERT INTO dbo.cp_loginAlias (username, password, forloginid, accesslist, disablelogin, sitelist, pp1)
+OUTPUT INSERTED.id
+VALUES (@username, 'codex-test-password-not-for-login', @cpLogin, @accessList, 0, @siteList, 'created-by-controlpanel-rebuild')";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@username", username);
+            command.Parameters.AddWithValue("@cpLogin", cp.CpLogin);
+            command.Parameters.AddWithValue("@accessList", accessList);
+            command.Parameters.AddWithValue("@siteList", siteList);
+            var id = Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+            return new HostingRealTestResponse(true, "Real CP alias test row created in cp_loginAlias.", new { username, accessList, siteList }, "team-access", id);
+        }
+
+        private static async Task<HostingRealTestResponse> UpdateRealTestTeamAccessAsync(SqlConnection connection, SelectedHostingCp cp, long id, Dictionary<string, string> fields)
+        {
+            var username = SafeTestName(TestMarker(fields, "name"), "codex-test-user");
+            var accessList = Truncate(Field(fields, "accessList", "websites,databases,email,ftp"), 50);
+            const string sql = @"
+UPDATE dbo.cp_loginAlias
+SET username = @username, accesslist = @accessList
+WHERE id = @id AND LOWER(forloginid) = LOWER(@cpLogin) AND username LIKE 'codex-test-%'";
+            var updated = await ExecuteNonQueryAsync(connection, sql, command =>
+            {
+                command.Parameters.AddWithValue("@id", id);
+                command.Parameters.AddWithValue("@cpLogin", cp.CpLogin);
+                command.Parameters.AddWithValue("@username", username);
+                command.Parameters.AddWithValue("@accessList", accessList);
+            }) > 0;
+            return updated
+                ? new HostingRealTestResponse(true, "Real CP alias test row updated.", new { username, accessList }, "team-access", id)
+                : new HostingRealTestResponse(false, "CP alias test row not found, or it is not a codex-test row.", null, "team-access", id);
+        }
+
+        private static async Task<HostingRealTestResponse> CreateRealTestDbBackupAsync(SqlConnection connection, SelectedHostingCp cp, Dictionary<string, string> fields)
+        {
+            var database = await LoadFirstDatabaseForBackupAsync(connection, cp.CpId);
+            if (database == null)
+            {
+                return new HostingRealTestResponse(false, "No database exists for backup testing.", null, "db-backup", 0);
+            }
+
+            var name = SafeTestName(TestMarker(fields, "name"), "codex-test-dbbackup");
+            var hour = ClampInt(Field(fields, "hour", "2"), 0, 23);
+            const string sql = @"
+INSERT INTO dbo.customDBBackup (cplogin, dbname, dbtype, cpid, dbid, certaintime, enterdate, isenable, backup_log)
+OUTPUT INSERTED.id
+VALUES (@cpLogin, @name, @dbType, CONVERT(varchar(50), @cpId), @dbId, @hour, GETDATE(), 1, 'created-by-controlpanel-rebuild')";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpLogin", cp.CpLogin);
+            command.Parameters.AddWithValue("@name", name);
+            command.Parameters.AddWithValue("@dbType", database.Value.Engine);
+            command.Parameters.AddWithValue("@cpId", cp.CpId);
+            command.Parameters.AddWithValue("@dbId", database.Value.Id);
+            command.Parameters.AddWithValue("@hour", hour);
+            var id = Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+            return new HostingRealTestResponse(true, "Real custom DB backup test row created in customDBBackup.", new { name, database.Value.Engine, database.Value.Id, hour }, "db-backup", id);
+        }
+
+        private static async Task<HostingRealTestResponse> UpdateRealTestDbBackupAsync(SqlConnection connection, SelectedHostingCp cp, long id, Dictionary<string, string> fields)
+        {
+            var name = SafeTestName(TestMarker(fields, "name"), "codex-test-dbbackup");
+            var hour = ClampInt(Field(fields, "hour", "3"), 0, 23);
+            const string sql = @"
+UPDATE dbo.customDBBackup
+SET dbname = @name, certaintime = @hour
+WHERE id = @id AND cpid = CONVERT(varchar(50), @cpId) AND dbname LIKE 'codex-test-%'";
+            var updated = await ExecuteNonQueryAsync(connection, sql, command =>
+            {
+                command.Parameters.AddWithValue("@id", id);
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                command.Parameters.AddWithValue("@name", name);
+                command.Parameters.AddWithValue("@hour", hour);
+            }) > 0;
+            return updated
+                ? new HostingRealTestResponse(true, "Real custom DB backup test row updated.", new { name, hour }, "db-backup", id)
+                : new HostingRealTestResponse(false, "DB backup test row not found, or it is not a codex-test row.", null, "db-backup", id);
+        }
+
+        private static bool IsAllowedRealTestArea(string area) => area is "ftp" or "redirect" or "web-deploy" or "team-access" or "db-backup";
+
+        private static string NormalizeRealTestArea(string? area) => (area ?? "").Trim().ToLowerInvariant();
+
+        private static string TestMarker(Dictionary<string, string> fields, string key) => Field(fields, key, "");
+
+        private static bool IsCodexTestValue(string value) => value.Trim().StartsWith("codex-test-", StringComparison.OrdinalIgnoreCase);
+
+        private static string SafeTestName(string value, string fallback)
+        {
+            var text = IsCodexTestValue(value) ? value.Trim().ToLowerInvariant() : fallback;
+            var clean = new string(text.Where(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' || ch == '.').ToArray());
+            return Truncate(clean.StartsWith("codex-test-", StringComparison.OrdinalIgnoreCase) ? clean : fallback, 50);
+        }
+
+        private static string Field(Dictionary<string, string> fields, string key, string fallback) =>
+            fields.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value.Trim() : fallback;
+
+        private static int ClampInt(string value, int min, int max)
+        {
+            if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number))
+            {
+                number = min;
+            }
+
+            return Math.Min(max, Math.Max(min, number));
+        }
+
+        private static async Task<int> ExecuteNonQueryAsync(SqlConnection connection, string sql, Action<SqlCommand> configure)
+        {
+            await using var command = new SqlCommand(sql, connection);
+            configure(command);
+            return await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task<bool> DeleteBySqlAsync(SqlConnection connection, string sql, long cpId, long id, string cpLogin = "", string marker = "")
+        {
+            return await ExecuteNonQueryAsync(connection, sql, command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cpId);
+                command.Parameters.AddWithValue("@id", id);
+                if (!string.IsNullOrWhiteSpace(cpLogin))
+                {
+                    command.Parameters.AddWithValue("@cpLogin", cpLogin);
+                }
+                if (!string.IsNullOrWhiteSpace(marker))
+                {
+                    command.Parameters.AddWithValue("@marker", marker);
+                }
+            }) > 0;
+        }
+
+        private static async Task<long> LoadFirstSiteUidAsync(SqlConnection connection, long cpId)
+        {
+            const string sql = "SELECT TOP 1 site_Uid FROM dbo.cp_config_Sites WHERE cpID = @cpId ORDER BY site_Uid";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? 0 : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<(string Engine, long Id)?> LoadFirstDatabaseForBackupAsync(SqlConnection connection, long cpId)
+        {
+            const string sql = @"
+SELECT TOP 1 'mssql' AS engine, MSSQLID AS id FROM dbo.cp_config_MSSQLs WHERE cpID = @cpId
+UNION ALL
+SELECT TOP 1 'mysql' AS engine, MySQLID AS id FROM dbo.cp_config_MySQLs WHERE cpID = @cpId";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return (reader.GetString(0), Convert.ToInt64(reader.GetValue(1), CultureInfo.InvariantCulture));
+        }
+
         private static async Task<HostingAppsDashboard> LoadHostingAppsAsync(SqlConnection connection, long customerId, long requestedCpId = 0)
         {
             var cp = await LoadSelectedHostingCpAsync(connection, customerId, requestedCpId);
@@ -6859,10 +7351,10 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
 
         private static List<HostingPluginSummary> BuildFallbackPluginCatalog() => new()
         {
-            new(1, "WordPress", "Latest", "PHP", "Popular CMS installer with database setup and file permissions staged through the job queue.", 0, true, "CMS", "/wp-admin/", "admin", false, true, "fallback", null, 1, 4, 3),
+            new(1, "WordPress", "Latest", "PHP", "Popular CMS installer with database setup and file permissions handled through the job queue.", 0, true, "CMS", "/wp-admin/", "admin", false, true, "fallback", null, 1, 4, 3),
             new(2, "Umbraco", "Latest", "ASP.NET", "ASP.NET CMS installer shell for the rebuilt plugin workflow.", 0, true, "CMS", "/umbraco/", "admin", false, true, "fallback", null, 1, 4, 2),
             new(3, "Orchard Core", "Latest", "ASP.NET", "Modern .NET CMS option prepared for one-click deployment.", 0, true, "CMS", "/admin/", "admin", false, true, "fallback", null, 1, 3, 2),
-            new(4, "phpBB", "Latest", "PHP", "Community forum package with install steps staged for the worker pass.", 0, true, "Forum", "/adm/", "admin", false, true, "fallback", null, 1, 3, 3),
+            new(4, "phpBB", "Latest", "PHP", "Community forum package with install steps handled by the worker pass.", 0, true, "Forum", "/adm/", "admin", false, true, "fallback", null, 1, 3, 3),
             new(5, "DNN Platform", "Latest", "ASP.NET", "Classic ASP.NET application installer shell.", 0, true, "CMS", "/admin/", "host", true, true, "fallback", null, 1, 5, 4),
             new(6, "Node.js Starter", "Latest", "Node.js", "Node deployment starter tied to workqueue deploy jobs.", 0, true, "Runtime", "/", "", false, false, "fallback", null, 1, 2, 1)
         };
@@ -7086,6 +7578,8 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record HostingActivityTotals(int Total, int Pending, int Running, int Errors);
         private sealed record HostingActivityTestRequest(long CpId, string From, string To, string Server, string Note);
         private sealed record HostingActivityMutationResponse(bool Success, string Message, long Id);
+        private sealed record HostingRealTestRequest(long CpId, string Area, Dictionary<string, string> Fields);
+        private sealed record HostingRealTestResponse(bool Success, string Message, object? Row, string Area, long Id);
         private sealed record HostingAppsResponse(bool Success, string Message, HostingAppsDashboard? Dashboard);
         private sealed record HostingAppsDashboard(long CpId, string CpLogin, List<HostingPluginSummary> Catalog, List<HostingActivitySummary> DeployJobs);
         private sealed record HostingPluginSummary(

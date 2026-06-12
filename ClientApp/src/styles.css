@@ -388,6 +388,18 @@ a:focus {
   padding: 0 10px;
 }
 
+.icon-only-button {
+  aspect-ratio: 1;
+  gap: 0;
+  min-width: 34px;
+  padding: 0;
+}
+
+.refresh-icon-button .menu-icon {
+  height: 16px;
+  width: 16px;
+}
+
 .full {
   width: 100%;
 }
@@ -3464,6 +3476,109 @@ html[data-theme="light"] .ssl-domain-badge {
 
 .website-table td {
   vertical-align: middle;
+}
+
+.website-more-functions {
+  display: grid;
+  gap: 18px;
+}
+
+.website-more-header {
+  align-items: start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.website-more-header h2 {
+  font-size: 1.18rem;
+  font-weight: 400;
+  margin: 10px 0 6px;
+}
+
+.website-more-header p,
+.website-more-card p {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.website-more-header label {
+  color: var(--muted);
+  display: grid;
+  flex: 0 0 min(280px, 100%);
+  font-size: 0.78rem;
+  gap: 6px;
+}
+
+.website-more-header select,
+.website-function-form input,
+.website-function-form select {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.website-more-grid,
+.website-function-form-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.website-more-card,
+.website-function-form {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.website-more-card h3 {
+  font-size: 1rem;
+  font-weight: 400;
+  margin: 9px 0 5px;
+}
+
+.website-more-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.website-more-actions .secondary-button {
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+
+.website-function-form {
+  align-content: start;
+}
+
+.website-function-form label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.78rem;
+  gap: 6px;
+}
+
+.website-function-form .checkbox-line {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.website-function-form .checkbox-line input {
+  min-height: auto;
+  width: auto;
 }
 
 .section-heading {

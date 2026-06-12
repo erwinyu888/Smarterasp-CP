@@ -132,6 +132,39 @@ const deployActions = [
   { label: "VSDeploy", icon: "deploy" }
 ];
 
+const websiteMoreFunctionGroups = [
+  {
+    badge: "Domains",
+    title: "Domain and Site Binding",
+    description: "Add, move, remove, and bind domains or subdomains to this website.",
+    actions: ["Add Domain", "Add Subdomain", "Move Domain", "Remove Domain", "Change Site Path", "Bind VPS Domain"]
+  },
+  {
+    badge: "Runtime",
+    title: "Runtime and IIS Features",
+    description: "Review ASP.NET, .NET Core, PHP, custom errors, caching, compression, and directory browsing changes.",
+    actions: ["Change Runtime", "Detailed Errors", "HTTP Compression", "Output Caching", "Directory Browsing", "Encrypt web.config"]
+  },
+  {
+    badge: "Pool",
+    title: "Application Pool",
+    description: "Recycle, start, stop, isolate, resize, and adjust app pool platform options.",
+    actions: ["Recycle Pool", "Start Pool", "Stop Pool", "Create Dedicated Pool", "Pool Memory", "32/64-bit Mode"]
+  },
+  {
+    badge: "Security",
+    title: "Security and Access",
+    description: "Review Site Guard, IP restrictions, executable/API flags, password protection, and lock-state changes.",
+    actions: ["Site Guard", "IP Deny", "Dynamic IP Protection", "Allow EXE", "Allow FB API", "Lock Site"]
+  },
+  {
+    badge: "Ops",
+    title: "Operations",
+    description: "Visitor statistics, raw logs, automated backups, migration, related DB cleanup, and site removal planning.",
+    actions: ["Visitor Stats", "Raw Logs", "Automated Backups", "WP Migration", "Remove Related DB", "Delete Website"]
+  }
+];
+
 const websites = [
   {
     siteName: "agapepapa",
@@ -1051,7 +1084,6 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
             <h1>{activeTitle}</h1>
           </div>
           <div className="workspace-actions">
-            <span className="account-chip">{currentUser?.login}</span>
             <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
             <button className="secondary-button compact" type="button" onClick={onLogout}>Logout</button>
           </div>
@@ -1257,7 +1289,6 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
           </div>
           <div className="workspace-actions">
             <button className="secondary-button compact" type="button" onClick={onBackToPanel}>Back to Plans</button>
-            <span className="account-chip">{currentUser?.login}</span>
             <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
             <button className="secondary-button compact" type="button" onClick={onLogout}>Logout</button>
           </div>
@@ -1284,14 +1315,18 @@ function hostingApiUrl(path, cpId) {
 }
 
 async function createPanelTestActivity(cpId, payload) {
-  const response = await fetch("/api/hosting/activity/test", {
+  throw new Error(`${payload?.from || payload?.server || "This action"} needs a real provider gateway before it can run. No row was created.`);
+}
+
+async function createHostingRealTest(cpId, area, fields) {
+  const response = await fetch("/api/hosting/real-test", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cpId, ...payload })
+    body: JSON.stringify({ cpId, area, fields })
   });
   const result = await response.json().catch(() => null);
   if (!response.ok || !result?.success) {
-    throw new Error(result?.message ?? "Unable to create panel test activity.");
+    throw new Error(result?.message ?? "Unable to create real test data.");
   }
 
   return result;
@@ -1372,7 +1407,7 @@ function HostingDashboard({ cpId }) {
           <div><dt>Websites</dt><dd>{dashboard?.siteCount ?? 0}</dd></div>
           <div><dt>Domains</dt><dd>{dashboard?.domainCount ?? 0}</dd></div>
         </dl>
-        <button className="secondary-button compact" type="button" onClick={loadHostingDashboard}>Refresh</button>
+        <RefreshButton onClick={loadHostingDashboard} />
       </article>
       {dashboardError && (
         <div className="panel-card dashboard-error-panel">
@@ -1385,7 +1420,7 @@ function HostingDashboard({ cpId }) {
           <div>
             <span className="status-pill warning">Migration Notice</span>
             <h2>Recent Server Migration</h2>
-            <p>Your hosting account has recent migration activity. Repair actions are staged from the Files page before real migration queue writes are enabled.</p>
+            <p>Your hosting account has recent migration activity. Repair actions are requires real gateway from the Files page before real migration queue writes are enabled.</p>
           </div>
           <div className="runtime-row-grid">
             {visibleMigrations.map((migration) => (
@@ -1482,6 +1517,13 @@ function WebsitesSection({ cpId }) {
   const [isLoadingSites, setIsLoadingSites] = useState(true);
   const [sitesError, setSitesError] = useState("");
   const [websiteMessage, setWebsiteMessage] = useState("");
+  const [selectedSiteKey, setSelectedSiteKey] = useState("");
+  const [newSiteDraft, setNewSiteDraft] = useState({ name: "newsite", folder: "/www/newsite", runtime: "ASP.NET 4.x Integrated" });
+  const [domainDraft, setDomainDraft] = useState({ domain: "newdomain.com", mode: "Add Domain", createDns: true });
+  const [pathDraft, setPathDraft] = useState({ path: "/www/sample.com", runtime: "ASP.NET 4.x Integrated", coreMode: "In Process" });
+  const [ipDenyDraft, setIpDenyDraft] = useState({ ip: "203.0.113.10", mask: "255.255.255.255", mode: "Deny IP" });
+  const [envDraft, setEnvDraft] = useState({ key: "ASPNETCORE_ENVIRONMENT", value: "Production", scope: "Site" });
+  const [poolDraft, setPoolDraft] = useState({ action: "Recycle Pool", memory: "1024", mode: "64-bit" });
 
   async function loadHostingSites() {
     setIsLoadingSites(true);
@@ -1498,8 +1540,10 @@ function WebsitesSection({ cpId }) {
       const loadedSites = result.dashboard?.sites?.map(mapHostingSiteToUi) ?? [];
       if (loadedSites.length) {
         setSiteRecords(loadedSites);
+        setSelectedSiteKey((current) => current || loadedSites[0].siteKey);
       } else {
         setSiteRecords([]);
+        setSelectedSiteKey("");
       }
     } catch {
       setSitesError("Unable to reach website service.");
@@ -1524,20 +1568,76 @@ function WebsitesSection({ cpId }) {
     );
   }
 
-  async function queueWebsiteTest(action, site = null, target = "") {
+  const selectedSite = siteRecords.find((site) => site.siteKey === selectedSiteKey) ?? siteRecords[0] ?? null;
+
+  async function queueWebsiteTest(action, site = null, target = "", details = "") {
     setWebsiteMessage("");
     try {
       await createPanelTestActivity(cpId, {
         from: site ? `site:${site.siteName}` : `website:${action}`,
         to: target || (site ? site.mappedDomains?.[0]?.label || site.siteName : "/panel-test/websites"),
         server: "website-manager",
-        note: `Safe website planning row for ${action}`
+        note: details || `Safe website planning row for ${action}`
       });
       setWebsiteMessage(`${action} test activity created.`);
       await reloadActivity();
     } catch (error) {
       setWebsiteMessage(error.message);
     }
+  }
+
+  function queueSelectedWebsiteAction(action, details = "") {
+    queueWebsiteTest(action, selectedSite, "", details);
+  }
+
+  function submitNewSiteDraft(event) {
+    event.preventDefault();
+    queueWebsiteTest(
+      "+ New Site",
+      null,
+      newSiteDraft.folder,
+      `Safe addnewsite draft: site ${newSiteDraft.name}; folder ${newSiteDraft.folder}; runtime ${newSiteDraft.runtime}`
+    );
+  }
+
+  function submitDomainDraft(event) {
+    event.preventDefault();
+    queueSelectedWebsiteAction(
+      domainDraft.mode,
+      `Safe domainbind draft: site ${selectedSite?.siteName || "selected site"}; domain ${domainDraft.domain}; action ${domainDraft.mode}; create DNS ${domainDraft.createDns ? "yes" : "no"}`
+    );
+  }
+
+  function submitPathRuntimeDraft(event) {
+    event.preventDefault();
+    queueSelectedWebsiteAction(
+      "Path / Runtime",
+      `Safe website runtime draft: site ${selectedSite?.siteName || "selected site"}; path ${pathDraft.path}; runtime ${pathDraft.runtime}; core mode ${pathDraft.coreMode}`
+    );
+  }
+
+  function submitIpDenyDraft(event) {
+    event.preventDefault();
+    queueSelectedWebsiteAction(
+      ipDenyDraft.mode,
+      `Safe IP deny draft: site ${selectedSite?.siteName || "selected site"}; ip ${ipDenyDraft.ip}; mask ${ipDenyDraft.mask}; action ${ipDenyDraft.mode}`
+    );
+  }
+
+  function submitEnvDraft(event) {
+    event.preventDefault();
+    queueSelectedWebsiteAction(
+      "Environment Variable",
+      `Safe environment variable draft: site ${selectedSite?.siteName || "selected site"}; scope ${envDraft.scope}; ${envDraft.key}=${envDraft.value}`
+    );
+  }
+
+  function submitPoolDraft(event) {
+    event.preventDefault();
+    queueSelectedWebsiteAction(
+      poolDraft.action,
+      `Safe app pool draft: site ${selectedSite?.siteName || "selected site"}; action ${poolDraft.action}; memory ${poolDraft.memory} MB; mode ${poolDraft.mode}`
+    );
   }
 
   function refreshWebsitesSection() {
@@ -1580,7 +1680,7 @@ function WebsitesSection({ cpId }) {
           <span className="status-pill blue">Live websites</span>
           <p>{sitesDashboard?.cpLogin ? `${sitesDashboard.cpLogin} · ${siteRecords.length} sites` : "Loading hosting websites"}</p>
         </div>
-        <button className="secondary-button compact" type="button" onClick={refreshWebsitesSection}>Refresh</button>
+        <RefreshButton onClick={refreshWebsitesSection} />
       </div>
 
       {isLoadingSites && <p className="empty-state">Loading websites from cp_config_Sites...</p>}
@@ -1605,6 +1705,187 @@ function WebsitesSection({ cpId }) {
         <WebsiteTable sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} />
       ))}
 
+      {!!siteRecords.length && (
+        <section className="panel-card website-more-functions">
+          <div className="website-more-header">
+            <div>
+              <span className="status-pill blue">More Functions</span>
+              <h2>Website Tools</h2>
+              <p>Rebuilt staging surface for the legacy domainbind, app pool, runtime, stats, protection, and IIS feature flows.</p>
+            </div>
+            <label>
+              Site
+              <select value={selectedSite?.siteKey || ""} onChange={(event) => setSelectedSiteKey(event.target.value)}>
+                {siteRecords.map((site) => (
+                  <option key={site.siteKey} value={site.siteKey}>{site.siteName}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="website-more-grid">
+            {websiteMoreFunctionGroups.map((group) => (
+              <article className="website-more-card" key={group.title}>
+                <div>
+                  <span className="status-pill muted">{group.badge}</span>
+                  <h3>{group.title}</h3>
+                  <p>{group.description}</p>
+                </div>
+                <div className="website-more-actions">
+                  {group.actions.map((action) => (
+                    <button className="secondary-button compact" type="button" key={action} onClick={() => queueSelectedWebsiteAction(action)}>
+                      {action}
+                    </button>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div className="website-function-form-grid">
+            <form className="website-function-form" onSubmit={submitNewSiteDraft}>
+              <span className="status-pill blue">New Site Draft</span>
+              <label>
+                Site Name
+                <input value={newSiteDraft.name} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, name: event.target.value }))} />
+              </label>
+              <label>
+                Folder
+                <input value={newSiteDraft.folder} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, folder: event.target.value }))} />
+              </label>
+              <label>
+                Runtime
+                <select value={newSiteDraft.runtime} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, runtime: event.target.value }))}>
+                  <option>ASP.NET 4.x Integrated</option>
+                  <option>ASP.NET 4.x Classic</option>
+                  <option>.NET Core</option>
+                  <option>PHP</option>
+                </select>
+              </label>
+              <button className="primary-button compact" type="submit">Run Real Test</button>
+            </form>
+
+            <form className="website-function-form" onSubmit={submitDomainDraft}>
+              <span className="status-pill blue">Domain Binding</span>
+              <label>
+                Domain
+                <input value={domainDraft.domain} onChange={(event) => setDomainDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+              </label>
+              <label>
+                Action
+                <select value={domainDraft.mode} onChange={(event) => setDomainDraft((draft) => ({ ...draft, mode: event.target.value }))}>
+                  <option>Add Domain</option>
+                  <option>Add Subdomain</option>
+                  <option>Move Domain</option>
+                  <option>Remove Domain</option>
+                  <option>Bind VPS Domain</option>
+                </select>
+              </label>
+              <label className="checkbox-line">
+                <input type="checkbox" checked={domainDraft.createDns} onChange={(event) => setDomainDraft((draft) => ({ ...draft, createDns: event.target.checked }))} />
+                Create DNS zone
+              </label>
+              <button className="primary-button compact" type="submit">Run Real Test</button>
+            </form>
+
+            <form className="website-function-form" onSubmit={submitPathRuntimeDraft}>
+              <span className="status-pill blue">Path / Runtime</span>
+              <label>
+                Site Path
+                <input value={pathDraft.path} onChange={(event) => setPathDraft((draft) => ({ ...draft, path: event.target.value }))} />
+              </label>
+              <label>
+                Runtime
+                <select value={pathDraft.runtime} onChange={(event) => setPathDraft((draft) => ({ ...draft, runtime: event.target.value }))}>
+                  <option>ASP.NET 4.x Integrated</option>
+                  <option>ASP.NET 4.x Classic</option>
+                  <option>ASP.NET 2.0 Classic</option>
+                  <option>.NET Core</option>
+                  <option>PHP 8.x</option>
+                </select>
+              </label>
+              <label>
+                Core Mode
+                <select value={pathDraft.coreMode} onChange={(event) => setPathDraft((draft) => ({ ...draft, coreMode: event.target.value }))}>
+                  <option>In Process</option>
+                  <option>Out of Process</option>
+                </select>
+              </label>
+              <button className="primary-button compact" type="submit">Run Real Test</button>
+            </form>
+
+            <form className="website-function-form" onSubmit={submitIpDenyDraft}>
+              <span className="status-pill blue">IP Restrictions</span>
+              <label>
+                IP Address
+                <input value={ipDenyDraft.ip} onChange={(event) => setIpDenyDraft((draft) => ({ ...draft, ip: event.target.value }))} />
+              </label>
+              <label>
+                Subnet Mask
+                <input value={ipDenyDraft.mask} onChange={(event) => setIpDenyDraft((draft) => ({ ...draft, mask: event.target.value }))} />
+              </label>
+              <label>
+                Mode
+                <select value={ipDenyDraft.mode} onChange={(event) => setIpDenyDraft((draft) => ({ ...draft, mode: event.target.value }))}>
+                  <option>Deny IP</option>
+                  <option>Remove Deny Rule</option>
+                  <option>Dynamic IP Protection</option>
+                </select>
+              </label>
+              <button className="primary-button compact" type="submit">Run Real Test</button>
+            </form>
+
+            <form className="website-function-form" onSubmit={submitEnvDraft}>
+              <span className="status-pill blue">Environment</span>
+              <label>
+                Key
+                <input value={envDraft.key} onChange={(event) => setEnvDraft((draft) => ({ ...draft, key: event.target.value }))} />
+              </label>
+              <label>
+                Value
+                <input value={envDraft.value} onChange={(event) => setEnvDraft((draft) => ({ ...draft, value: event.target.value }))} />
+              </label>
+              <label>
+                Scope
+                <select value={envDraft.scope} onChange={(event) => setEnvDraft((draft) => ({ ...draft, scope: event.target.value }))}>
+                  <option>Site</option>
+                  <option>Application Pool</option>
+                </select>
+              </label>
+              <button className="primary-button compact" type="submit">Run Real Test</button>
+            </form>
+
+            <form className="website-function-form" onSubmit={submitPoolDraft}>
+              <span className="status-pill blue">App Pool</span>
+              <label>
+                Action
+                <select value={poolDraft.action} onChange={(event) => setPoolDraft((draft) => ({ ...draft, action: event.target.value }))}>
+                  <option>Recycle Pool</option>
+                  <option>Start Pool</option>
+                  <option>Stop Pool</option>
+                  <option>Create Dedicated Pool</option>
+                  <option>Delete Pool</option>
+                  <option>Enable Load User Profile</option>
+                </select>
+              </label>
+              <label>
+                Memory MB
+                <input type="number" min="128" max="8192" value={poolDraft.memory} onChange={(event) => setPoolDraft((draft) => ({ ...draft, memory: event.target.value }))} />
+              </label>
+              <label>
+                Mode
+                <select value={poolDraft.mode} onChange={(event) => setPoolDraft((draft) => ({ ...draft, mode: event.target.value }))}>
+                  <option>64-bit</option>
+                  <option>32-bit</option>
+                  <option>.NET Core</option>
+                </select>
+              </label>
+              <button className="primary-button compact" type="submit">Run Real Test</button>
+            </form>
+          </div>
+        </section>
+      )}
+
       <ActivityList jobs={websiteJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent website jobs" onRetry={reloadActivity} />
     </section>
   );
@@ -1620,6 +1901,10 @@ function mapHostingSiteToUi(site) {
         : "Website";
 
   return {
+    siteKey: String(site.siteUid ?? site.siteName ?? site.rootName),
+    siteUid: site.siteUid,
+    rootName: site.rootName,
+    sitePath: site.sitePath,
     siteName: site.siteName || site.rootName || `site-${site.siteUid}`,
     mappedDomains: site.mappedDomains?.length
       ? site.mappedDomains
@@ -1788,7 +2073,10 @@ function DatabasesSection({ cpId }) {
   const [databaseError, setDatabaseError] = useState("");
   const [databaseMessage, setDatabaseMessage] = useState("");
   const [connectionPreview, setConnectionPreview] = useState(null);
-  const [backupDraft, setBackupDraft] = useState({ databaseKey: "", hour: "2" });
+  const [backupDraft, setBackupDraft] = useState({ databaseKey: "", hour: "2", name: "codex-test-dbbackup" });
+  const [newDatabaseDraft, setNewDatabaseDraft] = useState({ engine: "MSSQL", name: "codex-test-db", login: "codex-test-user", quota: "100" });
+  const [restoreDraft, setRestoreDraft] = useState({ databaseKey: "", backupFile: "/db_backup/testdb.bak", mode: "Restore from backup" });
+  const [sqlDraft, setSqlDraft] = useState({ databaseKey: "", filePath: "/www/sql/update.sql", action: "Run SQL File" });
 
   async function loadDatabases() {
     setIsLoadingDatabases(true);
@@ -1851,7 +2139,7 @@ function DatabasesSection({ cpId }) {
     });
   }
 
-  function submitBackupDraft(event) {
+  async function submitBackupDraft(event) {
     event.preventDefault();
     const database = visibleDatabases.find((item) => `${item.engine}:${item.databaseId}` === backupDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
     if (!database) {
@@ -1860,10 +2148,52 @@ function DatabasesSection({ cpId }) {
     }
 
     const hour = Math.max(0, Math.min(23, Number(backupDraft.hour) || 0));
+    try {
+      const result = await createHostingRealTest(cpId, "db-backup", { name: backupDraft.name, hour: String(hour) });
+      setDatabaseMessage(result.message);
+      await loadDatabases();
+    } catch (error) {
+      setDatabaseMessage(error.message);
+    }
+  }
+
+  function submitNewDatabaseDraft(event) {
+    event.preventDefault();
+    const quota = Math.max(10, Math.min(10240, Number(newDatabaseDraft.quota) || 100));
     queueDatabaseTest(
-      "Scheduled Backup",
+      `Create ${newDatabaseDraft.engine} Database`,
+      null,
+      `Safe database create draft: engine ${newDatabaseDraft.engine}; name ${newDatabaseDraft.name}; login ${newDatabaseDraft.login}; quota ${quota} MB; cpid ${cpId}`
+    );
+  }
+
+  function submitRestoreDraft(event) {
+    event.preventDefault();
+    const database = databases.find((item) => `${item.engine}:${item.databaseId}` === restoreDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
+    if (!database) {
+      setDatabaseMessage("Choose a database before staging a restore.");
+      return;
+    }
+
+    queueDatabaseTest(
+      restoreDraft.mode,
       database,
-      `Safe customDBBackup draft: ${database.engine}|${database.name}|${database.databaseId}; certaintime ${hour}; cpid ${cpId}; enabled true`
+      `Safe database restore draft: ${database.engine}|${database.name}|${database.databaseId}; file ${restoreDraft.backupFile}; mode ${restoreDraft.mode}`
+    );
+  }
+
+  function submitSqlDraft(event) {
+    event.preventDefault();
+    const database = databases.find((item) => `${item.engine}:${item.databaseId}` === sqlDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
+    if (!database) {
+      setDatabaseMessage("Choose a database before staging a SQL file.");
+      return;
+    }
+
+    queueDatabaseTest(
+      sqlDraft.action,
+      database,
+      `Safe SQL worker draft: ${database.engine}|${database.name}|${database.databaseId}; file ${sqlDraft.filePath}; action ${sqlDraft.action}`
     );
   }
 
@@ -1880,7 +2210,7 @@ function DatabasesSection({ cpId }) {
           <div><span>MSSQL</span><strong>{totals.mssql}</strong></div>
           <div><span>MySQL</span><strong>{totals.mysql}</strong></div>
         </div>
-        <button className="secondary-button compact" type="button" onClick={loadDatabases}>Refresh</button>
+        <RefreshButton onClick={loadDatabases} />
       </article>
 
       <div className="database-toolbar panel-card">
@@ -1910,7 +2240,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Scheduled database backups</span>
             <h3>Custom Backup Draft</h3>
-            <p>Stages the legacy `customDBBackup` values without writing a real backup schedule.</p>
+            <p>Requires real gateway for the legacy `customDBBackup` values without writing a real backup schedule.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitBackupDraft}>
             <label>
@@ -1927,10 +2257,113 @@ function DatabasesSection({ cpId }) {
               Backup Hour
               <input type="number" min="0" max="23" value={backupDraft.hour} onChange={(event) => setBackupDraft((draft) => ({ ...draft, hour: event.target.value }))} />
             </label>
-            <button className="primary-button compact" type="submit">Stage Schedule</button>
+            <label>
+              Test Name
+              <input value={backupDraft.name} onChange={(event) => setBackupDraft((draft) => ({ ...draft, name: event.target.value }))} />
+            </label>
+            <button className="primary-button compact" type="submit">Create Real Test</button>
           </form>
         </article>
       )}
+
+      <div className="advance-form-grid">
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Create Database</span>
+            <h3>MSSQL / MySQL Draft</h3>
+            <p>Requires real gateway for the legacy create form values with CP prefix, login, and quota review.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitNewDatabaseDraft}>
+            <label>
+              Engine
+              <select value={newDatabaseDraft.engine} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, engine: event.target.value }))}>
+                <option value="MSSQL">MSSQL</option>
+                <option value="MySQL">MySQL</option>
+              </select>
+            </label>
+            <label>
+              Database Name
+              <input value={newDatabaseDraft.name} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, name: event.target.value }))} />
+            </label>
+            <label>
+              Login
+              <input value={newDatabaseDraft.login} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, login: event.target.value }))} />
+            </label>
+            <label>
+              Quota MB
+              <input type="number" min="10" max="10240" value={newDatabaseDraft.quota} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, quota: event.target.value }))} />
+            </label>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
+          </form>
+        </article>
+
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Restore / Backup</span>
+            <h3>Server Backup Draft</h3>
+            <p>Requires real gateway for restore mode and backup file path for the compatible database worker queue.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitRestoreDraft}>
+            <label>
+              Database
+              <select value={restoreDraft.databaseKey || (databases[0] ? `${databases[0].engine}:${databases[0].databaseId}` : "")} onChange={(event) => setRestoreDraft((draft) => ({ ...draft, databaseKey: event.target.value }))}>
+                {databases.map((database) => (
+                  <option value={`${database.engine}:${database.databaseId}`} key={`restore-${database.engine}-${database.databaseId}`}>
+                    {database.engine} · {database.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Backup File
+              <input value={restoreDraft.backupFile} onChange={(event) => setRestoreDraft((draft) => ({ ...draft, backupFile: event.target.value }))} />
+            </label>
+            <label>
+              Mode
+              <select value={restoreDraft.mode} onChange={(event) => setRestoreDraft((draft) => ({ ...draft, mode: event.target.value }))}>
+                <option>Restore from backup</option>
+                <option>Queue MSSQL Backup</option>
+                <option>Queue MySQL Backup</option>
+                <option>Show Deleted DBs</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
+          </form>
+        </article>
+
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Run SQL</span>
+            <h3>SQL File Worker</h3>
+            <p>Requires real gateway for a SQL file run against an owned database without executing it directly.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitSqlDraft}>
+            <label>
+              Database
+              <select value={sqlDraft.databaseKey || (databases[0] ? `${databases[0].engine}:${databases[0].databaseId}` : "")} onChange={(event) => setSqlDraft((draft) => ({ ...draft, databaseKey: event.target.value }))}>
+                {databases.map((database) => (
+                  <option value={`${database.engine}:${database.databaseId}`} key={`sql-${database.engine}-${database.databaseId}`}>
+                    {database.engine} · {database.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              SQL File
+              <input value={sqlDraft.filePath} onChange={(event) => setSqlDraft((draft) => ({ ...draft, filePath: event.target.value }))} />
+            </label>
+            <label>
+              Action
+              <select value={sqlDraft.action} onChange={(event) => setSqlDraft((draft) => ({ ...draft, action: event.target.value }))}>
+                <option>Run SQL File</option>
+                <option>Validate SQL File</option>
+                <option>Import SQL Dump</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
+          </form>
+        </article>
+      </div>
 
       {isLoadingDatabases && <p className="empty-state">Loading databases from cp_config_MSSQLs and cp_config_MySQLs...</p>}
       {databaseMessage && <p className="sandbox-message">{databaseMessage}</p>}
@@ -2026,6 +2459,8 @@ function EmailsSection({ cpId }) {
   const [isLoadingEmails, setIsLoadingEmails] = useState(true);
   const [emailError, setEmailError] = useState("");
   const [emailMessage, setEmailMessage] = useState("");
+  const [emailDomainDraft, setEmailDomainDraft] = useState({ domain: "mail.example.com", type: "Hosted Email", quota: "1000" });
+  const [mailboxDraft, setMailboxDraft] = useState({ domain: "", mailbox: "info", quota: "500", action: "Create Mailbox" });
 
   async function loadEmails() {
     setIsLoadingEmails(true);
@@ -2061,20 +2496,39 @@ function EmailsSection({ cpId }) {
     String(job.from ?? "").toLowerCase().startsWith("email:")
   );
 
-  async function queueEmailTest(action, domain = null) {
+  async function queueEmailTest(action, domain = null, details = "") {
     setEmailMessage("");
     try {
       await createPanelTestActivity(cpId, {
         from: domain ? `email:${domain.domain}` : `email:${action}`,
         to: domain ? domain.mailHost || domain.webmailUrl || "mail-server" : "/panel-test/email",
         server: "mail-manager",
-        note: `Safe email planning row for ${action}`
+        note: details || `Safe email planning row for ${action}`
       });
       setEmailMessage(`${action} test activity created.`);
       await reloadActivity();
     } catch (error) {
       setEmailMessage(error.message);
     }
+  }
+
+  function submitEmailDomainDraft(event) {
+    event.preventDefault();
+    queueEmailTest(
+      `Add ${emailDomainDraft.type}`,
+      { domain: emailDomainDraft.domain, mailHost: "mail-manager" },
+      `Safe email domain draft: domain ${emailDomainDraft.domain}; type ${emailDomainDraft.type}; quota ${emailDomainDraft.quota} MB`
+    );
+  }
+
+  function submitMailboxDraft(event) {
+    event.preventDefault();
+    const selectedDomain = domains.find((domain) => domain.domain === mailboxDraft.domain) ?? primaryDomain;
+    queueEmailTest(
+      mailboxDraft.action,
+      selectedDomain,
+      `Safe mailbox draft: ${mailboxDraft.mailbox}@${selectedDomain?.domain || mailboxDraft.domain || "domain"}; quota ${mailboxDraft.quota} MB; action ${mailboxDraft.action}`
+    );
   }
 
   function refreshEmailSection() {
@@ -2096,7 +2550,7 @@ function EmailsSection({ cpId }) {
           <div><span>Corporate</span><strong>{totals.corporate}</strong></div>
           <div><span>Daily Limits</span><strong>{totals.dailyLimits}</strong></div>
         </div>
-        <button className="secondary-button compact" type="button" onClick={refreshEmailSection}>Refresh</button>
+        <RefreshButton onClick={refreshEmailSection} />
       </article>
 
       <div className="database-toolbar panel-card">
@@ -2145,6 +2599,73 @@ function EmailsSection({ cpId }) {
           </div>
         </article>
         <KnowledgeBaseCard title="Email Guides" articles={emailKbArticles} />
+      </div>
+
+      <div className="advance-form-grid">
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Email Domain</span>
+            <h3>Hosted / Corporate Draft</h3>
+            <p>Requires real gateway for hosted, corporate, and VPS email domain values before SmarterMail writes are enabled.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitEmailDomainDraft}>
+            <label>
+              Domain
+              <input value={emailDomainDraft.domain} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+            </label>
+            <label>
+              Type
+              <select value={emailDomainDraft.type} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, type: event.target.value }))}>
+                <option>Hosted Email</option>
+                <option>Corporate Email</option>
+                <option>VPS Email</option>
+              </select>
+            </label>
+            <label>
+              Quota MB
+              <input type="number" min="100" max="10240" value={emailDomainDraft.quota} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, quota: event.target.value }))} />
+            </label>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
+          </form>
+        </article>
+
+        <article className="panel-card advance-form-card">
+          <div>
+            <span className="status-pill blue">Mailbox</span>
+            <h3>Mailbox / Alias Draft</h3>
+            <p>Requires real gateway for mailbox, alias, forwarding, quota, and password actions for the selected email domain.</p>
+          </div>
+          <form className="advance-inline-form" onSubmit={submitMailboxDraft}>
+            <label>
+              Domain
+              <select value={mailboxDraft.domain || primaryDomain?.domain || ""} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, domain: event.target.value }))}>
+                {domains.map((domain) => (
+                  <option value={domain.domain} key={`mailbox-${domain.domain}`}>{domain.domain}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Mailbox
+              <input value={mailboxDraft.mailbox} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, mailbox: event.target.value }))} />
+            </label>
+            <label>
+              Quota MB
+              <input type="number" min="50" max="10240" value={mailboxDraft.quota} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, quota: event.target.value }))} />
+            </label>
+            <label>
+              Action
+              <select value={mailboxDraft.action} onChange={(event) => setMailboxDraft((draft) => ({ ...draft, action: event.target.value }))}>
+                <option>Create Mailbox</option>
+                <option>Reset Password</option>
+                <option>Update Quota</option>
+                <option>Create Alias</option>
+                <option>Create Forwarding</option>
+                <option>Delete Mailbox</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
+          </form>
+        </article>
       </div>
 
       {isLoadingEmails && <p className="empty-state">Loading email domains from cp_config_EmailDomains...</p>}
@@ -2225,6 +2746,7 @@ function FtpSection({ cpId }) {
   const [isLoadingFtp, setIsLoadingFtp] = useState(true);
   const [ftpError, setFtpError] = useState("");
   const [ftpMessage, setFtpMessage] = useState("");
+  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", path: "h:/root/home/openreward-001/www/codex-test", quota: "500", permission: "write" });
 
   async function loadFtp() {
     setIsLoadingFtp(true);
@@ -2257,17 +2779,34 @@ function FtpSection({ cpId }) {
     String(job.type ?? "").toLowerCase().includes("ftp")
   );
 
-  async function queueFtpTest(action, user = null) {
+  async function queueFtpTest(action, user = null, details = "") {
     setFtpMessage("");
     try {
       await createPanelTestActivity(cpId, {
         from: user ? `ftp:${user.login}` : `ftp:${action}`,
         to: user ? user.path || "/www" : "/panel-test/ftp",
         server: user?.server || "ftp-manager",
-        note: `Safe FTP planning row for ${action}`
+        note: details || `Safe FTP planning row for ${action}`
       });
       setFtpMessage(`${action} test activity created.`);
       await reloadActivity();
+    } catch (error) {
+      setFtpMessage(error.message);
+    }
+  }
+
+  async function submitFtpDraft(event) {
+    event.preventDefault();
+    setFtpMessage("");
+    try {
+      const result = await createHostingRealTest(cpId, "ftp", {
+        name: ftpDraft.login,
+        path: ftpDraft.path,
+        quota: ftpDraft.quota,
+        permission: ftpDraft.permission
+      });
+      setFtpMessage(result.message);
+      await loadFtp();
     } catch (error) {
       setFtpMessage(error.message);
     }
@@ -2284,14 +2823,14 @@ function FtpSection({ cpId }) {
         <div>
           <span className="status-pill blue">Live FTP</span>
           <h2>{ftpDashboard?.cpLogin || "FTP Manager"}</h2>
-          <p>FTP account inventory from cp_config_FTP. Remote agent actions are staged for the next pass.</p>
+          <p>FTP account inventory from cp_config_FTP. Remote agent actions are requires real gateway for the next pass.</p>
         </div>
         <div className="database-total-grid">
           <div><span>Total</span><strong>{totals.total}</strong></div>
           <div><span>Root</span><strong>{totals.rootUsers}</strong></div>
           <div><span>Extra</span><strong>{totals.extraUsers}</strong></div>
         </div>
-        <button className="secondary-button compact" type="button" onClick={refreshFtpSection}>Refresh</button>
+        <RefreshButton onClick={refreshFtpSection} />
       </article>
 
       <div className="database-toolbar panel-card">
@@ -2301,6 +2840,37 @@ function FtpSection({ cpId }) {
           <button className="secondary-button compact" type="button" onClick={() => queueFtpTest("Reset Root Path")}>Reset Root Path</button>
         </div>
       </div>
+
+      <article className="panel-card advance-form-card">
+        <div>
+          <span className="status-pill blue">FTP User Draft</span>
+          <h3>Create / Edit FTP</h3>
+          <p>Requires real gateway for FTP login, path, quota, and permission values without changing existing FTP users.</p>
+        </div>
+        <form className="advance-inline-form" onSubmit={submitFtpDraft}>
+          <label>
+            Login
+            <input value={ftpDraft.login} onChange={(event) => setFtpDraft((draft) => ({ ...draft, login: event.target.value }))} />
+          </label>
+          <label>
+            Path
+            <input value={ftpDraft.path} onChange={(event) => setFtpDraft((draft) => ({ ...draft, path: event.target.value }))} />
+          </label>
+          <label>
+            Quota MB
+            <input type="number" min="0" max="10240" value={ftpDraft.quota} onChange={(event) => setFtpDraft((draft) => ({ ...draft, quota: event.target.value }))} />
+          </label>
+          <label>
+            Permission
+            <select value={ftpDraft.permission} onChange={(event) => setFtpDraft((draft) => ({ ...draft, permission: event.target.value }))}>
+              <option>Read / Write</option>
+              <option>Read Only</option>
+              <option>Write Only</option>
+            </select>
+          </label>
+          <button className="primary-button compact" type="submit">Create Real Test</button>
+        </form>
+      </article>
 
       {isLoadingFtp && <p className="empty-state">Loading FTP users from cp_config_FTP...</p>}
       {ftpMessage && <p className="sandbox-message">{ftpMessage}</p>}
@@ -2471,7 +3041,7 @@ function FilesSection({ cpId }) {
           <div><span>Running</span><strong>{totals.running}</strong></div>
           <div><span>Errors</span><strong>{totals.errors}</strong></div>
         </div>
-        <button className="secondary-button compact" type="button" onClick={() => { reload(); loadFileSites(); }}>Refresh</button>
+        <RefreshButton onClick={() => { reload(); loadFileSites(); }} />
       </article>
 
       {!!securityDashboard?.siteSecurityRows?.length && (
@@ -2532,7 +3102,7 @@ function FilesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Site Protection Draft</span>
             <h3>Password Protection</h3>
-            <p>Stages lock site, unlock site, password protection, and FB API access planning without changing files or IIS rules.</p>
+            <p>Requires real gateway for lock site, unlock site, password protection, and FB API access planning without changing files or IIS rules.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitProtectionDraft}>
             <label>
@@ -2557,7 +3127,7 @@ function FilesSection({ cpId }) {
                 <option value="Allow FB API">Allow FB API</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Stage Protection</button>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
           </form>
         </article>
 
@@ -2565,7 +3135,7 @@ function FilesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Migration Draft</span>
             <h3>Repair Queue</h3>
-            <p>Stages migration completion checks and permission repair steps from the migration repair flow.</p>
+            <p>Requires real gateway for migration completion checks and permission repair steps from the migration repair flow.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitMigrationDraft}>
             <label>
@@ -2585,7 +3155,7 @@ function FilesSection({ cpId }) {
                 <option value="Queue Migration Notice">Queue Migration Notice</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Stage Repair</button>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
           </form>
         </article>
       </div>
@@ -2651,6 +3221,12 @@ function AppsSection({ cpId }) {
     site: "sample.com",
     url: "https://sample.com/wp-admin",
     note: "WordPress Desk safe review"
+  });
+  const [nodeDraft, setNodeDraft] = useState({
+    site: "sample.com",
+    source: "https://github.com/example/node-app.git",
+    mode: "Deploy from Git",
+    handler: "HTTP Platform"
   });
 
   async function loadApps() {
@@ -2757,6 +3333,23 @@ function AppsSection({ cpId }) {
     }
   }
 
+  async function createNodeDeployTest(event) {
+    event.preventDefault();
+    setAppsMessage("");
+    try {
+      const result = await createPanelTestActivity(cpId, {
+        from: `node:${nodeDraft.mode}`,
+        to: nodeDraft.site || "node-site",
+        server: "plugin-installer",
+        note: `Safe Node.js deploy draft: site ${nodeDraft.site}; source ${nodeDraft.source}; mode ${nodeDraft.mode}; handler ${nodeDraft.handler}`
+      });
+      setAppsMessage(result.message);
+      await reloadActivity();
+    } catch (error) {
+      setAppsMessage(error.message);
+    }
+  }
+
   return (
     <section className="cp-inventory-section">
       <article className="panel-card cp-inventory-summary">
@@ -2771,7 +3364,7 @@ function AppsSection({ cpId }) {
           <div><span>Enabled</span><strong>{catalog.filter((plugin) => plugin.enabled).length}</strong></div>
           <div><span>DB Required</span><strong>{catalog.filter((plugin) => plugin.usesDatabase).length}</strong></div>
         </div>
-        <button className="secondary-button compact" type="button" onClick={() => { loadApps(); reloadActivity(); }}>Refresh</button>
+        <RefreshButton onClick={() => { loadApps(); reloadActivity(); }} />
       </article>
 
       <div className="database-toolbar panel-card">
@@ -2811,7 +3404,7 @@ function AppsSection({ cpId }) {
           <div>
             <span className="status-pill blue">WordPress Desk</span>
             <h3>Site Security and WordPress Tools</h3>
-            <p>Stages the wpdesk CDN, firewall, and security checks without changing Cloudflare, WebKnight, or site files.</p>
+            <p>Requires real gateway for the wpdesk CDN, firewall, and security checks without changing Cloudflare, WebKnight, or site files.</p>
           </div>
           <MenuIcon name="apps" />
         </div>
@@ -2857,6 +3450,45 @@ function AppsSection({ cpId }) {
             </div>
           </div>
         )}
+      </article>
+
+      <article className="panel-card wordpress-desk-panel">
+        <div className="database-card-header">
+          <div>
+            <span className="status-pill blue">Node.js Deploy</span>
+            <h3>IISNode / HTTP Platform</h3>
+            <p>Requires real gateway for Node.js mode, Git/ZIP source, sub-application, and deploy worker values.</p>
+          </div>
+          <MenuIcon name="deploy" />
+        </div>
+        <form className="advance-inline-form" onSubmit={createNodeDeployTest}>
+          <label>
+            Site
+            <input value={nodeDraft.site} onChange={(event) => setNodeDraft((draft) => ({ ...draft, site: event.target.value }))} />
+          </label>
+          <label>
+            Source
+            <input value={nodeDraft.source} onChange={(event) => setNodeDraft((draft) => ({ ...draft, source: event.target.value }))} />
+          </label>
+          <label>
+            Mode
+            <select value={nodeDraft.mode} onChange={(event) => setNodeDraft((draft) => ({ ...draft, mode: event.target.value }))}>
+              <option>Deploy from Git</option>
+              <option>Deploy from ZIP</option>
+              <option>Create Node Sub App</option>
+              <option>Enable Node.js</option>
+              <option>Disable Node.js</option>
+            </select>
+          </label>
+          <label>
+            Handler
+            <select value={nodeDraft.handler} onChange={(event) => setNodeDraft((draft) => ({ ...draft, handler: event.target.value }))}>
+              <option>HTTP Platform</option>
+              <option>IISNode</option>
+            </select>
+          </label>
+          <button className="primary-button compact" type="submit">Run Real Test</button>
+        </form>
       </article>
 
       {!!filteredCatalog.length && (
@@ -2938,8 +3570,8 @@ function AdvanceSection({ cpId }) {
   const [runtimeError, setRuntimeError] = useState("");
   const [sandboxMessage, setSandboxMessage] = useState("");
   const [sandboxDraft, setSandboxDraft] = useState({
-    from: "/panel-test/source",
-    to: "/panel-test/destination",
+    from: "/real-gateway/source",
+    to: "/real-gateway/destination",
     server: "local-panel",
     note: "Sandbox row created by rebuilt panel_cp."
   });
@@ -2951,7 +3583,7 @@ function AdvanceSection({ cpId }) {
     taskType: "sharedtask"
   });
   const [teamDraft, setTeamDraft] = useState({
-    username: "new-cp-user",
+    username: "codex-test-user",
     accessList: "websites,databases,email",
     siteList: "all"
   });
@@ -2959,10 +3591,11 @@ function AdvanceSection({ cpId }) {
     source: "/old-page",
     target: "https://sample.com/new-page",
     statusCode: "301",
-    site: "sample.com"
+    site: "sample.com",
+    ruleName: "codex-test-redirect"
   });
   const [webDeployDraft, setWebDeployDraft] = useState({
-    username: "openreward-deploy",
+    username: "codex-test-webdeploy",
     site: "sample.com",
     action: "Generate Web Deploy"
   });
@@ -3013,60 +3646,15 @@ function AdvanceSection({ cpId }) {
 
   async function submitSandboxJob(event) {
     event.preventDefault();
-    setSandboxMessage("");
-
-    try {
-      const response = await fetch("/api/hosting/activity/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cpId, ...sandboxDraft })
-      });
-      const result = await response.json().catch(() => null);
-      setSandboxMessage(result?.message ?? "Unable to create sandbox activity.");
-      if (response.ok && result?.success) {
-        await reload();
-      }
-    } catch {
-      setSandboxMessage("Unable to reach sandbox activity service.");
-    }
+    setSandboxMessage("This legacy test queue is read-only now. Use the real test forms above, which only allow codex-test-* rows.");
   }
 
   async function updateSandboxJob(job) {
-    setSandboxMessage("");
-    try {
-      const response = await fetch(`/api/hosting/activity/test/${encodeURIComponent(job.id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cpId,
-          from: `${job.from || "/panel-test/source"}-edited`,
-          to: job.to || "/panel-test/destination",
-          server: job.server || "local-panel",
-          note: `Edited from panel_cp at ${new Date().toLocaleString()}`
-        })
-      });
-      const result = await response.json().catch(() => null);
-      setSandboxMessage(result?.message ?? "Unable to update sandbox activity.");
-      if (response.ok && result?.success) {
-        await reload();
-      }
-    } catch {
-      setSandboxMessage("Unable to reach sandbox activity service.");
-    }
+    setSandboxMessage(`Legacy test job #${job.id} is read-only. Real tests must create codex-test-* rows through the forms above.`);
   }
 
   async function deleteSandboxJob(job) {
-    setSandboxMessage("");
-    try {
-      const response = await fetch(`/api/hosting/activity/test/${encodeURIComponent(job.id)}?cpId=${encodeURIComponent(cpId)}`, { method: "DELETE" });
-      const result = await response.json().catch(() => null);
-      setSandboxMessage(result?.message ?? "Unable to delete sandbox activity.");
-      if (response.ok && result?.success) {
-        await reload();
-      }
-    } catch {
-      setSandboxMessage("Unable to reach sandbox activity service.");
-    }
+    setSandboxMessage(`Legacy test job #${job.id} was not deleted automatically. Existing rows are protected.`);
   }
 
   async function queueAdvanceTool(action, details = "") {
@@ -3105,28 +3693,53 @@ function AdvanceSection({ cpId }) {
     );
   }
 
-  function submitTeamDraft(event) {
+  async function submitTeamDraft(event) {
     event.preventDefault();
-    queueAdvanceTool(
-      "Invite CP User",
-      `Safe CP alias draft: username ${teamDraft.username}; access ${teamDraft.accessList}; sites ${teamDraft.siteList}`
-    );
+    setSandboxMessage("");
+    try {
+      const result = await createHostingRealTest(cpId, "team-access", {
+        name: teamDraft.username,
+        accessList: teamDraft.accessList,
+        siteList: teamDraft.siteList
+      });
+      setSandboxMessage(result.message);
+      await loadRuntimeDashboard();
+    } catch (error) {
+      setSandboxMessage(error.message);
+    }
   }
 
-  function submitRedirectDraft(event) {
+  async function submitRedirectDraft(event) {
     event.preventDefault();
-    queueAdvanceTool(
-      "Add Redirect",
-      `Safe redirect draft: ${redirectDraft.site}; ${redirectDraft.source} -> ${redirectDraft.target}; status ${redirectDraft.statusCode}`
-    );
+    setSandboxMessage("");
+    try {
+      const result = await createHostingRealTest(cpId, "redirect", {
+        name: redirectDraft.ruleName,
+        domain: redirectDraft.site,
+        destination: redirectDraft.target,
+        statusCode: redirectDraft.statusCode
+      });
+      setSandboxMessage(result.message);
+      await loadRuntimeDashboard();
+    } catch (error) {
+      setSandboxMessage(error.message);
+    }
   }
 
-  function submitWebDeployDraft(event) {
+  async function submitWebDeployDraft(event) {
     event.preventDefault();
-    queueAdvanceTool(
-      webDeployDraft.action,
-      `Safe Web Deploy draft: user ${webDeployDraft.username}; site ${webDeployDraft.site}; action ${webDeployDraft.action}`
-    );
+    setSandboxMessage("");
+    try {
+      const result = await createHostingRealTest(cpId, "web-deploy", {
+        name: webDeployDraft.username,
+        site: webDeployDraft.site,
+        action: webDeployDraft.action
+      });
+      setSandboxMessage(result.message);
+      await loadRuntimeDashboard();
+    } catch (error) {
+      setSandboxMessage(error.message);
+    }
   }
 
   function submitStaticIpDraft(event) {
@@ -3151,7 +3764,7 @@ function AdvanceSection({ cpId }) {
               <div><span>Running</span><strong>{activity?.totals?.running ?? 0}</strong></div>
               <div><span>Errors</span><strong>{activity?.totals?.errors ?? 0}</strong></div>
         </div>
-        <button className="secondary-button compact" type="button" onClick={() => { reload(); loadRuntimeDashboard(); }}>Refresh</button>
+        <RefreshButton onClick={() => { reload(); loadRuntimeDashboard(); }} />
       </article>
 
       <article className="panel-card cp-runtime-panel">
@@ -3193,7 +3806,7 @@ function AdvanceSection({ cpId }) {
               <p>{advancedToolDescription(action)}</p>
             </div>
             <button className={action === "Work Queue" ? "primary-button compact" : "secondary-button compact"} type="button" onClick={() => queueAdvanceTool(action)}>
-              Stage
+              Requires Gateway
             </button>
           </article>
         ))}
@@ -3233,7 +3846,7 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Scheduled Task Draft</span>
             <h3>HTTP / Windows Task</h3>
-            <p>Stages the old task form values without writing to the legacy `tasks` table.</p>
+            <p>Requires real gateway for the old task form values without writing to the legacy `tasks` table.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitTaskDraft}>
             <label>
@@ -3262,7 +3875,7 @@ function AdvanceSection({ cpId }) {
                 <option value="wintask">Dedicated Windows Task</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Stage Task</button>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
           </form>
         </article>
 
@@ -3270,7 +3883,7 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Team Access Draft</span>
             <h3>CP Alias User</h3>
-            <p>Stages username, permission list, and site scope before real `cp_loginAlias` writes are enabled.</p>
+            <p>Creates a real `codex-test-*` CP alias row in `cp_loginAlias` for testing.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitTeamDraft}>
             <label>
@@ -3285,7 +3898,7 @@ function AdvanceSection({ cpId }) {
               Site List
               <input value={teamDraft.siteList} onChange={(event) => setTeamDraft((draft) => ({ ...draft, siteList: event.target.value }))} />
             </label>
-            <button className="primary-button compact" type="submit">Stage Invite</button>
+            <button className="primary-button compact" type="submit">Create Real Test</button>
           </form>
         </article>
 
@@ -3293,12 +3906,16 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Redirect Draft</span>
             <h3>URL Rewrite Rule</h3>
-            <p>Stages the `cp_config_redirect` values for review before real rewrite API calls are enabled.</p>
+            <p>Creates a real `codex-test-*` redirect row in `cp_config_redirect` for testing.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitRedirectDraft}>
             <label>
               Site
               <input value={redirectDraft.site} onChange={(event) => setRedirectDraft((draft) => ({ ...draft, site: event.target.value }))} />
+            </label>
+            <label>
+              Rule Name
+              <input value={redirectDraft.ruleName} onChange={(event) => setRedirectDraft((draft) => ({ ...draft, ruleName: event.target.value }))} />
             </label>
             <label>
               From
@@ -3315,7 +3932,7 @@ function AdvanceSection({ cpId }) {
                 <option value="302">302 Temporary</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Stage Redirect</button>
+            <button className="primary-button compact" type="submit">Create Real Test</button>
           </form>
         </article>
 
@@ -3323,7 +3940,7 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Web Deploy Draft</span>
             <h3>Deploy Credentials</h3>
-            <p>Stages IIS Manager and Web Deploy credential actions without creating or resetting existing users.</p>
+            <p>Creates a real `codex-test-*` Web Deploy user row in `cp_config_site_users` for testing.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitWebDeployDraft}>
             <label>
@@ -3342,7 +3959,7 @@ function AdvanceSection({ cpId }) {
                 <option value="Remote IIS User">Remote IIS User</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Stage Deploy</button>
+            <button className="primary-button compact" type="submit">Create Real Test</button>
           </form>
         </article>
 
@@ -3350,7 +3967,7 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Static IP / VPS Draft</span>
             <h3>Domain Binding</h3>
-            <p>Stages static IP, VPS domain binding, snapshot, and backup planning without touching provider data.</p>
+            <p>Requires real gateway for static IP, VPS domain binding, snapshot, and backup planning without touching provider data.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitStaticIpDraft}>
             <label>
@@ -3370,51 +3987,30 @@ function AdvanceSection({ cpId }) {
                 <option value="Update Cloud Backup">Update Cloud Backup</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Stage VPS</button>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
           </form>
         </article>
       </div>
 
-      <article className="panel-card sandbox-card">
-        <div>
-          <span className="status-pill blue">Safe Write Test</span>
-          <h3>Panel Test Activity</h3>
-          <p>Create, edit, and delete new `panel-test` rows only. Existing worker jobs are protected.</p>
-        </div>
-        <form className="sandbox-form" onSubmit={submitSandboxJob}>
-          <label>
-            From
-            <input value={sandboxDraft.from} onChange={(event) => setSandboxDraft((draft) => ({ ...draft, from: event.target.value }))} />
-          </label>
-          <label>
-            To
-            <input value={sandboxDraft.to} onChange={(event) => setSandboxDraft((draft) => ({ ...draft, to: event.target.value }))} />
-          </label>
-          <label>
-            Server
-            <input value={sandboxDraft.server} onChange={(event) => setSandboxDraft((draft) => ({ ...draft, server: event.target.value }))} />
-          </label>
-          <label>
-            Note
-            <input value={sandboxDraft.note} onChange={(event) => setSandboxDraft((draft) => ({ ...draft, note: event.target.value }))} />
-          </label>
-          <button className="primary-button compact" type="submit">Add Test Row</button>
-        </form>
-        {sandboxMessage && <p className="sandbox-message">{sandboxMessage}</p>}
-        {!!testJobs.length && (
+      {!!testJobs.length && (
+        <article className="panel-card sandbox-card">
+          <div>
+            <span className="status-pill blue">Legacy Test Queue</span>
+            <h3>Read Only</h3>
+            <p>Old test queue rows are shown for reference only. New testing uses real `codex-test-*` rows above.</p>
+          </div>
+          {sandboxMessage && <p className="sandbox-message">{sandboxMessage}</p>}
           <div className="sandbox-job-list">
             {testJobs.map((job) => (
               <div className="sandbox-job-row" key={job.id}>
                 <span>#{job.id}</span>
                 <strong>{job.from}</strong>
                 <small>{job.data || job.to}</small>
-                <button className="secondary-button compact" type="button" onClick={() => updateSandboxJob(job)}>Edit</button>
-                <button className="secondary-button compact" type="button" onClick={() => deleteSandboxJob(job)}>Delete</button>
               </div>
             ))}
           </div>
-        )}
-      </article>
+        </article>
+      )}
 
       <ActivityList activity={activity} jobs={activity?.jobs ?? []} isLoading={isLoading} error={error} emptyTitle="No workqueue activity" onRetry={reload} />
     </section>
@@ -3547,12 +4143,12 @@ function advancedToolDescription(action) {
     "ASP.NET Version": "Review .NET runtime selection and prepare version-change jobs.",
     "PHP Settings": "Manage PHP runtime and handler settings per website.",
     "Node.js App": "Prepare IISNode configuration and deployment jobs.",
-    "Environment Variables": "View and stage app pool environment variable changes.",
+    "Environment Variables": "View app pool environment variable changes.",
     "Remote IIS": "Manage IIS Manager credential workflows.",
     "Redirect Rules": "Prepare URL rewrite redirects from the cp_config_redirect flow.",
-    "Web Deploy Users": "Stage Web Deploy credential generation and reset workflows.",
+    "Web Deploy Users": "Create real test Web Deploy users and review reset workflows.",
     "Scheduled Tasks": "Prepare URL and Windows scheduled task worker integration.",
-    "Team Access": "Stage CP alias user and permission review workflows.",
+    "Team Access": "Create real test CP alias users and review permission workflows.",
     "Static IP": "Review dedicated IP binding and VPS-domain routing workflows.",
     "Work Queue": "Read pending, running, successful, and failed worker jobs."
   };
@@ -3712,6 +4308,18 @@ function DomainServicesSection({ mode, cpId }) {
     ttl: "3600",
     priority: "10"
   });
+  const [sslDraft, setSslDraft] = useState({
+    domain: "sample.com",
+    certificateType: "Free SSL",
+    approverEmail: "admin@sample.com",
+    action: "Request Free SSL"
+  });
+  const [cdnDraft, setCdnDraft] = useState({
+    domain: "sample.com",
+    mode: "Enable CDN",
+    sslMode: "Full",
+    redirectWww: true
+  });
 
   async function loadDomainServices() {
     setIsLoadingDomains(true);
@@ -3782,7 +4390,7 @@ function DomainServicesSection({ mode, cpId }) {
     cdn: {
       title: "CDN",
       label: "Live CDN",
-      description: "Cloudflare/CDN readiness from mapped hosting domains. Purge and mode changes stay staged for the remote gateway pass.",
+      description: "Cloudflare/CDN readiness from mapped hosting domains. Purge and mode changes stay requires real gateway for the remote gateway pass.",
       actions: ["Create Tenant", "Invite User", "Add Zone", "Enable CDN", "Disable CDN", "Purge Cache", "SSL Mode", "WWW Redirect"],
       statOne: "Domains",
       statTwo: "CDN Enabled",
@@ -3791,7 +4399,7 @@ function DomainServicesSection({ mode, cpId }) {
     ssl: {
       title: "SSL",
       label: "Live SSL",
-      description: "SSL binding inventory from mapped domains. Free SSL and certificate install flows are staged for the Namecheap/LetSSL pass.",
+      description: "SSL binding inventory from mapped domains. Free SSL and certificate install flows are requires real gateway for the Namecheap/LetSSL pass.",
       actions: ["Free SSL", "Import SSL", "Install Certificate", "Reinstall", "Approver Email", "Renew SSL", "Delete SSL"],
       statOne: "Domains",
       statTwo: "SSL Ready",
@@ -3837,6 +4445,24 @@ function DomainServicesSection({ mode, cpId }) {
     );
   }
 
+  function submitSslDraft(event) {
+    event.preventDefault();
+    queueDomainServiceTest(
+      sslDraft.action,
+      null,
+      `Safe SSL certificate draft: domain ${sslDraft.domain}; type ${sslDraft.certificateType}; approver ${sslDraft.approverEmail}; action ${sslDraft.action}`
+    );
+  }
+
+  function submitCdnDraft(event) {
+    event.preventDefault();
+    queueDomainServiceTest(
+      cdnDraft.mode,
+      null,
+      `Safe CDN/Cloudflare draft: domain ${cdnDraft.domain}; mode ${cdnDraft.mode}; SSL mode ${cdnDraft.sslMode}; redirect www ${cdnDraft.redirectWww ? "yes" : "no"}`
+    );
+  }
+
   function refreshDomainServiceSection() {
     loadDomainServices();
     loadSecurityServices();
@@ -3856,7 +4482,7 @@ function DomainServicesSection({ mode, cpId }) {
           <div><span>{modeCopy.statTwo}</span><strong>{enabledCount}</strong></div>
           <div><span>{modeCopy.statThree}</span><strong>{uniqueSites}</strong></div>
         </div>
-        <button className="secondary-button compact" type="button" onClick={refreshDomainServiceSection}>Refresh</button>
+        <RefreshButton onClick={refreshDomainServiceSection} />
       </article>
 
       <div className="database-toolbar panel-card">
@@ -3875,7 +4501,7 @@ function DomainServicesSection({ mode, cpId }) {
             <div>
               <span className="status-pill blue">DNS Draft</span>
               <h3>Record Editor</h3>
-              <p>Stages DNS record values for the rebuilt DNS action flow without publishing provider changes.</p>
+              <p>Requires real gateway for DNS record values for the rebuilt DNS action flow without publishing provider changes.</p>
             </div>
             <MenuIcon name="dns" />
           </div>
@@ -3909,7 +4535,96 @@ function DomainServicesSection({ mode, cpId }) {
                 <input type="number" min="0" max="100" value={dnsDraft.priority} onChange={(event) => setDnsDraft((draft) => ({ ...draft, priority: event.target.value }))} />
               </label>
             )}
-            <button className="primary-button compact" type="submit">Stage Record</button>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
+          </form>
+        </article>
+      )}
+
+      {mode === "ssl" && (
+        <article className="panel-card dns-record-draft-card">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill blue">SSL Draft</span>
+              <h3>Certificate Workflow</h3>
+              <p>Requires real gateway for free SSL, import, install, approver email, renewal, and delete requests without touching certificate bindings.</p>
+            </div>
+            <MenuIcon name="ssl" />
+          </div>
+          <form className="advance-inline-form" onSubmit={submitSslDraft}>
+            <label>
+              Domain
+              <input value={sslDraft.domain} onChange={(event) => setSslDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+            </label>
+            <label>
+              Certificate
+              <select value={sslDraft.certificateType} onChange={(event) => setSslDraft((draft) => ({ ...draft, certificateType: event.target.value }))}>
+                <option>Free SSL</option>
+                <option>Comodo SSL</option>
+                <option>Wildcard SSL</option>
+                <option>Imported Certificate</option>
+              </select>
+            </label>
+            <label>
+              Approver Email
+              <input type="email" value={sslDraft.approverEmail} onChange={(event) => setSslDraft((draft) => ({ ...draft, approverEmail: event.target.value }))} />
+            </label>
+            <label>
+              Action
+              <select value={sslDraft.action} onChange={(event) => setSslDraft((draft) => ({ ...draft, action: event.target.value }))}>
+                <option>Request Free SSL</option>
+                <option>Import SSL</option>
+                <option>Install Certificate</option>
+                <option>Reinstall Certificate</option>
+                <option>Resend Approver Email</option>
+                <option>Renew SSL</option>
+                <option>Delete SSL</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
+          </form>
+        </article>
+      )}
+
+      {mode === "cdn" && (
+        <article className="panel-card dns-record-draft-card">
+          <div className="database-card-header">
+            <div>
+              <span className="status-pill blue">CDN Draft</span>
+              <h3>Cloudflare / CDN Workflow</h3>
+              <p>Requires real gateway for tenant, zone, purge, SSL mode, and redirect actions without changing Cloudflare provider data.</p>
+            </div>
+            <MenuIcon name="cdn" />
+          </div>
+          <form className="advance-inline-form" onSubmit={submitCdnDraft}>
+            <label>
+              Domain
+              <input value={cdnDraft.domain} onChange={(event) => setCdnDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+            </label>
+            <label>
+              Mode
+              <select value={cdnDraft.mode} onChange={(event) => setCdnDraft((draft) => ({ ...draft, mode: event.target.value }))}>
+                <option>Create Tenant</option>
+                <option>Invite User</option>
+                <option>Add Zone</option>
+                <option>Enable CDN</option>
+                <option>Disable CDN</option>
+                <option>Purge Cache</option>
+                <option>Set SSL Mode</option>
+              </select>
+            </label>
+            <label>
+              SSL Mode
+              <select value={cdnDraft.sslMode} onChange={(event) => setCdnDraft((draft) => ({ ...draft, sslMode: event.target.value }))}>
+                <option>Flexible</option>
+                <option>Full</option>
+                <option>Full Strict</option>
+              </select>
+            </label>
+            <label className="checkbox-line">
+              <input type="checkbox" checked={cdnDraft.redirectWww} onChange={(event) => setCdnDraft((draft) => ({ ...draft, redirectWww: event.target.checked }))} />
+              Redirect non-www to www
+            </label>
+            <button className="primary-button compact" type="submit">Run Real Test</button>
           </form>
         </article>
       )}
@@ -3986,6 +4701,14 @@ function MenuIcon({ name }) {
     "chevron-down": (
       <>
         <path d="m7 10 5 5 5-5" />
+      </>
+    ),
+    refresh: (
+      <>
+        <path d="M20 6v5h-5" />
+        <path d="M4 18v-5h5" />
+        <path d="M18.1 9A7 7 0 0 0 6.3 6.4L4 8.8" />
+        <path d="M5.9 15A7 7 0 0 0 17.7 17.6L20 15.2" />
       </>
     ),
     back: (
@@ -4188,6 +4911,20 @@ function MenuIcon({ name }) {
     <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
       {icons[name]}
     </svg>
+  );
+}
+
+function RefreshButton({ onClick, label = "Refresh" }) {
+  return (
+    <button
+      className="secondary-button compact icon-only-button refresh-icon-button"
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      <MenuIcon name="refresh" />
+    </button>
   );
 }
 
@@ -5330,7 +6067,7 @@ function DomainSection() {
             <span className="status-pill blue">Live domains</span>
             <h2>My Domain Names</h2>
           </div>
-          <button className="secondary-button compact" type="button" onClick={loadAccountDomains}>Refresh</button>
+          <RefreshButton onClick={loadAccountDomains} />
         </div>
         {domainServiceStatus && (
           <div className="service-status-grid">
@@ -5614,7 +6351,7 @@ function VpnSection() {
             <span className="status-pill blue">Live VPN</span>
             <h2>VPN Services</h2>
           </div>
-          <button className="secondary-button compact" type="button" onClick={loadVpn}>Refresh</button>
+          <RefreshButton onClick={loadVpn} />
         </div>
         <div className="vpn-quota-row">
           <div>
@@ -5979,7 +6716,7 @@ function AddonSection() {
             <span className="status-pill blue">Live catalog</span>
             <h2>Available Add-Ons</h2>
           </div>
-          <button className="secondary-button compact" type="button" onClick={loadAddons}>Refresh</button>
+          <RefreshButton onClick={loadAddons} />
         </div>
         <div className="search-row compact-search">
           <input
@@ -6187,7 +6924,7 @@ function BillingSection({ onChangeSection }) {
           <span className="status-pill blue">Live billing</span>
           <h2>Billing</h2>
         </div>
-        <button className="secondary-button compact" type="button" onClick={loadBilling}>Refresh</button>
+        <RefreshButton onClick={loadBilling} />
       </div>
       <div className="tabs" role="tablist" aria-label="Billing tabs">
         {billingTabsLive.map(([id, label]) => (
@@ -7035,7 +7772,7 @@ function SettingsSection() {
             <span className="status-pill blue">Live account</span>
             <h2>Account Settings</h2>
           </div>
-          <button className="secondary-button compact" type="button" onClick={loadSettings}>Refresh</button>
+          <RefreshButton onClick={loadSettings} />
         </div>
         {isLoadingSettings && <p className="empty-state">Loading account settings...</p>}
         {settingsError && (
@@ -7272,7 +8009,7 @@ function AffiliateSection() {
             <span className="status-pill blue">Pays 60%</span>
             <h2>Affiliate Program</h2>
           </div>
-          <button className="secondary-button compact" type="button" onClick={loadAffiliate}>Refresh</button>
+          <RefreshButton onClick={loadAffiliate} />
         </div>
 
         <div className="affiliate-summary-grid">
