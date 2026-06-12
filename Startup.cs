@@ -137,6 +137,7 @@ namespace controlpanel
                 endpoints.MapGet("/api/hosting/runtime", HandleHostingRuntimeAsync);
                 endpoints.MapGet("/api/hosting/security", HandleHostingSecurityAsync);
                 endpoints.MapGet("/api/hosting/activity", HandleHostingActivityAsync);
+                endpoints.MapPost("/api/hosting/workqueue", HandleHostingWorkqueueCreateAsync);
                 endpoints.MapPost("/api/hosting/activity/test", HandleHostingActivityTestCreateAsync);
                 endpoints.MapPut("/api/hosting/activity/test/{id:long}", HandleHostingActivityTestUpdateAsync);
                 endpoints.MapDelete("/api/hosting/activity/test/{id:long}", HandleHostingActivityTestDeleteAsync);
@@ -2429,6 +2430,48 @@ WHERE customerID = @customerId";
 
             var dashboard = await LoadHostingActivityAsync(connection, sessionUser.CustomerId, GetRequestedCpId(context));
             await Results.Ok(new HostingActivityResponse(true, "Hosting activity loaded.", dashboard)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingWorkqueueCreateAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Not signed in."), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<HostingWorkqueueRequest>() ?? new HostingWorkqueueRequest(0, "", "", "", "", "", "", "");
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            try
+            {
+                await using var connection = new SqlConnection(connectionString);
+                await connection.OpenAsync();
+
+                var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, request.CpId);
+                if (cp.CpId == 0)
+                {
+                    await Results.Json(new AccountActionResponse(false, "Hosting plan not found."), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                    return;
+                }
+
+                var result = await CreateHostingWorkqueueAsync(connection, cp, request);
+                var status = result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest;
+                await Results.Json(result, statusCode: status).ExecuteAsync(context);
+            }
+            catch (SqlException ex)
+            {
+                await Results.Problem(
+                    detail: ex.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: "Unable to queue hosting worker job.").ExecuteAsync(context);
+            }
         }
 
         private async Task HandleHostingActivityTestCreateAsync(HttpContext context)
@@ -6185,7 +6228,7 @@ ORDER BY engine, create_date, database_name";
         private static async Task<SelectedHostingCp> LoadSelectedHostingCpAsync(SqlConnection connection, long customerId, long requestedCpId = 0)
         {
             const string sql = @"
-SELECT TOP 1 cpID, cpLogin
+SELECT TOP 1 cpID, cpLogin, ISNULL(ServerID, ''), ISNULL(WebHostType, '')
 FROM dbo.cp_config
 WHERE customerID = @customerId
   AND ISNULL(hideit, 0) = 0
@@ -6199,10 +6242,15 @@ ORDER BY CASE WHEN status = 1 THEN 0 ELSE 1 END, cpID";
             await using var reader = await command.ExecuteReaderAsync();
             if (!await reader.ReadAsync())
             {
-                return new SelectedHostingCp(0, "");
+                return SelectedHostingCp.Empty;
             }
 
-            return new SelectedHostingCp(reader.GetInt64(0), reader.GetString(1).Trim());
+            return new SelectedHostingCp(
+                reader.GetInt64(0),
+                reader.GetString(1).Trim(),
+                reader.IsDBNull(2) ? "" : reader.GetString(2).Trim(),
+                reader.IsDBNull(3) ? "" : reader.GetString(3).Trim()
+            );
         }
 
         private static async Task<HostingEmailsDashboard> LoadHostingEmailsAsync(SqlConnection connection, long customerId, long requestedCpId = 0)
@@ -6834,6 +6882,130 @@ VALUES (@cpLogin, @from, @to, GETDATE(), @serverId, 'panel-test', 0, @note, 'pan
             command.Parameters.AddWithValue("@notifyEmail", "panel-cp-sandbox");
             var value = await command.ExecuteScalarAsync();
             return value == null || value == DBNull.Value ? 0 : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<HostingWorkqueueResponse> CreateHostingWorkqueueAsync(SqlConnection connection, SelectedHostingCp cp, HostingWorkqueueRequest request)
+        {
+            var type = NormalizeWorkqueueType(request.Type);
+            if (!IsAllowedHostingWorkqueueType(type))
+            {
+                return new HostingWorkqueueResponse(false, "This worker action is not mapped yet. No job was created.", 0, type);
+            }
+
+            var zipFile = TruncateWorkqueueValue(request.ZipFile, "");
+            var dstFolder = TruncateWorkqueueValue(request.DstFolder, "");
+            var serverId = TruncateWorkqueueValue(string.IsNullOrWhiteSpace(request.ServerId) ? cp.ServerId : request.ServerId, cp.ServerId);
+            var data1 = TruncateWorkqueueValue(request.Data1, "");
+            var siteOwner = TruncateWorkqueueValue(request.SiteOwner, "");
+            var notifyEmail = TruncateWorkqueueValue(request.NotifyEmail, "");
+
+            if (string.IsNullOrWhiteSpace(serverId))
+            {
+                return new HostingWorkqueueResponse(false, "Hosting server is not available for this plan. No job was created.", 0, type);
+            }
+
+            var validationError = ValidateHostingWorkqueuePayload(type, zipFile, dstFolder, data1);
+            if (!string.IsNullOrWhiteSpace(validationError))
+            {
+                return new HostingWorkqueueResponse(false, validationError, 0, type);
+            }
+
+            const string duplicateSql = @"
+SELECT COUNT(*)
+FROM dbo.workqueue
+WHERE cplogin = @cpLogin
+  AND type = @type
+  AND ISNULL(status, 0) NOT IN (2, 3)
+  AND CONVERT(nvarchar(4000), zipfile) = @zipFile
+  AND CONVERT(nvarchar(4000), dstfolder) = @dstFolder";
+            await using (var duplicateCommand = new SqlCommand(duplicateSql, connection))
+            {
+                duplicateCommand.Parameters.AddWithValue("@cpLogin", cp.CpLogin);
+                duplicateCommand.Parameters.AddWithValue("@type", type);
+                duplicateCommand.Parameters.AddWithValue("@zipFile", zipFile);
+                duplicateCommand.Parameters.AddWithValue("@dstFolder", dstFolder);
+                var existing = Convert.ToInt32(await duplicateCommand.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+                if (existing > 0)
+                {
+                    return new HostingWorkqueueResponse(false, "A matching worker job is already pending or running.", 0, type);
+                }
+            }
+
+            const string sql = @"
+INSERT INTO dbo.workqueue (cplogin, zipfile, dstfolder, enterdate, serverid, type, status, data1, siteowner, notifyemail)
+OUTPUT INSERTED.id
+VALUES (@cpLogin, @zipFile, @dstFolder, GETDATE(), @serverId, @type, 0, @data1, @siteOwner, @notifyEmail)";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpLogin", cp.CpLogin);
+            command.Parameters.AddWithValue("@zipFile", zipFile);
+            command.Parameters.AddWithValue("@dstFolder", dstFolder);
+            command.Parameters.AddWithValue("@serverId", serverId);
+            command.Parameters.AddWithValue("@type", type);
+            command.Parameters.AddWithValue("@data1", data1);
+            command.Parameters.AddWithValue("@siteOwner", siteOwner);
+            command.Parameters.AddWithValue("@notifyEmail", notifyEmail);
+            var value = await command.ExecuteScalarAsync();
+            var id = value == null || value == DBNull.Value ? 0 : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+            return new HostingWorkqueueResponse(true, $"Legacy worker job queued: {type}.", id, type);
+        }
+
+        private static string NormalizeWorkqueueType(string type) => (type ?? "").Trim() switch
+        {
+            "mssql-backup" => "Queue MSSQL Backup",
+            "mssql-restore" => "Queue MSSQL Restore",
+            "mysql-backup" => "Queue MySQL Backup",
+            "mysql-restore" => "Queue MySQL Restore",
+            "mssql-run-file" => "Run MSSQL File",
+            "permission" => "perm",
+            "node" => "nodejs",
+            var value => value
+        };
+
+        private static bool IsAllowedHostingWorkqueueType(string type) => type is
+            "Queue MSSQL Backup" or
+            "Queue MSSQL Restore" or
+            "Queue MySQL Backup" or
+            "Queue MySQL Restore" or
+            "Run MSSQL File" or
+            "zip" or
+            "Unzip" or
+            "perm" or
+            "nodejs" or
+            "deploy" or
+            "createpool" or
+            "changepool" or
+            "scanvirus";
+
+        private static string ValidateHostingWorkqueuePayload(string type, string zipFile, string dstFolder, string data1)
+        {
+            if (string.IsNullOrWhiteSpace(zipFile) && type is not "createpool")
+            {
+                return "Worker job source is required.";
+            }
+
+            if (type is "Queue MSSQL Restore" or "Queue MySQL Restore" or "Run MSSQL File" or "zip" or "Unzip" or "perm" or "nodejs" or "deploy" or "changepool")
+            {
+                if (string.IsNullOrWhiteSpace(dstFolder))
+                {
+                    return "Worker job destination is required.";
+                }
+            }
+
+            if (type is "Queue MSSQL Backup" or "Queue MySQL Backup" or "Run MSSQL File")
+            {
+                if (string.IsNullOrWhiteSpace(data1))
+                {
+                    return "Database worker jobs require a data value.";
+                }
+            }
+
+            if ((zipFile.Contains("..", StringComparison.Ordinal) || dstFolder.Contains("..", StringComparison.Ordinal)) &&
+                type is "zip" or "Unzip" or "perm" or "nodejs" or "deploy" or "scanvirus")
+            {
+                return "File paths cannot contain parent directory traversal.";
+            }
+
+            return "";
         }
 
         private static async Task<bool> UpdatePanelTestWorkqueueAsync(SqlConnection connection, SelectedHostingCp cp, long id, HostingActivityTestRequest request)
@@ -7578,6 +7750,8 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record HostingActivityTotals(int Total, int Pending, int Running, int Errors);
         private sealed record HostingActivityTestRequest(long CpId, string From, string To, string Server, string Note);
         private sealed record HostingActivityMutationResponse(bool Success, string Message, long Id);
+        private sealed record HostingWorkqueueRequest(long CpId, string Type, string ZipFile, string DstFolder, string ServerId, string Data1, string SiteOwner, string NotifyEmail);
+        private sealed record HostingWorkqueueResponse(bool Success, string Message, long Id, string Type);
         private sealed record HostingRealTestRequest(long CpId, string Area, Dictionary<string, string> Fields);
         private sealed record HostingRealTestResponse(bool Success, string Message, object? Row, string Area, long Id);
         private sealed record HostingAppsResponse(bool Success, string Message, HostingAppsDashboard? Dashboard);
@@ -7600,6 +7774,9 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             int ConfigFiles,
             int ParameterSets,
             int PermissionRules);
-        private sealed record SelectedHostingCp(long CpId, string CpLogin);
+        private sealed record SelectedHostingCp(long CpId, string CpLogin, string ServerId, string WebHostType)
+        {
+            public static SelectedHostingCp Empty { get; } = new(0, "", "", "");
+        }
     }
 }

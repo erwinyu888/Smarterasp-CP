@@ -2,6 +2,42 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
+const nativeFetch = window.fetch.bind(window);
+const authRedirectExemptPaths = [
+  "/api/auth/login",
+  "/api/auth/me",
+  "/api/auth/logout",
+  "/api/auth/password-reset/request",
+  "/api/auth/password-reset/confirm"
+];
+
+function fetchUrlPath(input) {
+  const rawUrl = typeof input === "string" ? input : input?.url;
+  if (!rawUrl) return "";
+
+  try {
+    return new URL(rawUrl, window.location.origin).pathname;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function shouldRedirectToLogin(response, input) {
+  if (response.status !== 401) return false;
+  const path = fetchUrlPath(input);
+  if (!path.startsWith("/api/")) return false;
+  return !authRedirectExemptPaths.includes(path);
+}
+
+window.fetch = async (input, init) => {
+  const response = await nativeFetch(input, init);
+  if (shouldRedirectToLogin(response, input) && window.location.pathname !== "/") {
+    window.history.replaceState({}, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+  return response;
+};
+
 const hostingAccounts = [
   {
     hosting_account_name: "sample.com",
@@ -322,15 +358,7 @@ function getDomainExtensionPrice(extension) {
 }
 
 function App() {
-  const [route, setRoute] = useState(() => {
-    if (window.location.pathname === "/panel") return "panel";
-    if (window.location.pathname === "/panel_cp") return "panel_cp";
-    if (window.location.pathname.startsWith("/checkout")) return "checkout";
-    if (window.location.pathname === "/account/emailchangeverify") return "email-verify";
-    if (window.location.pathname === "/account/retrieve_password") return "password-reset-request";
-    if (window.location.pathname === "/account/retrieve_password_reset") return "password-reset-confirm";
-    return "login";
-  });
+  const [route, setRoute] = useState(() => appRouteFromPath(window.location.pathname));
   const [theme, setTheme] = useState(() => localStorage.getItem("controlpanel-theme") ?? "dark");
   const [currentUser, setCurrentUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -339,6 +367,12 @@ function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("controlpanel-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const handleRouteChange = () => setRoute(appRouteFromPath(window.location.pathname));
+    window.addEventListener("popstate", handleRouteChange);
+    return () => window.removeEventListener("popstate", handleRouteChange);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -455,6 +489,16 @@ function App() {
   return route === "panel"
     ? <Panel theme={theme} currentUser={currentUser} onLogout={handleLogout} onManageHosting={goToControlPanel} onToggleTheme={toggleTheme} />
     : <Login onLogin={handleLogin} theme={theme} onToggleTheme={toggleTheme} onForgotPassword={goToPasswordResetRequest} />;
+}
+
+function appRouteFromPath(pathname) {
+  if (pathname === "/panel") return "panel";
+  if (pathname === "/panel_cp") return "panel_cp";
+  if (pathname.startsWith("/checkout")) return "checkout";
+  if (pathname === "/account/emailchangeverify") return "email-verify";
+  if (pathname === "/account/retrieve_password") return "password-reset-request";
+  if (pathname === "/account/retrieve_password_reset") return "password-reset-confirm";
+  return "login";
 }
 
 function isPublicRoute(route) {
@@ -1272,6 +1316,24 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
             </button>
           ))}
         </nav>
+        <div className="support-links" aria-label="Support links">
+          <p className="support-title">
+            <MenuIcon name="support" />
+            <span>Support</span>
+          </p>
+          <a href="https://member3.smarterasp.net/account/chat">
+            <MenuIcon name="chat" />
+            <span>24/7 Live Chat</span>
+          </a>
+          <a href="http://localhost:5056/panel#knowledge-base">
+            <MenuIcon name="book" />
+            <span>Knowledge Base</span>
+          </a>
+          <a href="https://member3.smarterasp.net/account/helpdesk">
+            <MenuIcon name="ticket" />
+            <span>Helpdesk</span>
+          </a>
+        </div>
         <div className="reward-card" aria-label="Account balance">
           <ProfileAvatar username="OPENREWARD" />
           <div>
@@ -1318,6 +1380,20 @@ async function createPanelTestActivity(cpId, payload) {
   throw new Error(`${payload?.from || payload?.server || "This action"} needs a real provider gateway before it can run. No row was created.`);
 }
 
+async function createHostingWorkqueue(cpId, payload) {
+  const response = await fetch("/api/hosting/workqueue", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cpId, ...payload })
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.message ?? "Unable to queue worker job.");
+  }
+
+  return result;
+}
+
 async function createHostingRealTest(cpId, area, fields) {
   const response = await fetch("/api/hosting/real-test", {
     method: "POST",
@@ -1337,6 +1413,7 @@ function HostingDashboard({ cpId }) {
   const [securityDashboard, setSecurityDashboard] = useState(null);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
+  const [copiedDns, setCopiedDns] = useState(false);
   const serverLogs = [
     {
       timeCreated: "6/10/2026 6:16:49 PM",
@@ -1392,6 +1469,13 @@ function HostingDashboard({ cpId }) {
   useEffect(() => {
     loadHostingDashboard();
   }, [cpId]);
+
+  async function copyDnsServers() {
+    const ok = await writeTextToClipboard(dnsServers.join("\n"));
+    if (!ok) return;
+    setCopiedDns(true);
+    window.setTimeout(() => setCopiedDns(false), 1400);
+  }
 
   return (
     <section className="cp-dashboard">
@@ -1461,7 +1545,27 @@ function HostingDashboard({ cpId }) {
         <h2>Server Details</h2>
         <dl>
           <div>
-            <dt>DNS Servers</dt>
+            <dt className="dns-label-row">
+              <span>DNS Servers</span>
+              <button
+                aria-label="Copy DNS servers"
+                className="icon-copy-button"
+                title={copiedDns ? "Copied" : "Copy DNS servers"}
+                type="button"
+                onClick={copyDnsServers}
+              >
+                {copiedDns ? (
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m5 12 4 4L19 6" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="9" y="9" width="10" height="10" rx="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+                  </svg>
+                )}
+              </button>
+            </dt>
             {dnsServers.map((server) => <dd key={server}>{server}</dd>)}
           </div>
           <div>
@@ -1558,6 +1662,7 @@ function WebsitesSection({ cpId }) {
 
   const websiteJobs = (activity?.jobs ?? []).filter((job) =>
     job.server === "website-manager" ||
+    ["perm", "createpool", "changepool", "deploy", "nodejs"].includes(job.type) ||
     String(job.from ?? "").toLowerCase().startsWith("site:") ||
     String(job.from ?? "").toLowerCase().startsWith("website:")
   );
@@ -1572,14 +1677,56 @@ function WebsitesSection({ cpId }) {
 
   async function queueWebsiteTest(action, site = null, target = "", details = "") {
     setWebsiteMessage("");
+    const selected = site ?? selectedSite;
+    if (["Lock Site", "Unlock Site", "Permissions"].includes(action) && selected) {
+      try {
+        const result = await createHostingWorkqueue(cpId, {
+          type: "perm",
+          zipFile: legacySitePath(selected, sitesDashboard?.cpLogin),
+          dstFolder: action === "Lock Site" ? "1" : "3",
+          serverId: "",
+          data1: details || action,
+          siteOwner: selected.siteName,
+          notifyEmail: "website-manager"
+        });
+        setWebsiteMessage(result.message);
+        await reloadActivity();
+        return;
+      } catch (error) {
+        setWebsiteMessage(error.message);
+        return;
+      }
+    }
+
+    if (action === "Create Dedicated Pool" && selected) {
+      try {
+        const poolName = `${sitesDashboard?.cpLogin || "pool"}-${workerSlug(selected.siteName)}`;
+        const result = await createHostingWorkqueue(cpId, {
+          type: "createpool",
+          zipFile: "createpool",
+          dstFolder: poolName,
+          serverId: "",
+          data1: details || poolDraft.mode,
+          siteOwner: selected.siteName,
+          notifyEmail: "website-manager"
+        });
+        setWebsiteMessage(result.message);
+        await reloadActivity();
+        return;
+      } catch (error) {
+        setWebsiteMessage(error.message);
+        return;
+      }
+    }
+
     try {
       await createPanelTestActivity(cpId, {
         from: site ? `site:${site.siteName}` : `website:${action}`,
         to: target || (site ? site.mappedDomains?.[0]?.label || site.siteName : "/panel-test/websites"),
         server: "website-manager",
-        note: details || `Safe website planning row for ${action}`
+        note: details || `Website gateway required for ${action}`
       });
-      setWebsiteMessage(`${action} test activity created.`);
+      setWebsiteMessage(`${action} needs the legacy website gateway before it can run.`);
       await reloadActivity();
     } catch (error) {
       setWebsiteMessage(error.message);
@@ -1596,7 +1743,7 @@ function WebsitesSection({ cpId }) {
       "+ New Site",
       null,
       newSiteDraft.folder,
-      `Safe addnewsite draft: site ${newSiteDraft.name}; folder ${newSiteDraft.folder}; runtime ${newSiteDraft.runtime}`
+      `Add site request: site ${newSiteDraft.name}; folder ${newSiteDraft.folder}; runtime ${newSiteDraft.runtime}`
     );
   }
 
@@ -1604,7 +1751,7 @@ function WebsitesSection({ cpId }) {
     event.preventDefault();
     queueSelectedWebsiteAction(
       domainDraft.mode,
-      `Safe domainbind draft: site ${selectedSite?.siteName || "selected site"}; domain ${domainDraft.domain}; action ${domainDraft.mode}; create DNS ${domainDraft.createDns ? "yes" : "no"}`
+      `Domain binding request: site ${selectedSite?.siteName || "selected site"}; domain ${domainDraft.domain}; action ${domainDraft.mode}; create DNS ${domainDraft.createDns ? "yes" : "no"}`
     );
   }
 
@@ -1612,7 +1759,7 @@ function WebsitesSection({ cpId }) {
     event.preventDefault();
     queueSelectedWebsiteAction(
       "Path / Runtime",
-      `Safe website runtime draft: site ${selectedSite?.siteName || "selected site"}; path ${pathDraft.path}; runtime ${pathDraft.runtime}; core mode ${pathDraft.coreMode}`
+      `Runtime request: site ${selectedSite?.siteName || "selected site"}; path ${pathDraft.path}; runtime ${pathDraft.runtime}; core mode ${pathDraft.coreMode}`
     );
   }
 
@@ -1620,7 +1767,7 @@ function WebsitesSection({ cpId }) {
     event.preventDefault();
     queueSelectedWebsiteAction(
       ipDenyDraft.mode,
-      `Safe IP deny draft: site ${selectedSite?.siteName || "selected site"}; ip ${ipDenyDraft.ip}; mask ${ipDenyDraft.mask}; action ${ipDenyDraft.mode}`
+      `IP restriction request: site ${selectedSite?.siteName || "selected site"}; ip ${ipDenyDraft.ip}; mask ${ipDenyDraft.mask}; action ${ipDenyDraft.mode}`
     );
   }
 
@@ -1628,7 +1775,7 @@ function WebsitesSection({ cpId }) {
     event.preventDefault();
     queueSelectedWebsiteAction(
       "Environment Variable",
-      `Safe environment variable draft: site ${selectedSite?.siteName || "selected site"}; scope ${envDraft.scope}; ${envDraft.key}=${envDraft.value}`
+      `Environment variable request: site ${selectedSite?.siteName || "selected site"}; scope ${envDraft.scope}; ${envDraft.key}=${envDraft.value}`
     );
   }
 
@@ -1636,7 +1783,7 @@ function WebsitesSection({ cpId }) {
     event.preventDefault();
     queueSelectedWebsiteAction(
       poolDraft.action,
-      `Safe app pool draft: site ${selectedSite?.siteName || "selected site"}; action ${poolDraft.action}; memory ${poolDraft.memory} MB; mode ${poolDraft.mode}`
+      `App pool request: site ${selectedSite?.siteName || "selected site"}; action ${poolDraft.action}; memory ${poolDraft.memory} MB; mode ${poolDraft.mode}`
     );
   }
 
@@ -1711,7 +1858,7 @@ function WebsitesSection({ cpId }) {
             <div>
               <span className="status-pill blue">More Functions</span>
               <h2>Website Tools</h2>
-              <p>Rebuilt staging surface for the legacy domainbind, app pool, runtime, stats, protection, and IIS feature flows.</p>
+              <p>Worker-backed actions queue immediately. IIS/domain/provider actions stay gated until their remote helper is mapped.</p>
             </div>
             <label>
               Site
@@ -1744,7 +1891,7 @@ function WebsitesSection({ cpId }) {
 
           <div className="website-function-form-grid">
             <form className="website-function-form" onSubmit={submitNewSiteDraft}>
-              <span className="status-pill blue">New Site Draft</span>
+              <span className="status-pill blue">New Site</span>
               <label>
                 Site Name
                 <input value={newSiteDraft.name} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, name: event.target.value }))} />
@@ -1762,7 +1909,7 @@ function WebsitesSection({ cpId }) {
                   <option>PHP</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Run Real Test</button>
+              <button className="primary-button compact" type="submit">Check Gateway</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitDomainDraft}>
@@ -1785,7 +1932,7 @@ function WebsitesSection({ cpId }) {
                 <input type="checkbox" checked={domainDraft.createDns} onChange={(event) => setDomainDraft((draft) => ({ ...draft, createDns: event.target.checked }))} />
                 Create DNS zone
               </label>
-              <button className="primary-button compact" type="submit">Run Real Test</button>
+              <button className="primary-button compact" type="submit">Check Gateway</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitPathRuntimeDraft}>
@@ -1811,7 +1958,7 @@ function WebsitesSection({ cpId }) {
                   <option>Out of Process</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Run Real Test</button>
+              <button className="primary-button compact" type="submit">Check Gateway</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitIpDenyDraft}>
@@ -1832,7 +1979,7 @@ function WebsitesSection({ cpId }) {
                   <option>Dynamic IP Protection</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Run Real Test</button>
+              <button className="primary-button compact" type="submit">Check Gateway</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitEnvDraft}>
@@ -1852,7 +1999,7 @@ function WebsitesSection({ cpId }) {
                   <option>Application Pool</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Run Real Test</button>
+              <button className="primary-button compact" type="submit">Check Gateway</button>
             </form>
 
             <form className="website-function-form" onSubmit={submitPoolDraft}>
@@ -1880,7 +2027,7 @@ function WebsitesSection({ cpId }) {
                   <option>.NET Core</option>
                 </select>
               </label>
-              <button className="primary-button compact" type="submit">Run Real Test</button>
+              <button className="primary-button compact" type="submit">Queue / Check Action</button>
             </form>
           </div>
         </section>
@@ -2118,13 +2265,28 @@ function DatabasesSection({ cpId }) {
         from: database ? `${database.engine}:${database.name}` : `database:${action}`,
         to: database ? database.host || "database-server" : "/panel-test/database",
         server: "database-manager",
-        note: details || `Safe database planning row for ${action}`
+        note: details || `Database gateway required for ${action}`
       });
-      setDatabaseMessage(`${action} test activity created.`);
+      setDatabaseMessage(`${action} needs the legacy database gateway before it can run.`);
       await reloadActivity();
     } catch (error) {
       setDatabaseMessage(error.message);
     }
+  }
+
+  async function queueDatabaseWorker(type, database, payload = {}) {
+    const serverId = legacyServerToken(database?.host);
+    const result = await createHostingWorkqueue(cpId, {
+      type,
+      zipFile: payload.zipFile ?? serverId,
+      dstFolder: payload.dstFolder ?? "\\www\\db\\",
+      serverId,
+      data1: payload.data1 ?? database?.name ?? "",
+      siteOwner: database?.name ?? "",
+      notifyEmail: "database-manager"
+    });
+    setDatabaseMessage(result.message);
+    await reloadActivity();
   }
 
   function showConnectionString(database) {
@@ -2143,7 +2305,7 @@ function DatabasesSection({ cpId }) {
     event.preventDefault();
     const database = visibleDatabases.find((item) => `${item.engine}:${item.databaseId}` === backupDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
     if (!database) {
-      setDatabaseMessage("Choose a database before staging a scheduled backup.");
+      setDatabaseMessage("Choose a database before creating a scheduled backup.");
       return;
     }
 
@@ -2163,7 +2325,7 @@ function DatabasesSection({ cpId }) {
     queueDatabaseTest(
       `Create ${newDatabaseDraft.engine} Database`,
       null,
-      `Safe database create draft: engine ${newDatabaseDraft.engine}; name ${newDatabaseDraft.name}; login ${newDatabaseDraft.login}; quota ${quota} MB; cpid ${cpId}`
+      `Database create request: engine ${newDatabaseDraft.engine}; name ${newDatabaseDraft.name}; login ${newDatabaseDraft.login}; quota ${quota} MB; cpid ${cpId}`
     );
   }
 
@@ -2171,30 +2333,49 @@ function DatabasesSection({ cpId }) {
     event.preventDefault();
     const database = databases.find((item) => `${item.engine}:${item.databaseId}` === restoreDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
     if (!database) {
-      setDatabaseMessage("Choose a database before staging a restore.");
+      setDatabaseMessage("Choose a database before queueing this database job.");
       return;
     }
 
-    queueDatabaseTest(
-      restoreDraft.mode,
-      database,
-      `Safe database restore draft: ${database.engine}|${database.name}|${database.databaseId}; file ${restoreDraft.backupFile}; mode ${restoreDraft.mode}`
-    );
+    if (restoreDraft.mode === "Show Deleted DBs") {
+      setDatabaseMessage("Deleted database recovery is read-only here until the old deleted-DB restore gateway is mapped.");
+      return;
+    }
+
+    const type = restoreDraft.mode === "Restore from backup"
+      ? database.engine === "MSSQL" ? "Queue MSSQL Restore" : "Queue MySQL Restore"
+      : restoreDraft.mode;
+
+    queueDatabaseWorker(type, database, {
+      zipFile: restoreDraft.mode === "Restore from backup" ? restoreDraft.backupFile : legacyServerToken(database.host),
+      dstFolder: restoreDraft.mode === "Restore from backup" ? String(database.databaseId) : "\\www\\db\\",
+      data1: restoreDraft.mode === "Restore from backup" ? "" : database.engine === "MSSQL" ? `${database.name}.bak` : `${database.name}.sql`
+    }).catch((error) => setDatabaseMessage(error.message));
   }
 
   function submitSqlDraft(event) {
     event.preventDefault();
     const database = databases.find((item) => `${item.engine}:${item.databaseId}` === sqlDraft.databaseKey) ?? visibleDatabases[0] ?? databases[0];
     if (!database) {
-      setDatabaseMessage("Choose a database before staging a SQL file.");
+      setDatabaseMessage("Choose a database before queueing a SQL file.");
       return;
     }
 
-    queueDatabaseTest(
-      sqlDraft.action,
-      database,
-      `Safe SQL worker draft: ${database.engine}|${database.name}|${database.databaseId}; file ${sqlDraft.filePath}; action ${sqlDraft.action}`
-    );
+    if (database.engine !== "MSSQL") {
+      setDatabaseMessage("Run SQL File is mapped for MSSQL worker jobs. MySQL import still needs the exact legacy gateway.");
+      return;
+    }
+
+    if (sqlDraft.action !== "Run SQL File") {
+      setDatabaseMessage(`${sqlDraft.action} is not mapped to a legacy worker job yet.`);
+      return;
+    }
+
+    queueDatabaseWorker("Run MSSQL File", database, {
+      zipFile: sqlDraft.filePath,
+      dstFolder: String(database.databaseId),
+      data1: database.name
+    }).catch((error) => setDatabaseMessage(error.message));
   }
 
   return (
@@ -2240,7 +2421,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Scheduled database backups</span>
             <h3>Custom Backup Draft</h3>
-            <p>Requires real gateway for the legacy `customDBBackup` values without writing a real backup schedule.</p>
+            <p>Creates a guarded test row in the legacy `customDBBackup` table.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitBackupDraft}>
             <label>
@@ -2261,7 +2442,7 @@ function DatabasesSection({ cpId }) {
               Test Name
               <input value={backupDraft.name} onChange={(event) => setBackupDraft((draft) => ({ ...draft, name: event.target.value }))} />
             </label>
-            <button className="primary-button compact" type="submit">Create Real Test</button>
+            <button className="primary-button compact" type="submit">Create Test Schedule</button>
           </form>
         </article>
       )}
@@ -2271,7 +2452,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Create Database</span>
             <h3>MSSQL / MySQL Draft</h3>
-            <p>Requires real gateway for the legacy create form values with CP prefix, login, and quota review.</p>
+            <p>Needs the legacy database create gateway for CP prefix, login, quota, and remote server provisioning.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitNewDatabaseDraft}>
             <label>
@@ -2293,7 +2474,7 @@ function DatabasesSection({ cpId }) {
               Quota MB
               <input type="number" min="10" max="10240" value={newDatabaseDraft.quota} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, quota: event.target.value }))} />
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Check Gateway</button>
           </form>
         </article>
 
@@ -2301,7 +2482,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Restore / Backup</span>
             <h3>Server Backup Draft</h3>
-            <p>Requires real gateway for restore mode and backup file path for the compatible database worker queue.</p>
+            <p>Queues backup, restore, and compatible database worker jobs through the legacy worker.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitRestoreDraft}>
             <label>
@@ -2327,7 +2508,7 @@ function DatabasesSection({ cpId }) {
                 <option>Show Deleted DBs</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Queue Worker Job</button>
           </form>
         </article>
 
@@ -2335,7 +2516,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Run SQL</span>
             <h3>SQL File Worker</h3>
-            <p>Requires real gateway for a SQL file run against an owned database without executing it directly.</p>
+            <p>Queues a legacy MSSQL file execution job for the selected database.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitSqlDraft}>
             <label>
@@ -2360,7 +2541,7 @@ function DatabasesSection({ cpId }) {
                 <option>Import SQL Dump</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Queue SQL Job</button>
           </form>
         </article>
       </div>
@@ -2503,9 +2684,9 @@ function EmailsSection({ cpId }) {
         from: domain ? `email:${domain.domain}` : `email:${action}`,
         to: domain ? domain.mailHost || domain.webmailUrl || "mail-server" : "/panel-test/email",
         server: "mail-manager",
-        note: details || `Safe email planning row for ${action}`
+        note: details || `Email gateway required for ${action}`
       });
-      setEmailMessage(`${action} test activity created.`);
+      setEmailMessage(`${action} needs the SmarterMail gateway before it can run.`);
       await reloadActivity();
     } catch (error) {
       setEmailMessage(error.message);
@@ -2517,7 +2698,7 @@ function EmailsSection({ cpId }) {
     queueEmailTest(
       `Add ${emailDomainDraft.type}`,
       { domain: emailDomainDraft.domain, mailHost: "mail-manager" },
-      `Safe email domain draft: domain ${emailDomainDraft.domain}; type ${emailDomainDraft.type}; quota ${emailDomainDraft.quota} MB`
+      `Email domain request: domain ${emailDomainDraft.domain}; type ${emailDomainDraft.type}; quota ${emailDomainDraft.quota} MB`
     );
   }
 
@@ -2527,7 +2708,7 @@ function EmailsSection({ cpId }) {
     queueEmailTest(
       mailboxDraft.action,
       selectedDomain,
-      `Safe mailbox draft: ${mailboxDraft.mailbox}@${selectedDomain?.domain || mailboxDraft.domain || "domain"}; quota ${mailboxDraft.quota} MB; action ${mailboxDraft.action}`
+      `Mailbox request: ${mailboxDraft.mailbox}@${selectedDomain?.domain || mailboxDraft.domain || "domain"}; quota ${mailboxDraft.quota} MB; action ${mailboxDraft.action}`
     );
   }
 
@@ -2606,7 +2787,7 @@ function EmailsSection({ cpId }) {
           <div>
             <span className="status-pill blue">Email Domain</span>
             <h3>Hosted / Corporate Draft</h3>
-            <p>Requires real gateway for hosted, corporate, and VPS email domain values before SmarterMail writes are enabled.</p>
+            <p>Needs the SmarterMail gateway before hosted, corporate, and VPS email domain writes are enabled.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitEmailDomainDraft}>
             <label>
@@ -2625,7 +2806,7 @@ function EmailsSection({ cpId }) {
               Quota MB
               <input type="number" min="100" max="10240" value={emailDomainDraft.quota} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, quota: event.target.value }))} />
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Check Gateway</button>
           </form>
         </article>
 
@@ -2633,7 +2814,7 @@ function EmailsSection({ cpId }) {
           <div>
             <span className="status-pill blue">Mailbox</span>
             <h3>Mailbox / Alias Draft</h3>
-            <p>Requires real gateway for mailbox, alias, forwarding, quota, and password actions for the selected email domain.</p>
+            <p>Needs the SmarterMail gateway for mailbox, alias, forwarding, quota, and password actions.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitMailboxDraft}>
             <label>
@@ -2663,7 +2844,7 @@ function EmailsSection({ cpId }) {
                 <option>Delete Mailbox</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Check Gateway</button>
           </form>
         </article>
       </div>
@@ -2786,9 +2967,9 @@ function FtpSection({ cpId }) {
         from: user ? `ftp:${user.login}` : `ftp:${action}`,
         to: user ? user.path || "/www" : "/panel-test/ftp",
         server: user?.server || "ftp-manager",
-        note: details || `Safe FTP planning row for ${action}`
+        note: details || `FTP gateway required for ${action}`
       });
-      setFtpMessage(`${action} test activity created.`);
+      setFtpMessage(`${action} needs the FTP gateway before it can run.`);
       await reloadActivity();
     } catch (error) {
       setFtpMessage(error.message);
@@ -2845,7 +3026,7 @@ function FtpSection({ cpId }) {
         <div>
           <span className="status-pill blue">FTP User Draft</span>
           <h3>Create / Edit FTP</h3>
-          <p>Requires real gateway for FTP login, path, quota, and permission values without changing existing FTP users.</p>
+          <p>Creates guarded `codex-test-*` FTP rows. Existing FTP users remain protected.</p>
         </div>
         <form className="advance-inline-form" onSubmit={submitFtpDraft}>
           <label>
@@ -2995,14 +3176,55 @@ function FilesSection({ cpId }) {
 
   async function queueFileTest(action, site = null, details = "") {
     setFilesMessage("");
+    const workerAction = {
+      Zip: "zip",
+      Unzip: "Unzip",
+      Permissions: "perm",
+      "Repair Migration Permissions": "perm",
+      "Scan Virus": "scanvirus",
+      "Rescan Migrated Files": "scanvirus"
+    }[action];
+
+    if (workerAction) {
+      const targetSite = site ?? siteFolders[0] ?? null;
+      const sourcePath = targetSite
+        ? legacySitePath(targetSite, sitesDashboard?.cpLogin)
+        : migrationDraft.source || protectionDraft.path || "\\www";
+      const destination = action === "Zip"
+        ? `${sourcePath}.zip`
+        : action === "Unzip"
+          ? sourcePath.replace(/\.zip$/i, "") || "\\www"
+          : action.includes("Permissions")
+            ? "read,write"
+            : "";
+
+      try {
+        const result = await createHostingWorkqueue(cpId, {
+          type: workerAction,
+          zipFile: sourcePath,
+          dstFolder: destination,
+          serverId: "",
+          data1: details || action,
+          siteOwner: targetSite?.siteName ?? "",
+          notifyEmail: "file-manager"
+        });
+        setFilesMessage(result.message);
+        await reload();
+        return;
+      } catch (error) {
+        setFilesMessage(error.message);
+        return;
+      }
+    }
+
     try {
       await createPanelTestActivity(cpId, {
-        from: site ? simplifySitePath(site.sitePath, sitesDashboard?.cpLogin) : `/www/${action.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-        to: site ? `${action}:${site.siteName}` : `/panel-test/files/${action.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        from: site ? simplifySitePath(site.sitePath, sitesDashboard?.cpLogin) : `/www/${workerSlug(action)}`,
+        to: site ? `${action}:${site.siteName}` : `/panel-test/files/${workerSlug(action)}`,
         server: "file-manager",
-        note: details || `Safe file-manager planning row for ${action}`
+        note: details || `File gateway required for ${action}`
       });
-      setFilesMessage(`${action} test activity created.`);
+      setFilesMessage(`${action} needs the file manager gateway before it can run.`);
       await reload();
     } catch (error) {
       setFilesMessage(error.message);
@@ -3014,7 +3236,7 @@ function FilesSection({ cpId }) {
     queueFileTest(
       protectionDraft.action,
       null,
-      `Safe site protection draft: site ${protectionDraft.site}; path ${protectionDraft.path}; user ${protectionDraft.username}; action ${protectionDraft.action}`
+      `Site protection request: site ${protectionDraft.site}; path ${protectionDraft.path}; user ${protectionDraft.username}; action ${protectionDraft.action}`
     );
   }
 
@@ -3023,7 +3245,7 @@ function FilesSection({ cpId }) {
     queueFileTest(
       migrationDraft.action,
       null,
-      `Safe migration repair draft: source ${migrationDraft.source}; target ${migrationDraft.target}; action ${migrationDraft.action}`
+      `Migration repair request: source ${migrationDraft.source}; target ${migrationDraft.target}; action ${migrationDraft.action}`
     );
   }
 
@@ -3102,7 +3324,7 @@ function FilesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Site Protection Draft</span>
             <h3>Password Protection</h3>
-            <p>Requires real gateway for lock site, unlock site, password protection, and FB API access planning without changing files or IIS rules.</p>
+            <p>Permission repair can queue to the legacy worker. Password protection still needs the file gateway mapping.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitProtectionDraft}>
             <label>
@@ -3127,7 +3349,7 @@ function FilesSection({ cpId }) {
                 <option value="Allow FB API">Allow FB API</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Queue / Check Action</button>
           </form>
         </article>
 
@@ -3135,7 +3357,7 @@ function FilesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Migration Draft</span>
             <h3>Repair Queue</h3>
-            <p>Requires real gateway for migration completion checks and permission repair steps from the migration repair flow.</p>
+            <p>Permission repair and scans queue through the legacy worker; migration status remains read-only.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitMigrationDraft}>
             <label>
@@ -3155,7 +3377,7 @@ function FilesSection({ cpId }) {
                 <option value="Queue Migration Notice">Queue Migration Notice</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Queue / Check Action</button>
           </form>
         </article>
       </div>
@@ -3277,6 +3499,8 @@ function AppsSection({ cpId }) {
     ...(activity?.jobs ?? []).filter((job) =>
       job.server === "plugin-installer" ||
       job.server === "wordpress-manager" ||
+      job.type === "nodejs" ||
+      job.type === "deploy" ||
       String(job.from ?? "").toLowerCase().startsWith("plugin:") ||
       String(job.from ?? "").toLowerCase().startsWith("wordpress:") ||
       String(job.from ?? "").toLowerCase().startsWith("requirements:")
@@ -3290,7 +3514,7 @@ function AppsSection({ cpId }) {
         from: `plugin:${plugin.name}`,
         to: `/www/${plugin.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "app"}`,
         server: "plugin-installer",
-        note: `Safe install planning row for ${plugin.name} ${plugin.version || ""}`.trim()
+        note: `Plugin installer gateway required for ${plugin.name} ${plugin.version || ""}`.trim()
       });
       setAppsMessage(result.message);
       await loadApps();
@@ -3307,7 +3531,7 @@ function AppsSection({ cpId }) {
         from: `requirements:${plugin.name}`,
         to: plugin.language || "app-runtime",
         server: "plugin-installer",
-        note: `Safe requirements planning row for ${plugin.name} ${plugin.version || ""}`.trim()
+        note: `Plugin requirements gateway required for ${plugin.name} ${plugin.version || ""}`.trim()
       });
       setAppsMessage(result.message);
       await loadApps();
@@ -3324,7 +3548,7 @@ function AppsSection({ cpId }) {
         from: `wordpress:${action}`,
         to: wpDraft.site || "wordpress-site",
         server: "wordpress-manager",
-        note: `Safe WordPress Desk draft: ${action}; site ${wpDraft.site}; admin ${wpDraft.url}; ${wpDraft.note}`
+        note: `WordPress Desk request: ${action}; site ${wpDraft.site}; admin ${wpDraft.url}; ${wpDraft.note}`
       });
       setAppsMessage(result.message);
       await reloadActivity();
@@ -3337,11 +3561,16 @@ function AppsSection({ cpId }) {
     event.preventDefault();
     setAppsMessage("");
     try {
-      const result = await createPanelTestActivity(cpId, {
-        from: `node:${nodeDraft.mode}`,
-        to: nodeDraft.site || "node-site",
-        server: "plugin-installer",
-        note: `Safe Node.js deploy draft: site ${nodeDraft.site}; source ${nodeDraft.source}; mode ${nodeDraft.mode}; handler ${nodeDraft.handler}`
+      const isDeploy = nodeDraft.mode === "Deploy from Git";
+      const siteName = nodeDraft.site || "node-site";
+      const result = await createHostingWorkqueue(cpId, {
+        type: isDeploy ? "deploy" : "nodejs",
+        zipFile: isDeploy ? nodeDraft.source : siteName,
+        dstFolder: siteName,
+        serverId: "",
+        data1: `${nodeDraft.mode}; ${nodeDraft.handler}`,
+        siteOwner: siteName,
+        notifyEmail: "node-manager"
       });
       setAppsMessage(result.message);
       await reloadActivity();
@@ -3404,7 +3633,7 @@ function AppsSection({ cpId }) {
           <div>
             <span className="status-pill blue">WordPress Desk</span>
             <h3>Site Security and WordPress Tools</h3>
-            <p>Requires real gateway for the wpdesk CDN, firewall, and security checks without changing Cloudflare, WebKnight, or site files.</p>
+            <p>Needs the WordPress Desk gateway for CDN, firewall, security checks, and site file changes.</p>
           </div>
           <MenuIcon name="apps" />
         </div>
@@ -3457,7 +3686,7 @@ function AppsSection({ cpId }) {
           <div>
             <span className="status-pill blue">Node.js Deploy</span>
             <h3>IISNode / HTTP Platform</h3>
-            <p>Requires real gateway for Node.js mode, Git/ZIP source, sub-application, and deploy worker values.</p>
+            <p>Queues Node.js deploy and runtime jobs through the legacy worker.</p>
           </div>
           <MenuIcon name="deploy" />
         </div>
@@ -3487,7 +3716,7 @@ function AppsSection({ cpId }) {
               <option>IISNode</option>
             </select>
           </label>
-          <button className="primary-button compact" type="submit">Run Real Test</button>
+          <button className="primary-button compact" type="submit">Queue Node Job</button>
         </form>
       </article>
 
@@ -3659,14 +3888,44 @@ function AdvanceSection({ cpId }) {
 
   async function queueAdvanceTool(action, details = "") {
     setSandboxMessage("");
+    const nodeActionTypes = {
+      "Enable IISNode": "nodejs",
+      "Enable HTTP Platform": "nodejs",
+      "Create Node Sub App": "nodejs",
+      "Deploy from Git": "deploy",
+      "Deploy from ZIP": "deploy",
+      "Node.js App": "nodejs"
+    };
+
+    if (nodeActionTypes[action]) {
+      const type = nodeActionTypes[action];
+      try {
+        const result = await createHostingWorkqueue(cpId, {
+          type,
+          zipFile: type === "deploy" ? `advance-${workerSlug(action)}` : action,
+          dstFolder: runtimeDashboard?.cpLogin || "node-site",
+          serverId: "",
+          data1: details || action,
+          siteOwner: runtimeDashboard?.cpLogin || "",
+          notifyEmail: "advanced-manager"
+        });
+        setSandboxMessage(result.message);
+        await reload();
+        return;
+      } catch (error) {
+        setSandboxMessage(error.message);
+        return;
+      }
+    }
+
     try {
       await createPanelTestActivity(cpId, {
         from: `advanced:${action}`,
-        to: `/panel-test/advance/${action.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        to: `/panel-test/advance/${workerSlug(action)}`,
         server: "advanced-manager",
-        note: details || `Safe advanced planning row for ${action}`
+        note: details || `Advanced gateway required for ${action}`
       });
-      setSandboxMessage(`${action} test activity created.`);
+      setSandboxMessage(`${action} needs the legacy advanced gateway before it can run.`);
       await reload();
     } catch (error) {
       setSandboxMessage(error.message);
@@ -3689,7 +3948,7 @@ function AdvanceSection({ cpId }) {
     const url = `${taskDraft.protocol}${taskDraft.url.replace(/^https?:\/\//i, "")}`;
     queueAdvanceTool(
       taskDraft.taskType === "wintask" ? "Add Windows Task" : "Add URL Task",
-      `Safe scheduled task draft: ${url}; timeout ${timeout}s; every ${interval} minutes; type ${taskDraft.taskType}`
+      `Scheduled task request: ${url}; timeout ${timeout}s; every ${interval} minutes; type ${taskDraft.taskType}`
     );
   }
 
@@ -3746,7 +4005,7 @@ function AdvanceSection({ cpId }) {
     event.preventDefault();
     queueAdvanceTool(
       staticIpDraft.action,
-      `Safe Static IP/VPS draft: domain ${staticIpDraft.domain}; ip ${staticIpDraft.ipAddress}; action ${staticIpDraft.action}`
+      `Static IP/VPS request: domain ${staticIpDraft.domain}; ip ${staticIpDraft.ipAddress}; action ${staticIpDraft.action}`
     );
   }
 
@@ -3846,7 +4105,7 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Scheduled Task Draft</span>
             <h3>HTTP / Windows Task</h3>
-            <p>Requires real gateway for the old task form values without writing to the legacy `tasks` table.</p>
+            <p>Needs the legacy task gateway before writing to the production task tables.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitTaskDraft}>
             <label>
@@ -3875,7 +4134,7 @@ function AdvanceSection({ cpId }) {
                 <option value="wintask">Dedicated Windows Task</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Check Gateway</button>
           </form>
         </article>
 
@@ -3967,7 +4226,7 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Static IP / VPS Draft</span>
             <h3>Domain Binding</h3>
-            <p>Requires real gateway for static IP, VPS domain binding, snapshot, and backup planning without touching provider data.</p>
+            <p>Needs the provider gateway for static IP, VPS domain binding, snapshots, and backups.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitStaticIpDraft}>
             <label>
@@ -3987,7 +4246,7 @@ function AdvanceSection({ cpId }) {
                 <option value="Update Cloud Backup">Update Cloud Backup</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Check Gateway</button>
           </form>
         </article>
       </div>
@@ -4174,7 +4433,7 @@ function buildAdvanceWorkflowGroups(runtimeDashboard) {
     {
       badge: "Node",
       title: "Node.js Deploy",
-      description: "IISNode, HTTP Platform Handler, sub-application, Git deploy, and ZIP deploy staging.",
+      description: "IISNode, HTTP Platform Handler, sub-application, Git deploy, and ZIP deploy worker jobs.",
       meta: [
         ["Queue Types", "nodejs, deploy"],
         ["Current Redirects", totals.redirects],
@@ -4218,6 +4477,26 @@ function simplifySitePath(path, cpLogin) {
     return trimmed ? `/${trimmed}` : "/www";
   }
   return text;
+}
+
+function legacyServerToken(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  return text.split(".")[0].trim();
+}
+
+function legacySitePath(site, cpLogin) {
+  const rawPath = String(site?.sitePath ?? "").trim();
+  if (rawPath) return rawPath;
+  const simplified = simplifySitePath(site?.siteName || "", cpLogin);
+  return simplified === "/" ? "\\www" : simplified.replace(/\//g, "\\");
+}
+
+function workerSlug(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "job";
 }
 
 function buildSecurityRows(mode, securityDashboard) {
@@ -4425,9 +4704,9 @@ function DomainServicesSection({ mode, cpId }) {
         from: domain ? `${mode}:${domain.label}` : `${mode}:${action}`,
         to: domain ? domain.siteName : `/panel-test/${mode}`,
         server: `${mode}-manager`,
-        note: details || `Safe ${mode.toUpperCase()} planning row for ${action}`
+        note: details || `${mode.toUpperCase()} gateway required for ${action}`
       });
-      setDomainMessage(`${action} test activity created.`);
+      setDomainMessage(`${action} needs the ${mode.toUpperCase()} gateway before it can run.`);
       await reloadActivity();
     } catch (error) {
       setDomainMessage(error.message);
@@ -4441,7 +4720,7 @@ function DomainServicesSection({ mode, cpId }) {
     queueDomainServiceTest(
       `${dnsDraft.type} Record`,
       null,
-      `Safe DNS record draft: host ${dnsDraft.host || "@"}; type ${dnsDraft.type}; value ${dnsDraft.value}; ttl ${ttl}${priorityNote}`
+      `DNS record request: host ${dnsDraft.host || "@"}; type ${dnsDraft.type}; value ${dnsDraft.value}; ttl ${ttl}${priorityNote}`
     );
   }
 
@@ -4450,7 +4729,7 @@ function DomainServicesSection({ mode, cpId }) {
     queueDomainServiceTest(
       sslDraft.action,
       null,
-      `Safe SSL certificate draft: domain ${sslDraft.domain}; type ${sslDraft.certificateType}; approver ${sslDraft.approverEmail}; action ${sslDraft.action}`
+      `SSL certificate request: domain ${sslDraft.domain}; type ${sslDraft.certificateType}; approver ${sslDraft.approverEmail}; action ${sslDraft.action}`
     );
   }
 
@@ -4459,7 +4738,7 @@ function DomainServicesSection({ mode, cpId }) {
     queueDomainServiceTest(
       cdnDraft.mode,
       null,
-      `Safe CDN/Cloudflare draft: domain ${cdnDraft.domain}; mode ${cdnDraft.mode}; SSL mode ${cdnDraft.sslMode}; redirect www ${cdnDraft.redirectWww ? "yes" : "no"}`
+      `CDN/Cloudflare request: domain ${cdnDraft.domain}; mode ${cdnDraft.mode}; SSL mode ${cdnDraft.sslMode}; redirect www ${cdnDraft.redirectWww ? "yes" : "no"}`
     );
   }
 
@@ -4501,7 +4780,7 @@ function DomainServicesSection({ mode, cpId }) {
             <div>
               <span className="status-pill blue">DNS Draft</span>
               <h3>Record Editor</h3>
-              <p>Requires real gateway for DNS record values for the rebuilt DNS action flow without publishing provider changes.</p>
+              <p>Needs the DNS provider gateway before publishing record changes.</p>
             </div>
             <MenuIcon name="dns" />
           </div>
@@ -4535,7 +4814,7 @@ function DomainServicesSection({ mode, cpId }) {
                 <input type="number" min="0" max="100" value={dnsDraft.priority} onChange={(event) => setDnsDraft((draft) => ({ ...draft, priority: event.target.value }))} />
               </label>
             )}
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Check Gateway</button>
           </form>
         </article>
       )}
@@ -4546,7 +4825,7 @@ function DomainServicesSection({ mode, cpId }) {
             <div>
               <span className="status-pill blue">SSL Draft</span>
               <h3>Certificate Workflow</h3>
-              <p>Requires real gateway for free SSL, import, install, approver email, renewal, and delete requests without touching certificate bindings.</p>
+              <p>Needs the SSL gateway for free SSL, import, install, approver email, renewal, and delete requests.</p>
             </div>
             <MenuIcon name="ssl" />
           </div>
@@ -4580,7 +4859,7 @@ function DomainServicesSection({ mode, cpId }) {
                 <option>Delete SSL</option>
               </select>
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Check Gateway</button>
           </form>
         </article>
       )}
@@ -4591,7 +4870,7 @@ function DomainServicesSection({ mode, cpId }) {
             <div>
               <span className="status-pill blue">CDN Draft</span>
               <h3>Cloudflare / CDN Workflow</h3>
-              <p>Requires real gateway for tenant, zone, purge, SSL mode, and redirect actions without changing Cloudflare provider data.</p>
+              <p>Needs the Cloudflare gateway for tenant, zone, purge, SSL mode, and redirect actions.</p>
             </div>
             <MenuIcon name="cdn" />
           </div>
@@ -4624,7 +4903,7 @@ function DomainServicesSection({ mode, cpId }) {
               <input type="checkbox" checked={cdnDraft.redirectWww} onChange={(event) => setCdnDraft((draft) => ({ ...draft, redirectWww: event.target.checked }))} />
               Redirect non-www to www
             </label>
-            <button className="primary-button compact" type="submit">Run Real Test</button>
+            <button className="primary-button compact" type="submit">Check Gateway</button>
           </form>
         </article>
       )}
