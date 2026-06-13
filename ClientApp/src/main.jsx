@@ -46,7 +46,7 @@ const sections = [
   { id: "addon", label: "Add-On", stat: "", icon: "plus" },
   { id: "affiliate", label: "Affiliate", stat: "Earn 60%", icon: "share" },
   { id: "billing", label: "Billing", stat: "", icon: "card", statTone: "warning" },
-  { id: "settings", label: "Settings", stat: "Sec", icon: "settings" },
+  { id: "settings", label: "Settings", stat: "", icon: "settings" },
   { id: "new-order", label: "+ New Order", stat: "Buy", icon: "order", tone: "order" }
 ];
 
@@ -281,12 +281,17 @@ const affiliateBannerDefinitions = [
   { size: "234x60", file: "234x60.gif" }
 ];
 
-function buildAffiliateBanners(referralCode) {
+function normalizeAffiliateBrandDomain(brandDomain) {
+  return String(brandDomain || "smarterasp.net").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "") || "smarterasp.net";
+}
+
+function buildAffiliateBanners(referralCode, brandDomain) {
   const code = encodeURIComponent(referralCode || "jyu001");
+  const domain = normalizeAffiliateBrandDomain(brandDomain);
   return affiliateBannerDefinitions.map((banner) => ({
     ...banner,
-    url: `https://www.SmarterASP.NET/affiliate/${banner.file}`,
-    code: `<a href="https://www.SmarterASP.NET/index?r=${code}"><img src="https://www.SmarterASP.NET/affiliate/${banner.file}" border="0"></a>`
+    url: `https://www.${domain}/affiliate/${banner.file}`,
+    code: `<a href="https://www.${domain}/index?r=${code}"><img src="https://www.${domain}/affiliate/${banner.file}" border="0"></a>`
   }));
 }
 
@@ -379,7 +384,10 @@ function getDomainExtensionPrice(extension) {
 
 function App() {
   const [route, setRoute] = useState(() => appRouteFromPath(window.location.pathname));
-  const [theme, setTheme] = useState(() => localStorage.getItem("controlpanel-theme") ?? "dark");
+  const [theme, setTheme] = useState(() => {
+    const savedTheme = localStorage.getItem("controlpanel-theme");
+    return ["dark", "light", "class"].includes(savedTheme) ? savedTheme : "dark";
+  });
   const [currentUser, setCurrentUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
@@ -445,7 +453,11 @@ function App() {
     setRoute("panel_cp");
   };
 
-  const toggleTheme = () => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
+  const toggleTheme = () => setTheme((currentTheme) => {
+    if (currentTheme === "dark") return "light";
+    if (currentTheme === "light") return "class";
+    return "dark";
+  });
 
   const goToPasswordResetRequest = (event) => {
     event?.preventDefault();
@@ -471,7 +483,7 @@ function App() {
     return (
       <main className="login-page">
         <section className="login-card auth-loading" aria-label="Loading session">
-          <div className="product-mark" aria-hidden="true">CP</div>
+          <div className="product-mark login-server-icon" aria-hidden="true"><MenuIcon name="server" /></div>
           <LoadingIcon label="Checking session" />
         </section>
       </main>
@@ -486,6 +498,10 @@ function App() {
 
   if (route === "checkout") {
     return <CheckoutHandoff theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} />;
+  }
+
+  if (route === "invoice") {
+    return <InvoicePage theme={theme} onBackToPanel={goToPanel} />;
   }
 
   if (route === "email-verify") {
@@ -514,6 +530,7 @@ function App() {
 function appRouteFromPath(pathname) {
   if (pathname === "/panel") return "panel";
   if (pathname === "/panel_cp") return "panel_cp";
+  if (pathname === "/account/printreceipt" || pathname === "/invoice") return "invoice";
   if (pathname.startsWith("/checkout")) return "checkout";
   if (pathname === "/account/emailchangeverify") return "email-verify";
   if (pathname === "/account/retrieve_password") return "password-reset-request";
@@ -522,7 +539,113 @@ function appRouteFromPath(pathname) {
 }
 
 function isPublicRoute(route) {
-  return ["login", "checkout", "email-verify", "password-reset-request", "password-reset-confirm"].includes(route);
+  return ["login", "checkout", "invoice", "email-verify", "password-reset-request", "password-reset-confirm"].includes(route);
+}
+
+function InvoicePage({ theme, onBackToPanel }) {
+  const [invoice, setInvoice] = useState(null);
+  const [message, setMessage] = useState("Loading invoice...");
+  const query = useMemo(() => new URLSearchParams(window.location.search), []);
+  const orderId = query.get("id") ?? query.get("orderId") ?? "";
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadInvoice() {
+      if (!orderId) {
+        setMessage("Missing invoice number.");
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/account/billing/orders/${encodeURIComponent(orderId)}/invoice`);
+        const result = await response.json().catch(() => null);
+        if (!active) return;
+        if (!response.ok || !result?.success) {
+          setMessage(result?.message ?? "Unable to load invoice.");
+          return;
+        }
+
+        setInvoice(result.invoice);
+        setMessage("");
+      } catch {
+        if (active) setMessage("Unable to reach invoice service.");
+      }
+    }
+
+    loadInvoice();
+    return () => {
+      active = false;
+    };
+  }, [orderId]);
+
+  const brandName = (invoice?.brandName || "smarterasp.net").toUpperCase();
+  const address = [
+    invoice?.receiptAddress,
+    [invoice?.receiptCity, invoice?.receiptProvince].filter(Boolean).join(", "),
+    [invoice?.receiptPostcode, invoice?.receiptCountry].filter(Boolean).join(", ")
+  ].filter(Boolean).join(" ");
+
+  return (
+    <main className={`invoice-page ${theme}`}>
+      <section className="invoice-shell">
+        <div className="invoice-toolbar">
+          <button className="secondary-button compact" type="button" onClick={onBackToPanel}>Back</button>
+          <button className="primary-button compact" type="button" onClick={() => window.print()} disabled={!invoice}>Print</button>
+        </div>
+        {message && (
+          <div className="invoice-card">
+            <LoadingIcon label={message} />
+            <p>{message}</p>
+          </div>
+        )}
+        {invoice && (
+          <article className="invoice-document">
+            <h1>{brandName}</h1>
+            <div className="invoice-summary-row">
+              <div>
+                <span>Receipt No.</span>
+                <strong>{invoice.orderId}</strong>
+              </div>
+              <div>
+                <span>Order Date</span>
+                <strong>{formatDate(invoice.createDate)}</strong>
+              </div>
+            </div>
+            <section className="invoice-band">
+              <h2>BusinessICS Intl Limited (DBA {brandName})</h2>
+              <p>1455 Monterey Pass Road #204, Monterey Park, CA 91754 US</p>
+            </section>
+            <section className="invoice-customer-grid">
+              <div><span>Name</span><strong>{invoice.receiptName || "N/A"}</strong></div>
+              <div><span>Address</span><strong>{address || "N/A"}</strong></div>
+              {invoice.vat && <div><span>VAT No.</span><strong>{invoice.vat}</strong></div>}
+              <div><span>Paid By</span><strong>{invoice.paymentMethod || "Paypal/Credit Card"}</strong></div>
+            </section>
+            <section className="invoice-line-card">
+              <DataTable
+                columns={["Account Name", "Product Name", "Description", "Payment Term", "Amount", "Total"]}
+                rows={[[
+                  invoice.accountName || "N/A",
+                  invoice.name,
+                  invoice.description,
+                  invoice.paymentTerm,
+                  formatMoney(invoice.amount),
+                  formatMoney(invoice.amount)
+                ]]}
+              />
+            </section>
+            <section className="invoice-total-card">
+              <div><span>Subtotal</span><strong>{formatMoney(invoice.amount)}</strong></div>
+              <div><span>Shipping & Handling</span><strong>$0.00</strong></div>
+              <div><span>Tax</span><strong>$0.00</strong></div>
+              <div className="invoice-total"><span>Total (United States Dollars)</span><strong>{formatMoney(invoice.amount)}</strong></div>
+            </section>
+          </article>
+        )}
+      </section>
+    </main>
+  );
 }
 
 function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
@@ -612,28 +735,7 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
     : "";
 
   function openPaymentPopup(url) {
-    if (!url) return;
-
-    const w = 600;
-    const h = 700;
-    const dualScreenLeft = window.screenLeft !== undefined ? window.screenLeft : window.screen.left;
-    const dualScreenTop = window.screenTop !== undefined ? window.screenTop : window.screen.top;
-    const width = window.innerWidth || document.documentElement.clientWidth || window.screen.width;
-    const height = window.innerHeight || document.documentElement.clientHeight || window.screen.height;
-    const systemZoom = width / window.screen.availWidth;
-    const left = (width - w) / 2 / systemZoom + dualScreenLeft;
-    const top = (height - h) / 2 / systemZoom + dualScreenTop;
-    const popupFeatures = [
-      "popup=yes",
-      "scrollbars=yes",
-      "resizable=yes",
-      `width=${Math.round(w / systemZoom)}`,
-      `height=${Math.round(h / systemZoom)}`,
-      `top=${Math.round(top)}`,
-      `left=${Math.round(left)}`
-    ].join(",");
-    const popup = window.open(url, "_blank", popupFeatures);
-
+    const popup = openCenteredPopup(url, "AccountPayment");
     if (!popup) {
       setOrderMessage("Your browser blocked the payment popup. Allow popups for this site, then try again.");
       return;
@@ -733,6 +835,31 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
   );
 }
 
+function openCenteredPopup(url, title = "Payment") {
+  if (!url) return null;
+
+  const w = 600;
+  const h = 700;
+  const dualScreenLeft = window.screenLeft !== undefined ? window.screenLeft : window.screen.left;
+  const dualScreenTop = window.screenTop !== undefined ? window.screenTop : window.screen.top;
+  const width = window.innerWidth || document.documentElement.clientWidth || window.screen.width;
+  const height = window.innerHeight || document.documentElement.clientHeight || window.screen.height;
+  const systemZoom = width / window.screen.availWidth;
+  const left = (width - w) / 2 / systemZoom + dualScreenLeft;
+  const top = (height - h) / 2 / systemZoom + dualScreenTop;
+  const popupFeatures = [
+    "popup=yes",
+    "scrollbars=yes",
+    "resizable=yes",
+    `width=${Math.round(w / systemZoom)}`,
+    `height=${Math.round(h / systemZoom)}`,
+    `top=${Math.round(top)}`,
+    `left=${Math.round(left)}`
+  ].join(",");
+
+  return window.open(url, title, popupFeatures);
+}
+
 function EmailChangeVerify({ theme, onBackToPanel, onToggleTheme }) {
   const [status, setStatus] = useState({ loading: true, success: false, message: "", newEmail: "", createdAt: null });
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -789,9 +916,7 @@ function EmailChangeVerify({ theme, onBackToPanel, onToggleTheme }) {
     <main className="handoff-page">
       <header className="handoff-header">
         <a href="/panel" onClick={onBackToPanel}>ControlPanel</a>
-        <button className="theme-toggle" type="button" onClick={onToggleTheme}>
-          {theme === "dark" ? "Light" : "Dark"}
-        </button>
+        <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
       </header>
       <section className="handoff-card">
         <span className={status.success ? "status-pill" : "status-pill muted"}>
@@ -1106,7 +1231,7 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
     <main className="login-page">
       <header className="login-header">
         <a className="brand" href="/" aria-label="ControlPanel home">
-          <span className="brand-mark">CP</span>
+          <span className="brand-mark login-server-icon" aria-hidden="true"><MenuIcon name="server" /></span>
           <span>ControlPanel</span>
         </a>
         <nav className="login-links" aria-label="Top navigation">
@@ -1118,7 +1243,7 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
 
       <section className="login-card" aria-label="Account login">
         <div className="login-card-header">
-          <div className="product-mark" aria-hidden="true">CP</div>
+          <div className="product-mark login-server-icon" aria-hidden="true"><MenuIcon name="server" /></div>
           <h1>Log in to ControlPanel</h1>
           <p>Manage hosting, domains, VPN services, add-ons, affiliate activity, and billing in one place.</p>
         </div>
@@ -1161,7 +1286,11 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
 }
 
 function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme }) {
-  const [activeSection, setActiveSection] = useState("hosting");
+  const initialSection = useMemo(() => {
+    const section = new URLSearchParams(window.location.search).get("section");
+    return sections.some((item) => item.id === section) || section === "new-order" || section === "helpdesk" ? section : "hosting";
+  }, []);
+  const [activeSection, setActiveSection] = useState(initialSection);
   const [dashboard, setDashboard] = useState(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
@@ -1173,6 +1302,7 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
     billingRenewals: null,
     balance: null
   });
+  const [helpdeskStatus, setHelpdeskStatus] = useState("unknown");
   const realHostingCount = dashboard?.hostingAccounts?.filter((account) => account.status === "Active").length;
   const renderedSections = sections.map((section) => {
     if (section.id === "hosting" && realHostingCount !== undefined) return { ...section, stat: String(realHostingCount) };
@@ -1183,7 +1313,7 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
     return section;
   });
   const activeTitle = useMemo(
-    () => renderedSections.find((section) => section.id === activeSection)?.label ?? "Hosting Plans",
+    () => activeSection === "helpdesk" ? "Helpdesk" : renderedSections.find((section) => section.id === activeSection)?.label ?? "Hosting Plans",
     [activeSection, renderedSections]
   );
   const browserDomain = useMemo(() => {
@@ -1192,6 +1322,7 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
     if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return "LocalHost";
     return hostname;
   }, []);
+  const sidebarBrandName = (dashboard?.customer?.brandDomain || "smarterasp.net").toUpperCase();
 
   async function loadDashboard() {
     setIsDashboardLoading(true);
@@ -1241,16 +1372,40 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
     });
   }
 
+  async function loadHelpdeskStatus() {
+    try {
+      const response = await fetch("/api/account/helpdesk");
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setHelpdeskStatus("unknown");
+        return;
+      }
+
+      const openTickets = result.dashboard?.openTickets ?? [];
+      const hasStaffReply = openTickets.some((ticket) => helpdeskStatusInfo(ticket).tone === "staff");
+      if (hasStaffReply) {
+        setHelpdeskStatus("staff");
+      } else if (openTickets.length) {
+        setHelpdeskStatus("pending");
+      } else {
+        setHelpdeskStatus("none");
+      }
+    } catch {
+      setHelpdeskStatus("unknown");
+    }
+  }
+
   useEffect(() => {
     loadDashboard();
     loadAccountStats();
+    loadHelpdeskStatus();
   }, []);
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [activeSection]);
 
-  const accountFunds = accountStats.balance === null ? "$179.92" : formatUsdFull(accountStats.balance);
+  const accountFunds = accountStats.balance === null ? "$0.00" : formatUsdFull(accountStats.balance);
   const headerAccountLogin = dashboard?.customer?.login ?? currentUser?.login ?? "";
   const headerCustomerId = dashboard?.customer?.customerId ?? currentUser?.customerId ?? "";
   const activeHostingPlanLabel = realHostingCount === undefined
@@ -1270,7 +1425,10 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
         </button>
         <div className="sidebar-top">
           <a className="brand project-brand" href="/panel">
-            <span className="brand-name">{browserDomain}</span>
+            <span className="brand-server-icon" aria-hidden="true">
+              <MenuIcon name="server" />
+            </span>
+            <span className="brand-name">{sidebarBrandName}</span>
           </a>
         </div>
         <nav className="side-nav" aria-label="Account panel sections">
@@ -1314,10 +1472,18 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
             <MenuIcon name="book" />
             <span>Knowledge Base</span>
           </a>
-          <a href="https://member3.smarterasp.net/account/helpdesk">
+          <button type="button" onClick={() => setActiveSection("helpdesk")}>
             <MenuIcon name="ticket" />
-            <span>Helpdesk</span>
-          </a>
+            <span>24/7 Helpdesk</span>
+            <span
+              aria-hidden="true"
+              className={[
+                "support-status-dot",
+                helpdeskStatus === "staff" ? "blue" : "",
+                helpdeskStatus === "pending" ? "red" : ""
+              ].filter(Boolean).join(" ")}
+            />
+          </button>
         </div>
         <div className="reward-card" aria-label="Account balance">
           <ProfileAvatar username={currentUser?.login ?? "Account"} />
@@ -1332,7 +1498,10 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
         <div className="workspace-header">
           <div>
             <p className="kicker">Your Account Panel</p>
-            <h1>{activeTitle}</h1>
+            <div className="workspace-title-row">
+              <h1>{activeTitle}</h1>
+              {activeSection === "affiliate" ? <span className="status-pill blue title-badge">Pays 60%</span> : null}
+            </div>
             {activeSection === "hosting" && activeHostingPlanLabel ? (
               <p className="workspace-title-meta">{activeHostingPlanLabel}</p>
             ) : null}
@@ -1349,6 +1518,7 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
         </div>
         <DashboardSection
           activeSection={activeSection}
+          currentUser={currentUser}
           dashboard={dashboard}
           dashboardError={dashboardError}
           isDashboardLoading={isDashboardLoading}
@@ -1668,7 +1838,7 @@ function ViewModeToggle({ viewMode, onChange, label }) {
 
 function isTemporaryHostingDomain(value) {
   const domain = String(value || "").toLowerCase();
-  return domain.includes("tempurl") || domain.includes("-site") || domain.includes(".site4now.net");
+  return domain.endsWith(".etempurl.com") || domain.includes("-site") && domain.endsWith(".etempurl.com") || domain.endsWith(".site4now.net");
 }
 
 async function createPanelTestActivity(cpId, payload) {
@@ -1767,7 +1937,7 @@ function HostingDashboard({ cpId }) {
             setSecurityDashboard(securityResult.dashboard);
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     } catch {
       setDashboardError("Unable to reach hosting dashboard service.");
     } finally {
@@ -1813,7 +1983,7 @@ function HostingDashboard({ cpId }) {
           <div>
             <span className="status-pill warning">Migration Notice</span>
             <h2>Recent Server Migration</h2>
-            <p>Your hosting account has recent migration activity. Repair actions are requires real gateway from the Files page before real migration queue writes are enabled.</p>
+            <p>Your hosting account has been migrated to the new server. The old server will be off soon. If you see any issues, please contact support.</p>
           </div>
           <div className="runtime-row-grid">
             {visibleMigrations.map((migration) => (
@@ -1923,7 +2093,7 @@ function HostingCpPlaceholder({ title }) {
 }
 
 function WebsitesSection({ cpId }) {
-  const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
+  const { reload: reloadActivity } = useHostingActivity(cpId);
   const sitesRequestId = useRef(0);
   const [siteRecords, setSiteRecords] = useState([]);
   const [viewMode, setViewMode] = useSectionViewMode("cp-websites", siteRecords.length);
@@ -1987,13 +2157,6 @@ function WebsitesSection({ cpId }) {
     setIsLoadingSites(true);
     loadHostingSites();
   }, [cpId]);
-
-  const websiteJobs = (activity?.jobs ?? []).filter((job) =>
-    job.server === "website-manager" ||
-    ["perm", "createpool", "changepool", "deploy", "nodejs"].includes(job.type) ||
-    String(job.from ?? "").toLowerCase().startsWith("site:") ||
-    String(job.from ?? "").toLowerCase().startsWith("website:")
-  );
 
   function updateSiteName(index, siteName) {
     setSiteRecords((currentSites) =>
@@ -2202,13 +2365,12 @@ function WebsitesSection({ cpId }) {
 
       <div className="panel-card website-live-summary">
         <div>
-          <span className="status-pill blue">Live websites</span>
-          <p>{sitesDashboard ? `${siteRecords.length} sites` : <LoadingIcon label="Loading hosting websites" />}</p>
+          <span className="status-pill blue">{isLoadingSites ? <LoadingIcon label="Loading hosting websites" /> : "Live websites"}</span>
+          <p>{sitesDashboard ? `${siteRecords.length} sites` : "Checking website list"}</p>
         </div>
         <RefreshButton onClick={refreshWebsitesSection} />
       </div>
 
-      {isLoadingSites && <LoadingState label="Loading websites" />}
       {websiteMessage && <p className="sandbox-message">{websiteMessage}</p>}
       {sitesError && (
         <div className="panel-card dashboard-error-panel">
@@ -2410,7 +2572,6 @@ function WebsitesSection({ cpId }) {
         />
       )}
 
-      <ActivityList jobs={websiteJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent website jobs" onRetry={reloadActivity} />
     </section>
   );
 }
@@ -2885,7 +3046,7 @@ function DatabasesSection({ cpId }) {
   const totals = databaseDashboard?.totals ?? { total: 0, mssql: 0, mysql: 0 };
   const databaseJobs = (activity?.jobs ?? []).filter((job) =>
     ["Queue MSSQL Backup", "Queue MSSQL Restore", "Queue MySQL Backup", "Queue MySQL Restore", "Run MSSQL File", "panel-test"].includes(job.type)
-      && (job.server === "database-manager" || job.type !== "panel-test")
+    && (job.server === "database-manager" || job.type !== "panel-test")
   );
 
   async function queueDatabaseTest(action, database = null, details = "") {
@@ -3480,10 +3641,13 @@ function DatabasesSection({ cpId }) {
 }
 
 function ThemeToggle({ theme, onToggleTheme }) {
+  const currentThemeLabel = theme === "dark" ? "Dark" : theme === "light" ? "Day" : "Classic";
+  const nextThemeLabel = theme === "dark" ? "Day" : theme === "light" ? "Classic" : "Dark";
   return (
     <button
-      aria-label={theme === "dark" ? "Switch to day mode" : "Switch to dark mode"}
+      aria-label={`Current mode: ${currentThemeLabel}. Switch to ${nextThemeLabel} mode`}
       className="theme-toggle"
+      title={`Current mode: ${currentThemeLabel}`}
       type="button"
       onClick={onToggleTheme}
     >
@@ -3493,13 +3657,18 @@ function ThemeToggle({ theme, onToggleTheme }) {
             <circle cx="12" cy="12" r="4" />
             <path d="M12 2.8v2.4M12 18.8v2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M2.8 12h2.4M18.8 12h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7" />
           </svg>
+        ) : theme === "light" ? (
+          <svg viewBox="0 0 24 24">
+            <path d="M4 18.5 10.2 5l3.6 7.8L16 9l4 9.5H4Z" />
+            <path d="M10.2 5 13 18.5M16 9l-1.1 9.5" />
+          </svg>
         ) : (
           <svg viewBox="0 0 24 24">
             <path d="M20.2 14.6A7.7 7.7 0 0 1 9.4 3.8 8.7 8.7 0 1 0 20.2 14.6Z" />
           </svg>
         )}
       </span>
-      <span>{theme === "dark" ? "Day" : "Dark"}</span>
+      <span>{currentThemeLabel}</span>
     </button>
   );
 }
@@ -4040,9 +4209,9 @@ function FtpSection({ cpId }) {
       };
       const result = editingFtpLogin
         ? await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(editingFtpLogin)}`, {
-            method: "PUT",
-            body: JSON.stringify(payload)
-          })
+          method: "PUT",
+          body: JSON.stringify(payload)
+        })
         : await provisionHosting("/api/hosting/ftp/users", cpId, payload);
       setFtpMessage(result.message);
       setEditingFtpLogin("");
@@ -4262,7 +4431,7 @@ function FilesSection({ cpId }) {
             setSecurityDashboard(securityResult.dashboard);
           }
         })
-        .catch(() => {});
+        .catch(() => { });
       fetch(hostingApiUrl("/api/hosting/files/agent-health", cpId))
         .then((response) => response.json().then((healthResult) => ({ response, healthResult })))
         .then(({ healthResult }) => setFileAgentHealth(healthResult))
@@ -5581,8 +5750,8 @@ function AdvanceSection({ cpId }) {
         <div className="database-total-grid">
           <div><span>Total Jobs</span><strong>{activity?.totals?.total ?? 0}</strong></div>
           <div><span>Pending</span><strong>{activity?.totals?.pending ?? 0}</strong></div>
-              <div><span>Running</span><strong>{activity?.totals?.running ?? 0}</strong></div>
-              <div><span>Errors</span><strong>{activity?.totals?.errors ?? 0}</strong></div>
+          <div><span>Running</span><strong>{activity?.totals?.running ?? 0}</strong></div>
+          <div><span>Errors</span><strong>{activity?.totals?.errors ?? 0}</strong></div>
         </div>
         <RefreshButton onClick={() => { reload(); loadRuntimeDashboard(); }} />
       </article>
@@ -6262,7 +6431,7 @@ function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServi
                   <th>Order Date</th>
                   <th>Status</th>
                   <th>Approver Email</th>
-                  <th>Action</th>
+                  <th className="domain-actions-header"><span className="sr-only">Action</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -6959,6 +7128,17 @@ function MenuIcon({ name }) {
         <rect x="5" y="5" width="11" height="11" rx="2" />
       </>
     ),
+    save: (
+      <>
+        <path d="M5 4h12l2 2v14H5Z" />
+        <path d="M8 4v6h8V4M8 20v-6h8v6" />
+      </>
+    ),
+    check: (
+      <>
+        <path d="m5 12 4 4 10-10" />
+      </>
+    ),
     edit: (
       <>
         <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" />
@@ -7448,14 +7628,15 @@ function RefreshButton({ onClick, label = "Refresh" }) {
   );
 }
 
-function DashboardSection({ activeSection, dashboard, dashboardError, isDashboardLoading, onChangeSection, onManageHosting, onReloadDashboard }) {
+function DashboardSection({ activeSection, currentUser, dashboard, dashboardError, isDashboardLoading, onChangeSection, onManageHosting, onReloadDashboard }) {
   if (activeSection === "domain") return <DomainSection />;
   if (activeSection === "vpn") return <VpnSection />;
   if (activeSection === "addon") return <AddonSection />;
   if (activeSection === "affiliate") return <AffiliateSection />;
-  if (activeSection === "billing") return <BillingSection onChangeSection={onChangeSection} />;
+  if (activeSection === "billing") return <BillingSection currentUser={currentUser} onChangeSection={onChangeSection} />;
   if (activeSection === "settings") return <SettingsSection />;
   if (activeSection === "new-order") return <NewOrderSection onChangeSection={onChangeSection} />;
+  if (activeSection === "helpdesk") return <HelpdeskSection />;
   return (
     <HostingSection
       dashboard={dashboard}
@@ -7479,21 +7660,14 @@ function NewOrderSection({ onChangeSection }) {
     { type: "dedicated", title: "Buy Dedicated Server", description: "Dedicated hardware servers", icon: "server", catalog: true },
     { type: "reseller", title: "Buy Reseller Account", description: "Resell hosting to your clients", icon: "share", catalog: true },
     { type: "domain-purchase", title: "Purchase New Domain", icon: "globe", section: "domain", description: "Search and register a new domain name." },
-    { type: "domain-transfer", title: "Transfer an Existing Domain", icon: "globe", description: "Move an existing domain to this account." }
+    { type: "domain-transfer", title: "Transfer an Existing Domain", icon: "globe", section: "domain", description: "Move an existing domain to this account." }
   ];
   const [activeType, setActiveType] = useState("hosting");
   const [catalog, setCatalog] = useState(null);
   const [selectedPrices, setSelectedPrices] = useState({});
-  const [startedPurchase, setStartedPurchase] = useState(null);
-  const [recommendedSelections, setRecommendedSelections] = useState({});
-  const [includeRecommended, setIncludeRecommended] = useState(true);
-  const [checkoutOrder, setCheckoutOrder] = useState(null);
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [busyProductId, setBusyProductId] = useState(null);
-  const [transferDomain, setTransferDomain] = useState("");
-  const [transferWhois, setTransferWhois] = useState(false);
-  const [isTransferBusy, setIsTransferBusy] = useState(false);
 
   const activeOption = orderOptions.find((option) => option.type === activeType) ?? orderOptions[0];
 
@@ -7501,8 +7675,6 @@ function NewOrderSection({ onChangeSection }) {
     let ignore = false;
     const option = orderOptions.find((item) => item.type === activeType);
     setCatalog(null);
-    setStartedPurchase(null);
-    setCheckoutOrder(null);
     setMessage("");
 
     if (!option?.catalog) {
@@ -7558,7 +7730,6 @@ function NewOrderSection({ onChangeSection }) {
 
     setBusyProductId(product.productId);
     setMessage("");
-    setCheckoutOrder(null);
 
     try {
       const response = await fetch("/api/account/new-purchase/start", {
@@ -7577,86 +7748,17 @@ function NewOrderSection({ onChangeSection }) {
         return;
       }
 
-      setStartedPurchase(result.purchase);
-      setIncludeRecommended((result.purchase?.recommendedProducts ?? []).length > 0);
-      setMessage(result.purchase?.recommendedProducts?.length ? "Recommended features loaded." : "Purchase is ready for checkout.");
+      if (goToCheckoutOrder(result.purchase?.order)) return;
+      if (result.purchase?.orderGuid) {
+        window.location.href = `/checkout?guid=${encodeURIComponent(result.purchase.orderGuid)}`;
+        return;
+      }
+
+      setMessage("Purchase is ready for checkout.");
     } catch {
       setMessage("Unable to reach checkout service.");
     } finally {
       setBusyProductId(null);
-    }
-  }
-
-  function selectedRecommendedPrice(product) {
-    const selectedPriceId = recommendedSelections[product.productId];
-    return product.prices?.find((price) => price.priceId === selectedPriceId) ?? product.prices?.[0] ?? null;
-  }
-
-  async function completeNewPurchase() {
-    if (!startedPurchase?.orderGuid) {
-      setMessage("Start a purchase first.");
-      return;
-    }
-
-    const recommendedProduct = startedPurchase.recommendedProducts?.[0] ?? null;
-    const recommendedPrice = recommendedProduct ? selectedRecommendedPrice(recommendedProduct) : null;
-
-    setBusyProductId(startedPurchase.product?.productId ?? "checkout");
-    setMessage("");
-    try {
-      const response = await fetch("/api/account/new-purchase/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderGuid: startedPurchase.orderGuid,
-          branch: startedPurchase.recommendedBranch,
-          includeRecommended: includeRecommended && !!recommendedProduct,
-          recommendedProductId: recommendedProduct?.productId ?? 0,
-          recommendedPriceId: recommendedPrice?.priceId ?? 0
-        })
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !result?.success) {
-        setMessage(result?.message ?? "Unable to complete new purchase.");
-        return;
-      }
-
-      setCheckoutOrder(result.order);
-      setMessage("New purchase is ready for checkout.");
-    } catch {
-      setMessage("Unable to reach new purchase checkout service.");
-    } finally {
-      setBusyProductId(null);
-    }
-  }
-
-  async function createTransferCheckout() {
-    setIsTransferBusy(true);
-    setMessage("");
-    setCheckoutOrder(null);
-
-    try {
-      const response = await fetch("/api/account/new-orders/domain-transfer/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          domainName: transferDomain,
-          whoisPrivacy: transferWhois
-        })
-      });
-      const result = await response.json().catch(() => null);
-
-      if (!response.ok || !result?.success) {
-        setMessage(result?.message ?? "Unable to create transfer checkout.");
-        return;
-      }
-
-      setCheckoutOrder(result.order);
-      setMessage("Domain transfer checkout created.");
-    } catch {
-      setMessage("Unable to reach domain transfer checkout.");
-    } finally {
-      setIsTransferBusy(false);
     }
   }
 
@@ -7670,23 +7772,23 @@ function NewOrderSection({ onChangeSection }) {
 
       <div className="new-order-workspace">
         <nav className="new-order-list" aria-label="New order options">
-        {orderOptions.map((option) => (
-          <button
-            className={`new-order-card ${activeType === option.type ? "active" : ""}`}
-            key={option.title}
-            type="button"
-            onClick={() => selectOption(option)}
-          >
-            <span className="new-order-icon"><MenuIcon name={option.icon} /></span>
-            <span className="new-order-card-copy">
-              <span>
-                {option.title}
-                {option.badge && <em>{option.badge}</em>}
+          {orderOptions.map((option) => (
+            <button
+              className={`new-order-card ${activeType === option.type ? "active" : ""}`}
+              key={option.title}
+              type="button"
+              onClick={() => selectOption(option)}
+            >
+              <span className="new-order-icon"><MenuIcon name={option.icon} /></span>
+              <span className="new-order-card-copy">
+                <span>
+                  {option.title}
+                  {option.badge && <em>{option.badge}</em>}
+                </span>
+                <small>{option.description}</small>
               </span>
-              <small>{option.description}</small>
-            </span>
-          </button>
-        ))}
+            </button>
+          ))}
         </nav>
 
         <article className="panel-card new-order-detail">
@@ -7695,7 +7797,6 @@ function NewOrderSection({ onChangeSection }) {
               <span className="eyebrow">New Purchase</span>
               <h2>{activeOption.title}</h2>
               <p>{catalog?.description ?? activeOption.description ?? "Modern account panel order flow."}</p>
-              {catalog?.tracePath && <p className="legacy-trace-note">{catalog.tracePath}</p>}
             </div>
           </div>
 
@@ -7706,28 +7807,6 @@ function NewOrderSection({ onChangeSection }) {
             </div>
           )}
 
-          {activeType === "domain-transfer" && (
-            <div className="new-order-empty">
-              <p>Enter a domain to transfer. Pricing comes from the same TLD product price table used by the old transfer page.</p>
-              <div className="new-order-transfer-row">
-                <input
-                  type="text"
-                  placeholder="example.com"
-                  aria-label="Domain to transfer"
-                  value={transferDomain}
-                  onChange={(event) => setTransferDomain(event.target.value)}
-                />
-                <button className="primary-button compact" type="button" disabled={isTransferBusy} onClick={createTransferCheckout}>
-                  {isTransferBusy ? <LoadingIcon label="Creating checkout" /> : "Create Checkout"}
-                </button>
-              </div>
-              <label className="new-order-checkbox">
-                <input type="checkbox" checked={transferWhois} onChange={(event) => setTransferWhois(event.target.checked)} />
-                <span>Add Whois Privacy (+$8)</span>
-              </label>
-            </div>
-          )}
-
           {activeOption.catalog && (
             <>
               {isLoading && <LoadingState label="Loading live catalog" />}
@@ -7735,7 +7814,7 @@ function NewOrderSection({ onChangeSection }) {
               {!isLoading && !message && catalog?.products?.length === 0 && (
                 <p className="inline-status">No active products were found for this legacy catalog.</p>
               )}
-              {!startedPurchase && <div className="new-order-products">
+              <div className="new-order-products">
                 {(catalog?.products ?? []).map((product) => {
                   const selectedPrice = selectedPriceFor(product);
                   return (
@@ -7772,77 +7851,9 @@ function NewOrderSection({ onChangeSection }) {
                     </article>
                   );
                 })}
-              </div>}
-
-              {startedPurchase && (
-                <div className="new-purchase-recommended">
-                  <article className="new-order-product selected">
-                    <div>
-                      <span className="status-pill blue">Step 1 complete</span>
-                      <h3>{startedPurchase.product.name}</h3>
-                      <p>{formatPaymentTerm(startedPurchase.price.paymentTerm)} - {formatMoney(startedPurchase.price.amount, startedPurchase.price.currency)}</p>
-                    </div>
-                    <span className="status-pill muted">{startedPurchase.sourceLegacyPath}</span>
-                  </article>
-
-                  {!!startedPurchase.recommendedProducts?.length && (
-                    <article className="new-order-product recommended">
-                      <div>
-                        <span className="status-pill order-pill">Recommended Features</span>
-                        <h3>{startedPurchase.recommendedProducts[0].name}</h3>
-                        <p>{startedPurchase.recommendedProducts[0].description}</p>
-                        <small>{startedPurchase.recommendedLegacyPath}</small>
-                      </div>
-                      <div className="new-order-product-actions">
-                        <label className="new-order-checkbox">
-                          <input type="checkbox" checked={includeRecommended} onChange={(event) => setIncludeRecommended(event.target.checked)} />
-                          <span>Add to this order</span>
-                        </label>
-                        <select
-                          aria-label={`${startedPurchase.recommendedProducts[0].name} billing term`}
-                          value={selectedRecommendedPrice(startedPurchase.recommendedProducts[0])?.priceId ?? ""}
-                          disabled={!includeRecommended}
-                          onChange={(event) => setRecommendedSelections((current) => ({
-                            ...current,
-                            [startedPurchase.recommendedProducts[0].productId]: Number(event.target.value)
-                          }))}
-                        >
-                          {(startedPurchase.recommendedProducts[0].prices ?? []).map((price) => (
-                            <option key={price.priceId} value={price.priceId}>
-                              {formatPaymentTerm(price.paymentTerm)} - {formatMoney(price.amount, price.currency)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </article>
-                  )}
-
-                  {!startedPurchase.recommendedProducts?.length && (
-                    <p className="inline-status">This purchase type does not use the recommended backup step in the old flow.</p>
-                  )}
-
-                  <div className="checkout-ready-row new-order-checkout">
-                    <span>{startedPurchase.orderGuid}</span>
-                    <button className="primary-button compact" type="button" disabled={busyProductId !== null} onClick={completeNewPurchase}>
-                      {busyProductId !== null ? <LoadingIcon label="Preparing checkout" /> : "Continue to Checkout"}
-                    </button>
-                    <button className="secondary-button compact" type="button" onClick={() => {
-                      setStartedPurchase(null);
-                      setCheckoutOrder(null);
-                      setMessage("");
-                    }}>Choose Different Product</button>
-                  </div>
-                </div>
-              )}
+              </div>
 
             </>
-          )}
-
-          {checkoutOrder && (
-            <aside className="checkout-ready-row new-order-checkout">
-              <span>{checkoutOrder.guid}</span>
-              <a className="primary-button compact as-link" href={checkoutOrder.checkoutUrl}>Open Checkout</a>
-            </aside>
           )}
         </article>
       </div>
@@ -8006,9 +8017,7 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
 
       setUpgradeOrder(result.order);
       setUpgradeMessage("Upgrade checkout order created.");
-      if (result.order?.checkoutUrl) {
-        window.location.href = result.order.checkoutUrl;
-      }
+      goToCheckoutOrder(result.order);
     } catch {
       setUpgradeMessage("Unable to reach hosting upgrade checkout.");
     } finally {
@@ -8061,7 +8070,6 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
             <span>{isDashboardLoading ? <LoadingIcon label="Loading urgent notices" /> : `${urgentLogs.length} items`}</span>
           </div>
           <div className="urgent-list">
-            {isDashboardLoading && <LoadingState label="Loading urgent notices" />}
             {!isDashboardLoading && urgentLogs.map((log) => (
               <article className="urgent-item" key={log.id}>
                 <div>
@@ -8200,7 +8208,6 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
             <span>{isDashboardLoading ? <LoadingIcon label="Loading renewal notices" /> : `${notices.length} items`}</span>
           </div>
           <div className="renewal-list">
-            {isDashboardLoading && <LoadingState label="Loading renewal notices" />}
             {notices.map((notice) => (
               <article className="renewal-item" key={notice.name}>
                 <div>
@@ -8235,59 +8242,57 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
       </div>
 
       {(viewMode === "cards" || isDashboardLoading || !accounts.length) && (
-      <div className="card-grid">
-        {isDashboardLoading && (
-          <article className="service-card">
-            <span className="status-pill blue"><LoadingIcon label="Loading hosting plans" /></span>
-            <h2><LoadingIcon label="Loading hosting plans" /></h2>
-            <p>Pulling your hosting accounts from ehbconfig.</p>
-          </article>
-        )}
-        {!isDashboardLoading && !accounts.length && (
-          <article className="service-card">
-            <span className="status-pill blue">Empty</span>
-            <h2>No active hosting plans found</h2>
-            <p>This account has no visible hosting plans in cp_config.</p>
-          </article>
-        )}
-        {accounts.map((account) => (
-          <article className="service-card" key={account.cpId}>
-            <div>
-              <span className={account.status === "Active" ? "status-pill" : "status-pill muted"}>{account.status}</span>
-              <h2>{account.cpLogin}</h2>
-              <p className="hosting-card-domains" title={planDomainList(account)}>
-                <span>{planCardDomainList(account)}</span>
-                {planDomainCount(account) > 0 ? <span className="domain-count-badge">{planDomainCount(account)}+</span> : null}
-              </p>
-            </div>
-            <dl className="card-meta">
-              <div><dt>Renewal</dt><dd>{formatDate(account.renewalDate)}</dd></div>
-              <div><dt>Plan</dt><dd>{account.webHostType}</dd></div>
-              <div><dt>Total Sites</dt><dd>{account.totalSites}</dd></div>
-              <div><dt>Server</dt><dd>{account.serverId}</dd></div>
-            </dl>
-            <div className="hosting-card-actions">
-              <button className="primary-button hosting-manage-button" type="button" onClick={onManageHosting}>
-                <MenuIcon name="rocket" /> Manage
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={!account.clientProductId || renewalBusyId !== null}
-                onClick={() => loadHostingRenewalPreview({
-                  clientProductId: account.clientProductId,
-                  name: account.cpLogin
-                })}
-              >
-                {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <><MenuIcon name="order" /> Renew</>}
-              </button>
-              <button className="secondary-button" type="button" onClick={() => openHostingUpgrade(account)}>
-                <MenuIcon name="arrow-up" /> Upgrade
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
+        <div className="card-grid">
+          {isDashboardLoading && (
+            <article className="service-card">
+              <span className="status-pill blue"><LoadingIcon label="Loading hosting plans" /></span>
+            </article>
+          )}
+          {!isDashboardLoading && !accounts.length && (
+            <article className="service-card">
+              <span className="status-pill blue">Empty</span>
+              <h2>No active hosting plans found</h2>
+              <p>This account has no visible hosting plans in cp_config.</p>
+            </article>
+          )}
+          {accounts.map((account) => (
+            <article className="service-card" key={account.cpId}>
+              <div>
+                <span className={account.status === "Active" ? "status-pill" : "status-pill muted"}>{account.status}</span>
+                <h2>{account.cpLogin}</h2>
+                <p className="hosting-card-domains" title={planDomainList(account)}>
+                  <span>{planCardDomainList(account)}</span>
+                  {planDomainCount(account) > 0 ? <span className="domain-count-badge">{planDomainCount(account)}+</span> : null}
+                </p>
+              </div>
+              <dl className="card-meta">
+                <div><dt>Renewal</dt><dd>{formatDate(account.renewalDate)}</dd></div>
+                <div><dt>Plan</dt><dd>{account.webHostType}</dd></div>
+                <div><dt>Total Sites</dt><dd>{account.totalSites}</dd></div>
+                <div><dt>Server</dt><dd>{account.serverId}</dd></div>
+              </dl>
+              <div className="hosting-card-actions">
+                <button className="primary-button hosting-manage-button" type="button" onClick={onManageHosting}>
+                  <MenuIcon name="rocket" /> Manage
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!account.clientProductId || renewalBusyId !== null}
+                  onClick={() => loadHostingRenewalPreview({
+                    clientProductId: account.clientProductId,
+                    name: account.cpLogin
+                  })}
+                >
+                  {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <><MenuIcon name="order" /> Renew</>}
+                </button>
+                <button className="secondary-button" type="button" onClick={() => openHostingUpgrade(account)}>
+                  <MenuIcon name="arrow-up" /> Upgrade
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
       )}
 
       {!!accounts.length && viewMode === "table" && (
@@ -8419,8 +8424,17 @@ function toCheckoutPreview(order, itemCount = 1) {
   };
 }
 
+function goToCheckoutOrder(order) {
+  if (order?.checkoutUrl) {
+    window.location.href = order.checkoutUrl;
+    return true;
+  }
+
+  return false;
+}
+
 const domainRegistrarActionDefaults = {
-  nameservers: "NS1.SITE4NOW.NET, NS2.SITE4NOW.NET",
+  nameservers: "NS1.SITE4NOW.NET, NS2.SITE4NOW.NET, NS3.SITE4NOW.NET",
   contact: [
     "first_name=Open",
     "last_name=Reward",
@@ -8449,6 +8463,196 @@ const domainRegistrarActionDefaults = {
   dns: "A @ 208.98.35.146\nCNAME www sample.com\nMX @ mail.sample.com 10\nTXT @ v=spf1 a mx include:_spf.site4now.net -all"
 };
 
+function DnsManagementPage({ domain, manager, isLoading, message, recordsPreview, busy, draft, onDraftChange, onBack, onReload, onSubmitAction }) {
+  const recordTypes = ["A", "AAAA", "CNAME", "MX", "TXT", "SRV"];
+  const dnsServers = manager?.dnsServers?.length ? manager.dnsServers : ["NS1.SITE4NOW.NET", "NS2.SITE4NOW.NET", "NS3.SITE4NOW.NET"];
+  const rows = recordsPreview?.length ? recordsPreview : manager?.records ?? [];
+  const example = dnsRecordExample(draft.recordType === "TXT" ? "SPF/TXT" : draft.recordType);
+  const [editingRecordIndex, setEditingRecordIndex] = useState(null);
+  const [editingRecordDraft, setEditingRecordDraft] = useState(null);
+
+  function updateDraft(field, value) {
+    onDraftChange((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event, action) {
+    event.preventDefault();
+    onSubmitAction(action);
+  }
+
+  function beginEditRecord(record, index) {
+    setEditingRecordIndex(index);
+    setEditingRecordDraft({
+      recordType: record.type || "A",
+      name: record.name || "@",
+      value: record.value || "",
+      ttl: String(record.ttl || 300),
+      priority: String(record.priority ?? 10),
+      weight: String(record.weight ?? 1),
+      port: String(record.port ?? 443)
+    });
+  }
+
+  function updateEditingRecord(field, value) {
+    setEditingRecordDraft((current) => ({ ...(current ?? {}), [field]: value }));
+  }
+
+  function saveEditingRecord() {
+    if (editingRecordIndex == null || !editingRecordDraft) return;
+    onSubmitAction("edit", rows[editingRecordIndex]?.index ?? editingRecordIndex, editingRecordDraft);
+    setEditingRecordIndex(null);
+    setEditingRecordDraft(null);
+  }
+
+  function renderDnsEditableCell(record, index, field, label) {
+    const isEditing = editingRecordIndex === index;
+    if (isEditing && editingRecordDraft) {
+      if (field === "recordType") {
+        return (
+          <select
+            aria-label={label}
+            className="dns-record-inline-control"
+            value={editingRecordDraft.recordType}
+            onChange={(event) => updateEditingRecord("recordType", event.target.value)}
+          >
+            {recordTypes.map((type) => <option key={type} value={type}>{type === "TXT" ? "SPF/TXT" : type}</option>)}
+          </select>
+        );
+      }
+
+      return (
+        <input
+          aria-label={label}
+          className="dns-record-inline-control"
+          type={field === "ttl" ? "number" : "text"}
+          min={field === "ttl" ? "300" : undefined}
+          max={field === "ttl" ? "86400" : undefined}
+          value={editingRecordDraft[field] ?? ""}
+          onChange={(event) => updateEditingRecord(field, event.target.value)}
+        />
+      );
+    }
+
+    const value = field === "recordType" ? record.type : field === "ttl" ? `${record.ttl}s` : record[field];
+    return (
+      <button
+        className={field === "recordType" ? "dns-record-click-cell domain-dns-type" : "dns-record-click-cell"}
+        type="button"
+        title={`Edit ${label}`}
+        onClick={() => beginEditRecord(record, index)}
+      >
+        {value || "-"}
+      </button>
+    );
+  }
+
+  return (
+    <aside className="domain-settings-page dns-management-page">
+      <div className="domain-settings-header">
+        <button className="secondary-button compact" type="button" onClick={onBack}>
+          <MenuIcon name="back" />
+          Back to Domains
+        </button>
+        <div className="dns-page-actions">
+          <RefreshButton onClick={onReload} />
+        </div>
+      </div>
+      <div className="database-card-header dns-manager-title">
+        <div>
+          <span className="status-pill blue">DNS Manager</span>
+          <h3>{domain?.domainName ?? manager?.domainName}</h3>
+          <p>Manage DNS records using the same A, AAAA, CNAME, MX, SPF/TXT, and SRV.</p>
+        </div>
+      </div>
+
+      <section className="dns-server-strip" aria-label="DNS servers">
+        {dnsServers.map((server) => (
+          <span key={server}>{server}</span>
+        ))}
+      </section>
+
+      {isLoading && <LoadingState label="Loading DNS manager" />}
+      {message && <p className="renewal-action-message">{message}</p>}
+
+      <article className="panel-card dns-record-draft-card flush-card">
+        <form className="advance-inline-form dns-management-form" onSubmit={(event) => submit(event, "add")}>
+          <div className="dns-add-edit-badge-cell">
+            <span className="status-pill muted">Add / Edit Record</span>
+          </div>
+          <label>
+            Type
+            <select value={draft.recordType} onChange={(event) => updateDraft("recordType", event.target.value)}>
+              {recordTypes.map((type) => <option key={type} value={type}>{type === "TXT" ? "SPF/TXT" : type}</option>)}
+            </select>
+          </label>
+          <label>
+            Name
+            <input value={draft.name} placeholder={draft.recordType === "MX" ? "@" : "blog"} onChange={(event) => updateDraft("name", event.target.value)} />
+          </label>
+          <label>
+            Address
+            <input value={draft.value} placeholder={draft.recordType === "A" ? "123.123.123.123" : "target.example.com"} onChange={(event) => updateDraft("value", event.target.value)} />
+          </label>
+          {["MX", "SRV"].includes(draft.recordType) && (
+            <label>
+              Priority
+              <input type="number" min="0" max="100" value={draft.priority} onChange={(event) => updateDraft("priority", event.target.value)} />
+            </label>
+          )}
+          {draft.recordType === "SRV" && (
+            <>
+              <label>
+                Weight
+                <input type="number" min="0" max="100" value={draft.weight} onChange={(event) => updateDraft("weight", event.target.value)} />
+              </label>
+              <label>
+                Port
+                <input type="number" min="1" max="65535" value={draft.port} onChange={(event) => updateDraft("port", event.target.value)} />
+              </label>
+            </>
+          )}
+          <label>
+            TTL
+            <input type="number" min="300" max="86400" value={draft.ttl} onChange={(event) => updateDraft("ttl", event.target.value)} />
+          </label>
+          <button className="primary-button compact" type="submit" disabled={busy}>
+            {busy ? <LoadingIcon label="Adding DNS record" /> : "Add Record"}
+          </button>
+        </form>
+        <div className="dns-example-panel">
+          <span className="status-pill muted">Example</span>
+          <p>{example}</p>
+        </div>
+      </article>
+
+      <div className="domain-dns-preview">
+        <span>DNS Records</span>
+        <div className="domain-dns-preview-grid">
+          {rows.map((record, index) => (
+            <div className="domain-dns-preview-row dns-manager-row" key={`${record.type}-${record.name}-${record.value}-${index}`}>
+              <span>{renderDnsEditableCell(record, index, "recordType", "Type")}</span>
+              <span>{renderDnsEditableCell(record, index, "name", "Name")}</span>
+              <span>{renderDnsEditableCell(record, index, "value", "Address")}</span>
+              <span>{record.priority ?? "-"}</span>
+              <span>{renderDnsEditableCell(record, index, "ttl", "TTL")}</span>
+              <button
+                aria-label={editingRecordIndex === index ? `Save ${record.type} ${record.name}` : `Delete ${record.type} ${record.name}`}
+                className="secondary-button compact icon-only"
+                disabled={busy}
+                title={editingRecordIndex === index ? "Save" : "Delete"}
+                type="button"
+                onClick={() => editingRecordIndex === index ? saveEditingRecord() : onSubmitAction("delete", record.index ?? index)}
+              >
+                <MenuIcon name={editingRecordIndex === index ? "save" : "trash"} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 function DomainSection() {
   const [accountDomains, setAccountDomains] = useState([]);
   const [domainSearch, setDomainSearch] = useState("");
@@ -8461,7 +8665,6 @@ function DomainSection() {
   const [domainCheckoutPreview, setDomainCheckoutPreview] = useState(null);
   const [domainCheckoutMessage, setDomainCheckoutMessage] = useState("");
   const [domainTransferName, setDomainTransferName] = useState("");
-  const [domainTransferWhois, setDomainTransferWhois] = useState(false);
   const [domainTransferPreview, setDomainTransferPreview] = useState(null);
   const [domainTransferMessage, setDomainTransferMessage] = useState("");
   const [isDomainTransferBusy, setIsDomainTransferBusy] = useState(false);
@@ -8475,14 +8678,36 @@ function DomainSection() {
   const [domainPanelView, setDomainPanelView] = useState("list");
   const [domainServiceStatus, setDomainServiceStatus] = useState(null);
   const [domainRenewalPreview, setDomainRenewalPreview] = useState(null);
+  const [domainRenewalCheckoutPreview, setDomainRenewalCheckoutPreview] = useState(null);
+  const [domainPrivacyCheckoutPreview, setDomainPrivacyCheckoutPreview] = useState(null);
   const [domainActionMessage, setDomainActionMessage] = useState("");
+  const [domainAuthCodeMessage, setDomainAuthCodeMessage] = useState("");
+  const [domainActionUrl, setDomainActionUrl] = useState("");
+  const [domainActionDomainId, setDomainActionDomainId] = useState(null);
   const [domainDnsPreview, setDomainDnsPreview] = useState([]);
+  const [domainDnsManager, setDomainDnsManager] = useState(null);
+  const [domainDnsMessage, setDomainDnsMessage] = useState("");
+  const [isDomainDnsLoading, setIsDomainDnsLoading] = useState(false);
+  const [domainDnsDraft, setDomainDnsDraft] = useState({
+    recordType: "A",
+    name: "@",
+    value: "208.98.35.146",
+    ttl: "300",
+    priority: "10",
+    weight: "1",
+    port: "443"
+  });
   const [isDomainActionBusy, setIsDomainActionBusy] = useState(false);
   const [domainPrivacyOverrides, setDomainPrivacyOverrides] = useState({});
+  const [domainLockOverrides, setDomainLockOverrides] = useState({});
+  const [activeDomainContactTab, setActiveDomainContactTab] = useState("registrant");
   const [domainRegistrarForm, setDomainRegistrarForm] = useState({
     action: "nameservers",
     value: domainRegistrarActionDefaults.nameservers
   });
+  const [isEditingNameservers, setIsEditingNameservers] = useState(false);
+  const [nameserverDraft, setNameserverDraft] = useState(() => parseNameserverText(domainRegistrarActionDefaults.nameservers));
+  const [nameserverSaveState, setNameserverSaveState] = useState({ state: "idle", message: "" });
   const [isLoadingDomains, setIsLoadingDomains] = useState(true);
   const [domainError, setDomainError] = useState("");
 
@@ -8531,6 +8756,14 @@ function DomainSection() {
           return;
         }
         setSelectedDomainProfile(result.profile);
+        setIsEditingNameservers(false);
+        setNameserverDraft(parseNameserverText(result.profile?.nameservers?.join(", ") || domainRegistrarActionDefaults.nameservers));
+        setNameserverSaveState({ state: "idle", message: "" });
+        setActiveDomainContactTab("registrant");
+        setDomainRegistrarForm({
+          action: "contact",
+          value: contactValueFromProfile(result.profile?.registrant)
+        });
       } catch {
         if (isCurrent) {
           setSelectedDomainProfile(null);
@@ -8663,6 +8896,7 @@ function DomainSection() {
         return;
       }
 
+      if (goToCheckoutOrder(result.order)) return;
       setDomainCheckoutPreview(toCheckoutPreview(result.order, domainCart.length));
       setDomainCheckoutMessage(result.message);
     } catch {
@@ -8683,8 +8917,7 @@ function DomainSection() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          domainName: domainTransferName,
-          whoisPrivacy: domainTransferWhois
+          domainName: domainTransferName
         })
       });
       const result = await response.json().catch(() => null);
@@ -8693,6 +8926,7 @@ function DomainSection() {
         return;
       }
 
+      if (goToCheckoutOrder(result.order)) return;
       setDomainTransferPreview(toCheckoutPreview(result.order, 1));
       setDomainTransferMessage(result.message);
     } catch {
@@ -8703,21 +8937,25 @@ function DomainSection() {
   }
 
   async function renewSelectedDomain(domain = selectedDomain) {
-    if (!domain?.clientProductId) return;
+    if (!domain?.id) return;
     setSelectedDomain(domain);
+    setDomainActionDomainId(domain.id);
     setIsDomainActionBusy(true);
     setDomainActionMessage("");
+    setDomainActionUrl("");
     setDomainRenewalPreview(null);
+    setDomainRenewalCheckoutPreview(null);
 
     try {
-      const response = await fetch(`/api/account/renewals/${domain.clientProductId}/renew`, { method: "POST" });
+      const response = await fetch(`/api/account/domains/${domain.id}/renew-checkout`, { method: "POST" });
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.success) {
         setDomainActionMessage(result?.message ?? "Unable to prepare domain renewal.");
         return;
       }
 
-      setDomainRenewalPreview(result.renewal);
+      if (goToCheckoutOrder(result.order)) return;
+      setDomainRenewalCheckoutPreview(toCheckoutPreview(result.order, 1));
       setDomainActionMessage(result.message);
     } catch {
       setDomainActionMessage("Unable to reach domain renewal service.");
@@ -8728,43 +8966,101 @@ function DomainSection() {
 
   function openDomainSettings(domain) {
     setSelectedDomain(domain);
+    setDomainActionDomainId(null);
     setDomainPanelView("settings");
+    setActiveDomainContactTab("registrant");
     setDomainActionMessage("");
+    setDomainAuthCodeMessage("");
     setDomainDnsPreview([]);
     setDomainRegistrarForm({
-      action: "nameservers",
-      value: domainRegistrarActionDefaults.nameservers
+      action: "contact",
+      value: domainRegistrarActionDefaults.contact
     });
   }
 
   function openDomainDnsManager(domain) {
     setSelectedDomain(domain);
-    setDomainPanelView("settings");
+    setDomainActionDomainId(null);
+    setDomainPanelView("dns");
     setDomainActionMessage("");
+    setDomainAuthCodeMessage("");
     setDomainDnsPreview([]);
-    setDomainRegistrarForm({
-      action: "dns",
-      value: [
-        "A @ 208.98.35.146",
-        `CNAME www ${domain.domainName}`,
-        `MX @ mail.${domain.domainName} 10`,
-        "TXT @ v=spf1 a mx include:_spf.site4now.net -all"
-      ].join("\n")
-    });
+    setDomainDnsMessage("");
+    setDomainDnsDraft((draft) => ({
+      ...draft,
+      recordType: "A",
+      name: "@",
+      value: "208.98.35.146",
+      ttl: "300"
+    }));
+    loadDomainDnsManager(domain.id);
+  }
+
+  async function loadDomainDnsManager(domainId = selectedDomain?.id) {
+    if (!domainId) return;
+    setIsDomainDnsLoading(true);
+    setDomainDnsMessage("");
+    try {
+      const response = await fetch(`/api/account/domains/${domainId}/dns`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setDomainDnsManager(null);
+        setDomainDnsMessage(result?.message ?? "Unable to load DNS manager.");
+        return;
+      }
+
+      setDomainDnsManager(result.manager);
+    } catch {
+      setDomainDnsMessage("Unable to reach DNS manager service.");
+    } finally {
+      setIsDomainDnsLoading(false);
+    }
+  }
+
+  async function submitDomainDnsAction(action, recordIndex = null, recordDraft = null) {
+    if (!selectedDomain?.id) return;
+    const dnsActionDraft = recordDraft ?? domainDnsDraft;
+    setIsDomainActionBusy(true);
+    setDomainDnsMessage("");
+    try {
+      const response = await fetch(`/api/account/domains/${selectedDomain.id}/dns/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          recordType: dnsActionDraft.recordType,
+          name: dnsActionDraft.name,
+          value: dnsActionDraft.value,
+          ttl: Number(dnsActionDraft.ttl) || 300,
+          priority: Number(dnsActionDraft.priority) || 10,
+          weight: Number(dnsActionDraft.weight) || 1,
+          port: Number(dnsActionDraft.port) || 443,
+          recordIndex
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setDomainDnsMessage(result?.message ?? "Unable to run DNS action.");
+      if (!response.ok || !result?.success) {
+        return;
+      }
+
+      setDomainDnsPreview([]);
+      setDomainDnsManager((current) => current ? { ...current, records: result.records ?? [] } : current);
+    } catch {
+      setDomainDnsMessage("Unable to reach DNS action service.");
+    } finally {
+      setIsDomainActionBusy(false);
+    }
   }
 
   async function toggleDomainPrivacy(domain, enabled) {
     if (!domain?.id || !domain.whoisPrivacySupported) return;
-    if (!domain.whoisPrivacyPurchased && enabled) {
-      setSelectedDomain(domain);
-      setDomainPanelView("settings");
-      setDomainActionMessage(`Whois Privacy is supported for this domain, but the privacy add-on must be purchased before it can be enabled. Legacy path: /account/addon_purchase_domain_privacy?profileid=${domain.registerInfoId}`);
-      return;
-    }
 
     setSelectedDomain(domain);
+    setDomainActionDomainId(domain.id);
     setIsDomainActionBusy(true);
     setDomainActionMessage("");
+    setDomainActionUrl("");
     try {
       const response = await fetch(`/api/account/domains/${domain.id}/registrar-action`, {
         method: "POST",
@@ -8773,12 +9069,60 @@ function DomainSection() {
       });
       const result = await response.json().catch(() => null);
       setDomainActionMessage(result?.message ?? "Unable to update Whois Privacy.");
-      if (response.ok && result?.success) {
+      setDomainActionUrl(result?.actionUrl ?? "");
+      if (result?.success) {
         setDomainPrivacyOverrides((current) => ({ ...current, [domain.id]: enabled }));
         await loadAccountDomains();
       }
     } catch {
       setDomainActionMessage("Unable to reach Whois Privacy service.");
+    } finally {
+      setIsDomainActionBusy(false);
+    }
+  }
+
+  async function toggleDomainLock(domain, locked) {
+    if (!domain?.id || domain.status !== "completed") return;
+
+    setSelectedDomain(domain);
+    setIsDomainActionBusy(true);
+    setDomainActionMessage("");
+    setDomainActionUrl("");
+    try {
+      const response = await fetch(`/api/account/domains/${domain.id}/registrar-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: locked ? "lock" : "unlock", value: "" })
+      });
+      const result = await response.json().catch(() => null);
+      setDomainActionMessage(result?.message ?? "Unable to update Domain Lock.");
+      if (result?.success) {
+        setDomainLockOverrides((current) => ({ ...current, [domain.id]: locked }));
+      }
+    } catch {
+      setDomainActionMessage("Unable to reach Domain Lock service.");
+    } finally {
+      setIsDomainActionBusy(false);
+    }
+  }
+
+  async function createDomainPrivacyCheckout() {
+    if (!selectedDomain?.id || !domainActionUrl) return;
+    setDomainActionDomainId(selectedDomain.id);
+    setIsDomainActionBusy(true);
+    setDomainPrivacyCheckoutPreview(null);
+    try {
+      const response = await fetch(domainActionUrl, { method: "POST" });
+      const result = await response.json().catch(() => null);
+      setDomainActionMessage(result?.message ?? "Unable to create Whois Privacy checkout.");
+      if (!response.ok || !result?.success) {
+        return;
+      }
+      setDomainActionUrl("");
+      if (goToCheckoutOrder(result.order)) return;
+      setDomainPrivacyCheckoutPreview(toCheckoutPreview(result.order, 1));
+    } catch {
+      setDomainActionMessage("Unable to reach Whois Privacy checkout service.");
     } finally {
       setIsDomainActionBusy(false);
     }
@@ -8799,6 +9143,7 @@ function DomainSection() {
     if (!selectedDomain?.id) return;
     setIsDomainActionBusy(true);
     setDomainActionMessage("");
+    setDomainActionUrl("");
     setDomainDnsPreview([]);
 
     try {
@@ -8810,6 +9155,7 @@ function DomainSection() {
       });
       const result = await response.json().catch(() => null);
       setDomainActionMessage(result?.message ?? "Unable to prepare registrar action.");
+      setDomainActionUrl(result?.actionUrl ?? "");
       if (isDnsAction && result?.success) {
         setDomainDnsPreview(result.records ?? []);
       }
@@ -8823,30 +9169,30 @@ function DomainSection() {
   function selectDomainRegistrarAction(action) {
     const dnsDefault = selectedDomain?.domainName
       ? [
-          "A @ 208.98.35.146",
-          `CNAME www ${selectedDomain.domainName}`,
-          `MX @ mail.${selectedDomain.domainName} 10`,
-          "TXT @ v=spf1 a mx include:_spf.site4now.net -all"
-        ].join("\n")
+        "A @ 208.98.35.146",
+        `CNAME www ${selectedDomain.domainName}`,
+        `MX @ mail.${selectedDomain.domainName} 10`,
+        "TXT @ v=spf1 a mx include:_spf.site4now.net -all"
+      ].join("\n")
       : domainRegistrarActionDefaults.dns;
     const contact = selectedDomainProfile?.registrant;
     const contactDefault = contact
       ? [
-          `first_name=${contact.firstName ?? ""}`,
-          `last_name=${contact.lastName ?? ""}`,
-          `org_name=${contact.organization ?? ""}`,
-          `address1=${contact.address1 ?? ""}`,
-          `address2=${contact.address2 ?? ""}`,
-          "address3=",
-          `city=${contact.city ?? ""}`,
-          `state=${contact.state || contact.province || ""}`,
-          `postal_code=${contact.postalCode ?? ""}`,
-          `country=${contact.country ?? ""}`,
-          `phone=${contact.phone ?? ""}`,
-          `fax=${contact.fax ?? ""}`,
-          `email=${contact.email ?? ""}`,
-          "url="
-        ].join("\n")
+        `first_name=${contact.firstName ?? ""}`,
+        `last_name=${contact.lastName ?? ""}`,
+        `org_name=${contact.organization ?? ""}`,
+        `address1=${contact.address1 ?? ""}`,
+        `address2=${contact.address2 ?? ""}`,
+        "address3=",
+        `city=${contact.city ?? ""}`,
+        `state=${contact.state || contact.province || ""}`,
+        `postal_code=${contact.postalCode ?? ""}`,
+        `country=${contact.country ?? ""}`,
+        `phone=${contact.phone ?? ""}`,
+        `fax=${contact.fax ?? ""}`,
+        `email=${contact.email ?? ""}`,
+        "url="
+      ].join("\n")
       : domainRegistrarActionDefaults.contact;
     setDomainRegistrarForm({
       action,
@@ -8875,6 +9221,142 @@ function DomainSection() {
     }));
   }
 
+  function parseNameserverText(text) {
+    const nameservers = String(text || "")
+      .split(/[,\n\r;|]/)
+      .map((item) => item.trim().toUpperCase())
+      .filter(Boolean);
+    return nameservers.length ? nameservers : parseNameserverText(domainRegistrarActionDefaults.nameservers);
+  }
+
+  function updateInlineNameserverAt(index, value) {
+    setNameserverSaveState({ state: "idle", message: "" });
+    setNameserverDraft((current) => {
+      const next = [...current];
+      while (next.length < 5) next.push("");
+      next[index] = value;
+      return next;
+    });
+  }
+
+  async function saveInlineNameservers() {
+    if (!selectedDomain?.id || nameserverSaveState.state === "saving") return;
+    const nameservers = nameserverDraft.map((item) => item.trim().toUpperCase()).filter(Boolean);
+    if (nameservers.length < 2) {
+      setNameserverSaveState({ state: "error", message: "Enter at least two nameservers." });
+      return;
+    }
+
+    setNameserverSaveState({ state: "saving", message: "Saving nameservers..." });
+    setDomainActionMessage("");
+    setDomainActionUrl("");
+
+    try {
+      const response = await fetch(`/api/account/domains/${selectedDomain.id}/registrar-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "nameservers", value: nameservers.join(", ") })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setNameserverSaveState({ state: "error", message: result?.message ?? "Unable to update nameservers." });
+        return;
+      }
+
+      setNameserverDraft(nameservers);
+      setIsEditingNameservers(false);
+      setNameserverSaveState({ state: "saved", message: result?.message ?? "Nameservers updated." });
+    } catch {
+      setNameserverSaveState({ state: "error", message: "Unable to reach registrar action service." });
+    }
+  }
+
+  function handleNameserverEditorBlur(event) {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    saveInlineNameservers();
+  }
+
+  function cancelInlineNameserverEdit() {
+    setIsEditingNameservers(false);
+    setNameserverSaveState({ state: "idle", message: "" });
+  }
+
+  function renderNameserverDetailRow() {
+    const nameservers = nameserverDraft.map((item) => item.trim().toUpperCase()).filter(Boolean);
+    const rows = nameservers.length ? nameservers : parseNameserverText(domainRegistrarActionDefaults.nameservers);
+    const editableRows = [...nameserverDraft];
+    while (editableRows.length < 5) editableRows.push("");
+
+    return (
+      <div className="domain-nameserver-row">
+        <dt>Nameservers</dt>
+        <dd>
+          {isEditingNameservers ? (
+            <div
+              className="domain-nameserver-editor"
+              onBlur={handleNameserverEditorBlur}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelInlineNameserverEdit();
+                }
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  saveInlineNameservers();
+                }
+              }}
+            >
+              {editableRows.map((value, index) => (
+                <input
+                  aria-label={`Nameserver ${index + 1}`}
+                  key={index}
+                  type="text"
+                  value={value}
+                  placeholder={index < 2 ? `Nameserver ${index + 1}` : `Nameserver ${index + 1} optional`}
+                  onChange={(event) => updateInlineNameserverAt(index, event.target.value)}
+                />
+              ))}
+              <div className="domain-nameserver-editor-actions">
+                {nameserverSaveState.state === "saving" ? (
+                  <LoadingIcon label="Saving nameservers" />
+                ) : (
+                  <button className="primary-button compact" type="button" onMouseDown={(event) => event.preventDefault()} onClick={saveInlineNameservers}>
+                    Save
+                  </button>
+                )}
+                {nameserverSaveState.state === "error" && <span className="inline-status error">{nameserverSaveState.message}</span>}
+              </div>
+            </div>
+          ) : (
+            <button
+              className="domain-nameserver-display"
+              type="button"
+              title="Click to edit nameservers"
+              onClick={() => {
+                setIsEditingNameservers(true);
+                setNameserverSaveState({ state: "idle", message: "" });
+              }}
+            >
+              <span>
+                {rows.map((nameserver) => (
+                  <React.Fragment key={nameserver}>
+                    {nameserver}
+                    <br />
+                  </React.Fragment>
+                ))}
+              </span>
+              {nameserverSaveState.state === "saved" && (
+                <span className="domain-nameserver-saved-icon" title={nameserverSaveState.message || "Nameservers saved"}>
+                  <MenuIcon name="check" />
+                </span>
+              )}
+            </button>
+          )}
+        </dd>
+      </div>
+    );
+  }
+
   function getContactValue(key) {
     const line = domainRegistrarForm.value
       .split("\n")
@@ -8896,6 +9378,105 @@ function DomainSection() {
       ...form,
       value: order.map((field) => `${field}=${fields.get(field) ?? ""}`).join("\n")
     }));
+  }
+
+  async function runDomainRegistrarAction(action, value = "") {
+    if (!selectedDomain?.id) return;
+    setIsDomainActionBusy(true);
+    setDomainActionMessage("");
+    if (action === "auth-code") {
+      setDomainAuthCodeMessage("");
+    }
+    setDomainActionUrl("");
+
+    try {
+      const response = await fetch(`/api/account/domains/${selectedDomain.id}/registrar-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, value })
+      });
+      const result = await response.json().catch(() => null);
+      const message = result?.message ?? "Unable to run domain action.";
+      if (action === "auth-code") {
+        setDomainAuthCodeMessage(message);
+      } else {
+        setDomainActionMessage(message);
+      }
+      setDomainActionUrl(result?.actionUrl ?? "");
+      if (result?.success && action === "contact") {
+        await loadAccountDomains();
+      }
+    } catch {
+      if (action === "auth-code") {
+        setDomainAuthCodeMessage("Unable to reach registrar action service.");
+      } else {
+        setDomainActionMessage("Unable to reach registrar action service.");
+      }
+    } finally {
+      setIsDomainActionBusy(false);
+    }
+  }
+
+  const domainContactTabs = [
+    ["registrant", "Registrant"],
+    ["admin", "Admin"],
+    ["billing", "Billing"],
+    ["technical", "Technical"]
+  ];
+
+  function domainContactForTab(tab = activeDomainContactTab) {
+    if (!selectedDomainProfile) return null;
+    return selectedDomainProfile[tab] ?? null;
+  }
+
+  function contactValueFromProfile(contact) {
+    return [
+      `first_name=${contact?.firstName ?? ""}`,
+      `last_name=${contact?.lastName ?? ""}`,
+      `org_name=${contact?.organization ?? ""}`,
+      `address1=${contact?.address1 ?? ""}`,
+      `address2=${contact?.address2 ?? ""}`,
+      "address3=",
+      `city=${contact?.city ?? ""}`,
+      `state=${contact?.state || contact?.province || ""}`,
+      `postal_code=${contact?.postalCode ?? ""}`,
+      `country=${contact?.country ?? ""}`,
+      `phone=${contact?.phone ?? ""}`,
+      `fax=${contact?.fax ?? ""}`,
+      `email=${contact?.email ?? ""}`,
+      "url="
+    ].join("\n");
+  }
+
+  function domainContactName(contact) {
+    return [contact?.firstName, contact?.lastName].filter(Boolean).join(" ") || contact?.organization || "N/A";
+  }
+
+  function domainContactAddress(contact) {
+    return [
+      contact?.address1,
+      contact?.address2,
+      contact?.city,
+      contact?.state || contact?.province,
+      contact?.postalCode,
+      contact?.country
+    ].filter(Boolean).join(", ") || "No address";
+  }
+
+  function domainContactPhone(contact) {
+    return contact?.phone || contact?.fax || "No phone";
+  }
+
+  function selectDomainContactTab(tab) {
+    setActiveDomainContactTab(tab);
+    const contact = domainContactForTab(tab);
+    setDomainRegistrarForm({
+      action: "contact",
+      value: contactValueFromProfile(contact)
+    });
+    setDomainActionMessage("");
+    setDomainAuthCodeMessage("");
+    setDomainActionUrl("");
   }
 
   function renderDomainRegistrarFields() {
@@ -8977,174 +9558,331 @@ function DomainSection() {
     );
   }
 
-  return (
-    <section className="domain-section">
-      <article className="panel-card domain-search-panel">
-        <div className="section-heading">
-          <div>
-            <h2>Search and Buy New Domain Name</h2>
-          </div>
-          {domainServiceStatus?.openSrs && (
-            <span
-              className={domainServiceStatus.openSrs.configured ? "service-status-pill live" : "service-status-pill pending"}
-              title={domainServiceStatus.openSrs.message}
-            >
-              {domainServiceStatus.openSrs.state}
-            </span>
-          )}
+  const domainSettingsPanel = selectedDomain ? (
+    <aside className="domain-settings-page">
+      <div className="domain-settings-header">
+        <button className="secondary-button compact" type="button" onClick={() => setDomainPanelView("list")}>
+          <MenuIcon name="back" />
+          Back to Domains
+        </button>
+        <span className="status-pill blue">Domain Settings</span>
+      </div>
+      <h3>{selectedDomain.domainName}</h3>
+      <section className="domain-profile-block">
+        <div className="billing-detail-header compact">
+          <span className="status-pill blue">Domain Details</span>
+          {isLoadingDomainProfile && <LoadingIcon label="Loading domain profile" />}
         </div>
-        <form className="search-row" onSubmit={handleDomainSearch}>
-          <input
-            type="search"
-            placeholder="Search a domain, e.g. mybrand.com"
-            value={domainQuery}
-            onChange={(event) => setDomainQuery(event.target.value)}
-          />
-          <div
-            className="extension-picker"
-            onBlur={() => window.setTimeout(() => setIsDomainExtensionOpen(false), 120)}
-          >
-            <button
-              aria-expanded={isDomainExtensionOpen}
-              aria-haspopup="listbox"
-              className="extension-picker-button"
-              type="button"
-              onClick={() => setIsDomainExtensionOpen((open) => !open)}
-            >
-              <span>{domainExtension}</span>
-              <MenuIcon name="chevron-down" />
-            </button>
-            {isDomainExtensionOpen && (
-              <div className="extension-picker-menu">
-                <input
-                  aria-label="Search domain extension"
-                  type="search"
-                  placeholder="Search extension..."
-                  value={domainExtensionFilter}
-                  onChange={(event) => setDomainExtensionFilter(event.target.value)}
-                />
-                <div className="extension-picker-list" role="listbox">
-                  {visibleDomainExtensions.length ? visibleDomainExtensions.map((extension) => (
-                    <button
-                      aria-selected={extension === domainExtension}
-                      className={extension === domainExtension ? "extension-option active" : "extension-option"}
-                      key={extension}
-                      role="option"
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => selectDomainExtension(extension)}
-                    >
-                      <span>{extension}</span>
-                      <span>{formatMoney(getDomainExtensionPrice(extension))}</span>
-                    </button>
-                  )) : (
-                    <p className="extension-empty">No extension found.</p>
-                  )}
-                </div>
+        {domainProfileError && <p className="inline-status">{domainProfileError}</p>}
+        <dl className="domain-detail-list">
+          <div><dt>Domain Name</dt><dd>{selectedDomain.domainName}</dd></div>
+          <div><dt>Expires</dt><dd>{formatDate(selectedDomain.expirationDate)}</dd></div>
+          {renderNameserverDetailRow()}
+          <div>
+            <dt>Auth Code</dt>
+            <dd>
+              <div className="domain-auth-code-action-row">
+                <button className="secondary-button compact" type="button" disabled={isDomainActionBusy} onClick={() => runDomainRegistrarAction("auth-code")}>
+                  {isDomainActionBusy ? <LoadingIcon label="Sending auth code" /> : "Send Auth Code"}
+                </button>
+                {domainAuthCodeMessage && (
+                  <div className="renewal-action-message domain-auth-code-message success">
+                    {domainAuthCodeMessage}
+                  </div>
+                )}
               </div>
+            </dd>
+          </div>
+          <div><dt>Registrar Status</dt><dd>{selectedDomain.registerStatus || "N/A"}</dd></div>
+          <div><dt>Grace Period</dt><dd>{selectedDomain.gracePeriodDays ?? 0} days</dd></div>
+        </dl>
+      </section>
+      <section className="domain-profile-block">
+        <div className="billing-detail-header compact">
+          <span className="status-pill muted">Domain Contacts</span>
+          {isLoadingDomainProfile && <LoadingIcon label="Loading domain profile" />}
+        </div>
+        <div className="domain-contact-tabs" role="tablist" aria-label="Domain contact tabs">
+          {domainContactTabs.map(([tab, label]) => {
+            const contact = selectedDomainProfile?.[tab];
+            return (
+              <button
+                aria-selected={activeDomainContactTab === tab}
+                className={activeDomainContactTab === tab ? "tab active" : "tab"}
+                key={tab}
+                role="tab"
+                type="button"
+                onClick={() => selectDomainContactTab(tab)}
+              >
+                <MenuIcon name={tab === "registrant" ? "shield" : tab === "admin" ? "settings" : tab === "billing" ? "card" : "server"} />
+                <span>{label}</span>
+                <strong>{domainContactName(contact)}</strong>
+                <small>{contact?.email || "N/A"}</small>
+                <small>{domainContactAddress(contact)}</small>
+                <small>{domainContactPhone(contact)}</small>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+      <div className="domain-quick-actions hidden-domain-actions" aria-label="Domain quick actions">
+        {[
+          ["status", "Status"],
+          ["auth-code", "Auth Code"],
+          ["auto-renew-on", "Auto Renew On"],
+          ["auto-renew-off", "Auto Renew Off"]
+        ].map(([action, label]) => (
+          <button
+            className={domainRegistrarForm.action === action ? "secondary-button compact active" : "secondary-button compact"}
+            key={action}
+            type="button"
+            onClick={() => selectDomainRegistrarAction(action)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <form className="domain-action-form" onSubmit={submitDomainRegistrarAction}>
+        <input type="hidden" value={domainRegistrarForm.action} readOnly />
+        <div className="billing-detail-header compact">
+          <span className="status-pill blue">Edit {domainContactTabs.find(([tab]) => tab === activeDomainContactTab)?.[1] ?? "Contact"}</span>
+        </div>
+        {renderDomainRegistrarFields()}
+        {domainActionMessage && (
+          <div className={
+            domainActionMessage.toLowerCase().includes("completed successfully")
+              ? "renewal-action-message domain-contact-save-message success"
+              : "renewal-action-message domain-contact-save-message"
+          }>
+            <span>{domainActionMessage}</span>
+            {domainActionUrl && (
+              <button
+                className="primary-button compact success-link-button"
+                disabled={isDomainActionBusy}
+                type="button"
+                onClick={createDomainPrivacyCheckout}
+              >
+                {isDomainActionBusy ? <LoadingIcon label="Creating Whois Privacy checkout" /> : "Buy Whois Privacy"}
+              </button>
             )}
           </div>
-          <button className="primary-button" type="submit" disabled={isDomainSearching}>
-            {isDomainSearching ? <LoadingIcon label="Searching domains" /> : "Search"}
-          </button>
-        </form>
-        {domainLookupMessage && <p className="renewal-action-message">{domainLookupMessage}</p>}
-        {!!domainResults.length && (
-          <div className="domain-results">
-            {domainResults.map((result) => (
-              <article className="domain-result-row" key={result.domainName}>
-                <div>
-                  <strong>{result.domainName}</strong>
-                  <span className={result.available ? "status-pill" : "status-pill muted"}>{result.reason}</span>
-                </div>
-                <div className="domain-result-action">
-                  <span>{formatMoney(result.price)}</span>
-                  <button
-                    className="secondary-button compact"
-                    type="button"
-                    disabled={!result.available}
-                    onClick={() => addDomainToCart(result)}
-                  >
-                    Add
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
         )}
-        {!!domainCart.length && (
-          <div className="domain-cart">
-            <div className="domain-cart-header">
-              <span>Domain Cart</span>
-              <strong>{formatMoney(domainCart.reduce((total, item) => total + item.price, 0))}</strong>
-            </div>
-            {domainCart.map((item) => (
-              <div className="domain-cart-item" key={item.domainName}>
-                <span>{item.domainName}</span>
-                <button className="ghost-button compact" type="button" onClick={() => removeDomainFromCart(item.domainName)}>Remove</button>
+        <button className="primary-button compact" type="submit" disabled={isDomainActionBusy || domainRegistrarForm.action !== "contact"}>
+          {isDomainActionBusy ? <LoadingIcon label="Saving domain contact" /> : "Save Contact"}
+        </button>
+      </form>
+      {domainPrivacyCheckoutPreview && (
+        <CheckoutPreviewCard preview={domainPrivacyCheckoutPreview} onClose={() => setDomainPrivacyCheckoutPreview(null)} />
+      )}
+      {domainRenewalCheckoutPreview && (
+        <CheckoutPreviewCard preview={domainRenewalCheckoutPreview} onClose={() => setDomainRenewalCheckoutPreview(null)} />
+      )}
+      {domainDnsPreview.length > 0 && (
+        <div className="domain-dns-preview">
+          <span>DNS Preview</span>
+          <div className="domain-dns-preview-grid">
+            {domainDnsPreview.map((record, index) => (
+              <div className="domain-dns-preview-row" key={`${record.type}-${record.name}-${index}`}>
+                <span className="domain-dns-type">{record.type}</span>
+                <span>{record.name}</span>
+                <span>{record.value}</span>
+                <span>{record.priority ?? "-"}</span>
+                <span>{record.ttl}s</span>
               </div>
             ))}
-            <button className="primary-button" type="button" disabled={isDomainCheckingOut} onClick={checkoutDomains}>
-              {isDomainCheckingOut ? <LoadingIcon label="Checking domains" /> : "Checkout Domains"}
-            </button>
-            {domainCheckoutMessage && <p className="renewal-action-message">{domainCheckoutMessage}</p>}
-            {domainCheckoutPreview && <CheckoutPreviewCard preview={domainCheckoutPreview} onClose={() => setDomainCheckoutPreview(null)} />}
-          </div>
-        )}
-      </article>
-
-      <article className="panel-card domain-transfer-panel">
-        <div className="section-heading">
-          <div>
-            <h2>Transfer an Existing Domain</h2>
-            <p>Move a domain into this account and create the transfer checkout from the live TLD price table.</p>
           </div>
         </div>
-        <form className="domain-transfer-form" onSubmit={createDomainTransferCheckout}>
-          <input
-            type="text"
-            placeholder="example.com"
-            aria-label="Domain to transfer"
-            value={domainTransferName}
-            onChange={(event) => setDomainTransferName(event.target.value)}
-          />
-          <label className="domain-transfer-checkbox">
+      )}
+      {domainRenewalPreview && (
+        <RenewalCheckoutPreview
+          renewal={domainRenewalPreview}
+          onClose={() => setDomainRenewalPreview(null)}
+          onCheckout={createDomainRenewalCheckout}
+        />
+      )}
+    </aside>
+  ) : null;
+
+  if (selectedDomain && domainPanelView === "dns") {
+    return (
+      <section className="domain-section">
+        <DnsManagementPage
+          domain={selectedDomain}
+          manager={domainDnsManager}
+          isLoading={isDomainDnsLoading}
+          message={domainDnsMessage}
+          recordsPreview={domainDnsPreview}
+          busy={isDomainActionBusy}
+          draft={domainDnsDraft}
+          onDraftChange={setDomainDnsDraft}
+          onBack={() => {
+            setDomainPanelView("list");
+            setDomainDnsPreview([]);
+            setDomainDnsMessage("");
+          }}
+          onReload={() => loadDomainDnsManager(selectedDomain.id)}
+          onSubmitAction={submitDomainDnsAction}
+        />
+      </section>
+    );
+  }
+
+  if (selectedDomain && domainPanelView === "settings") {
+    return (
+      <section className="domain-section">
+        {domainSettingsPanel}
+      </section>
+    );
+  }
+
+  return (
+    <section className="domain-section">
+      <div className="domain-order-grid">
+        <article className="panel-card domain-search-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Search and Buy New Domain Name</h2>
+            </div>
+            {domainServiceStatus?.openSrs && (
+              <span
+                className={domainServiceStatus.openSrs.configured ? "service-status-pill live" : "service-status-pill pending"}
+                title={domainServiceStatus.openSrs.message}
+              >
+                {domainServiceStatus.openSrs.state}
+              </span>
+            )}
+          </div>
+          <form className="search-row" onSubmit={handleDomainSearch}>
             <input
-              type="checkbox"
-              checked={domainTransferWhois}
-              onChange={(event) => setDomainTransferWhois(event.target.checked)}
+              type="search"
+              placeholder="Search a domain, e.g. mybrand.com"
+              value={domainQuery}
+              onChange={(event) => setDomainQuery(event.target.value)}
             />
-            <span>Add Whois Privacy (+$8)</span>
-          </label>
-          <button className="primary-button compact" type="submit" disabled={isDomainTransferBusy}>
-            {isDomainTransferBusy ? <LoadingIcon label="Creating transfer checkout" /> : "Create Transfer Checkout"}
-          </button>
-        </form>
-        {domainTransferMessage && <p className="inline-status">{domainTransferMessage}</p>}
-        {domainTransferPreview && <CheckoutPreviewCard preview={domainTransferPreview} onClose={() => setDomainTransferPreview(null)} />}
-      </article>
+            <div
+              className="extension-picker"
+              onBlur={() => window.setTimeout(() => setIsDomainExtensionOpen(false), 120)}
+            >
+              <button
+                aria-expanded={isDomainExtensionOpen}
+                aria-haspopup="listbox"
+                className="extension-picker-button"
+                type="button"
+                onClick={() => setIsDomainExtensionOpen((open) => !open)}
+              >
+                <span>{domainExtension}</span>
+                <MenuIcon name="chevron-down" />
+              </button>
+              {isDomainExtensionOpen && (
+                <div className="extension-picker-menu">
+                  <input
+                    aria-label="Search domain extension"
+                    type="search"
+                    placeholder="Search extension..."
+                    value={domainExtensionFilter}
+                    onChange={(event) => setDomainExtensionFilter(event.target.value)}
+                  />
+                  <div className="extension-picker-list" role="listbox">
+                    {visibleDomainExtensions.length ? visibleDomainExtensions.map((extension) => (
+                      <button
+                        aria-selected={extension === domainExtension}
+                        className={extension === domainExtension ? "extension-option active" : "extension-option"}
+                        key={extension}
+                        role="option"
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectDomainExtension(extension)}
+                      >
+                        <span>{extension}</span>
+                        <span>{formatMoney(getDomainExtensionPrice(extension))}</span>
+                      </button>
+                    )) : (
+                      <p className="extension-empty">No extension found.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button className="primary-button" type="submit" disabled={isDomainSearching}>
+              {isDomainSearching ? <LoadingIcon label="Searching domains" /> : "Search"}
+            </button>
+          </form>
+          {domainLookupMessage && <p className="renewal-action-message">{domainLookupMessage}</p>}
+          {!!domainResults.length && (
+            <div className="domain-results">
+              {domainResults.map((result) => (
+                <article className="domain-result-row" key={result.domainName}>
+                  <div>
+                    <strong>{result.domainName}</strong>
+                    <span className={result.available ? "status-pill" : "status-pill muted"}>{result.reason}</span>
+                  </div>
+                  <div className="domain-result-action">
+                    <span>{formatMoney(result.price)}</span>
+                    <button
+                      className="secondary-button compact"
+                      type="button"
+                      disabled={!result.available}
+                      onClick={() => addDomainToCart(result)}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          {!!domainCart.length && (
+            <div className="domain-cart">
+              <div className="domain-cart-header">
+                <span>Domain Cart</span>
+                <strong>{formatMoney(domainCart.reduce((total, item) => total + item.price, 0))}</strong>
+              </div>
+              {domainCart.map((item) => (
+                <div className="domain-cart-item" key={item.domainName}>
+                  <span>{item.domainName}</span>
+                  <button className="ghost-button compact" type="button" onClick={() => removeDomainFromCart(item.domainName)}>Remove</button>
+                </div>
+              ))}
+              <button className="primary-button" type="button" disabled={isDomainCheckingOut} onClick={checkoutDomains}>
+                {isDomainCheckingOut ? <LoadingIcon label="Checking domains" /> : "Checkout Domains"}
+              </button>
+              {domainCheckoutMessage && <p className="renewal-action-message">{domainCheckoutMessage}</p>}
+              {domainCheckoutPreview && <CheckoutPreviewCard preview={domainCheckoutPreview} onClose={() => setDomainCheckoutPreview(null)} />}
+            </div>
+          )}
+        </article>
+
+        <article className="panel-card domain-transfer-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Transfer an Existing Domain</h2>
+            </div>
+          </div>
+          <form className="domain-transfer-form" onSubmit={createDomainTransferCheckout}>
+            <input
+              type="text"
+              placeholder="example.com"
+              aria-label="Domain to transfer"
+              value={domainTransferName}
+              onChange={(event) => setDomainTransferName(event.target.value)}
+            />
+            <button className="primary-button compact" type="submit" disabled={isDomainTransferBusy}>
+              {isDomainTransferBusy ? <LoadingIcon label="Checking transfer" /> : "Transfer"}
+            </button>
+          </form>
+          {domainTransferMessage && <p className="inline-status">{domainTransferMessage}</p>}
+          {domainTransferPreview && <CheckoutPreviewCard preview={domainTransferPreview} onClose={() => setDomainTransferPreview(null)} />}
+        </article>
+      </div>
 
       <article className="panel-card domain-live-panel">
         <div className="domain-live-header">
           <div>
-            <span className="status-pill blue">Live domains</span>
+            <span className="status-pill blue">{isLoadingDomains ? <LoadingIcon label="Loading domains" /> : "Live domains"}</span>
             <h2>My Domain Names</h2>
           </div>
           <RefreshButton onClick={loadAccountDomains} />
         </div>
-        {domainServiceStatus && (
-          <div className="service-status-grid">
-            {[domainServiceStatus.openSrs, domainServiceStatus.dns].map((service) => (
-              <div className="service-status-card" key={service.name}>
-                <div>
-                  <span>{service.name}</span>
-                  <strong>{service.state}</strong>
-                </div>
-                <p>{service.message}</p>
-              </div>
-            ))}
-          </div>
-        )}
         <div className="search-row compact-search">
           <input
             type="search"
@@ -9153,7 +9891,6 @@ function DomainSection() {
             onChange={(event) => setDomainSearch(event.target.value)}
           />
         </div>
-        {isLoadingDomains && <LoadingState label="Loading domains" />}
         {domainError && (
           <div className="dashboard-error-panel inline-error">
             <p>{domainError}</p>
@@ -9164,84 +9901,155 @@ function DomainSection() {
           <p className="empty-state">No domains found for this account.</p>
         )}
         {!!filteredDomains.length && domainPanelView === "list" && (
-          <DataTable
-            columns={["Domain", "Status", "Whois Privacy", "Action"]}
-            rows={filteredDomains.map((domain) => {
-              const canRenew = domain.canRenew ?? (!!domain.clientProductId && (domain.status === "completed" || domain.status === "expired"));
-              const canManage = domain.canManage ?? domain.status === "completed";
-              const privacyEnabled = domainPrivacyOverrides[domain.id] ?? domain.whoisPrivacyPurchased;
-              const privacyDisabled = !domain.whoisPrivacySupported || domain.status !== "completed" || domain.daysLeft < 0 || isDomainActionBusy;
-              const privacyLabel = !domain.whoisPrivacySupported
-                ? "Privacy N/A"
-                : privacyEnabled
-                  ? "Privacy On"
-                  : "Privacy Off";
-              return [
-                <div className="domain-name-cell">
-                  <span>{domain.domainName}</span>
-                  <small>Expiration Date: {formatDate(domain.expirationDate)}{domain.daysLeft < 0 ? " - Expired" : ""}</small>
-                </div>,
-                <span className={domain.status === "completed" ? "status-pill" : domain.status === "expired" ? "status-pill warning" : "status-pill muted"}>
-                  {domain.registerStatus && domain.registerStatus !== "verified" ? domain.registerStatus : domain.status}
-                </span>,
-                <button
-                  aria-pressed={privacyEnabled}
-                  className={domain.whoisPrivacySupported ? "domain-privacy-toggle" : "domain-privacy-toggle disabled"}
-                  disabled={privacyDisabled}
-                  title={privacyLabel}
-                  type="button"
-                  onClick={() => toggleDomainPrivacy(domain, !privacyEnabled)}
-                >
-                  <span className="domain-privacy-knob" aria-hidden="true" />
-                  <span>{privacyEnabled ? "PRIVACY ON" : domain.whoisPrivacySupported ? "PRIVACY OFF" : "PRIVACY N/A"}</span>
-                </button>,
-                <div className="domain-table-actions">
-                  {canRenew && (
-                    <button
-                      aria-label="Renew"
-                      className="secondary-button compact domain-row-action-button"
-                      disabled={isDomainActionBusy}
-                      title="Renew"
-                      type="button"
-                      onClick={() => renewSelectedDomain(domain)}
-                    >
-                      <MenuIcon name="order" />
-                    </button>
-                  )}
-                  {canManage && (
-                    <button
-                      className="secondary-button compact domain-row-action-button"
-                      title="DNS Manager"
-                      type="button"
-                      onClick={() => openDomainDnsManager(domain)}
-                    >
-                      DNS
-                    </button>
-                  )}
-                  {canManage && (
-                    <button
-                      className="secondary-button compact domain-row-action-button manage"
-                      title="Manage"
-                      type="button"
-                      onClick={() => openDomainSettings(domain)}
-                    >
-                      Manage
-                    </button>
-                  )}
-                  {!canManage && domain.transferActionLabel && (
-                    <button
-                      className="secondary-button compact domain-transfer-action"
-                      type="button"
-                      title={domain.transferActionUrl || domain.transferActionLabel}
-                      onClick={() => setDomainActionMessage(`${domain.transferActionLabel}: ${domain.transferActionUrl || "legacy transfer action"}`)}
-                    >
-                      {domain.transferActionLabel}
-                    </button>
-                  )}
-                </div>
-              ];
-            })}
-          />
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Domain</th>
+                  <th>Status</th>
+                  <th>Whois Privacy</th>
+                  <th>Domain Lock</th>
+                  <th className="domain-actions-header"><span className="sr-only">Action</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredDomains.map((domain) => {
+                  const canRenew = domain.canRenew ?? (!!domain.clientProductId && (domain.status === "completed" || domain.status === "expired"));
+                  const canManage = domain.canManage ?? domain.status === "completed";
+                  const canManageDns = Boolean(domain.dnsUrl) || canManage;
+                  const privacyEnabled = domainPrivacyOverrides[domain.id] ?? domain.whoisPrivacyPurchased;
+                  const privacyDisabled = !domain.whoisPrivacySupported || domain.status !== "completed" || domain.daysLeft < 0 || isDomainActionBusy;
+                  const privacyLabel = !domain.whoisPrivacySupported
+                    ? "Privacy N/A"
+                    : privacyEnabled
+                      ? "Privacy On"
+                      : "Privacy Off";
+                  const lockEnabled = domainLockOverrides[domain.id] ?? true;
+                  const lockDisabled = domain.status !== "completed" || domain.daysLeft < 0 || isDomainActionBusy;
+                  const showDomainInlineActionMessage = domainActionDomainId === domain.id && domainActionMessage;
+                  return (
+                    <React.Fragment key={domain.id}>
+                      <tr>
+                        <td>
+                          <div className="domain-name-cell">
+                            <span>{domain.domainName}</span>
+                            <small>Expiration Date: {formatDate(domain.expirationDate)}{domain.daysLeft < 0 ? " - Expired" : ""}</small>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={domain.status === "completed" ? "status-pill" : domain.status === "expired" ? "status-pill warning" : "status-pill muted"}>
+                            {domain.registerStatus && domain.registerStatus !== "verified" ? domain.registerStatus : domain.status}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            aria-pressed={privacyEnabled}
+                            className={domain.whoisPrivacySupported ? "domain-privacy-toggle" : "domain-privacy-toggle disabled"}
+                            disabled={privacyDisabled}
+                            title={privacyLabel}
+                            type="button"
+                            onClick={() => toggleDomainPrivacy(domain, !privacyEnabled)}
+                          >
+                            <span className="domain-privacy-knob" aria-hidden="true" />
+                            <span>{privacyEnabled ? "PRIVACY ON" : domain.whoisPrivacySupported ? "PRIVACY OFF" : "PRIVACY N/A"}</span>
+                          </button>
+                        </td>
+                        <td>
+                          <button
+                            aria-pressed={lockEnabled}
+                            className="domain-privacy-toggle domain-lock-toggle"
+                            disabled={lockDisabled}
+                            title={lockEnabled ? "Domain Locked" : "Domain Unlocked"}
+                            type="button"
+                            onClick={() => toggleDomainLock(domain, !lockEnabled)}
+                          >
+                            <span className="domain-privacy-knob" aria-hidden="true" />
+                            <span>{lockEnabled ? "LOCKED" : "UNLOCKED"}</span>
+                          </button>
+                        </td>
+                        <td>
+                          <div className="domain-table-actions">
+                            {canRenew && (
+                              <button
+                                aria-label="Renew"
+                                className="secondary-button compact domain-row-action-button"
+                                disabled={isDomainActionBusy}
+                                title="Renew"
+                                type="button"
+                                onClick={() => renewSelectedDomain(domain)}
+                              >
+                                <MenuIcon name="order" />
+                              </button>
+                            )}
+                            {canManageDns && (
+                              <button
+                                className="secondary-button compact domain-row-action-button"
+                                title="DNS Manager"
+                                type="button"
+                                onClick={() => openDomainDnsManager(domain)}
+                              >
+                                DNS
+                              </button>
+                            )}
+                            {canManage && (
+                              <button
+                                className="secondary-button compact domain-row-action-button manage"
+                                title="Manage"
+                                type="button"
+                                onClick={() => openDomainSettings(domain)}
+                              >
+                                Manage
+                              </button>
+                            )}
+                            {!canManage && domain.transferActionLabel && (
+                              <button
+                                className="secondary-button compact domain-transfer-action"
+                                type="button"
+                                title={domain.transferActionUrl || domain.transferActionLabel}
+                                onClick={() => {
+                                  setSelectedDomain(domain);
+                                  setDomainActionDomainId(domain.id);
+                                  setDomainActionUrl("");
+                                  setDomainActionMessage(`${domain.transferActionLabel}: ${domain.transferActionUrl || "legacy transfer action"}`);
+                                }}
+                              >
+                                {domain.transferActionLabel}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {showDomainInlineActionMessage && (
+                        <tr className="domain-inline-action-row">
+                          <td colSpan={5}>
+                            <div className="renewal-action-message action-message-with-link">
+                              <span>{domainActionMessage}</span>
+                              {domainActionUrl && (
+                                <button
+                                  className="primary-button compact success-link-button"
+                                  disabled={isDomainActionBusy}
+                                  type="button"
+                                  onClick={createDomainPrivacyCheckout}
+                                >
+                                  {isDomainActionBusy ? <LoadingIcon label="Creating Whois Privacy checkout" /> : "Buy Whois Privacy"}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {domainPanelView === "list" && domainRenewalCheckoutPreview && (
+          <CheckoutPreviewCard preview={domainRenewalCheckoutPreview} onClose={() => setDomainRenewalCheckoutPreview(null)} />
+        )}
+        {domainPanelView === "list" && domainPrivacyCheckoutPreview && (
+          <CheckoutPreviewCard preview={domainPrivacyCheckoutPreview} onClose={() => setDomainPrivacyCheckoutPreview(null)} />
         )}
         {selectedDomain && domainPanelView === "settings" && (
           <aside className="domain-settings-page">
@@ -9253,63 +10061,69 @@ function DomainSection() {
               <span className="status-pill blue">Domain Settings</span>
             </div>
             <h3>{selectedDomain.domainName}</h3>
-            <dl className="card-meta single">
-              <div><dt>Domain Profile ID</dt><dd>{selectedDomain.id}</dd></div>
-              <div><dt>Client Product ID</dt><dd>{selectedDomain.clientProductId || "N/A"}</dd></div>
-              <div><dt>Status</dt><dd>{selectedDomain.status}</dd></div>
-              <div><dt>Registrar Status</dt><dd>{selectedDomain.registerStatus || "N/A"}</dd></div>
-              <div><dt>Expiration</dt><dd>{formatDate(selectedDomain.expirationDate)}</dd></div>
-              <div><dt>Days Left</dt><dd>{selectedDomain.daysLeft ?? "N/A"}</dd></div>
-              <div><dt>Whois Privacy</dt><dd>{selectedDomain.whoisPrivacySupported ? selectedDomain.whoisPrivacyPurchased ? "Purchased" : "Not purchased" : "N/A"}</dd></div>
-              <div><dt>Grace Period</dt><dd>{selectedDomain.gracePeriodDays ?? 0} days</dd></div>
-            </dl>
-            <div className="domain-profile-block">
+            <section className="domain-profile-block">
               <div className="billing-detail-header compact">
-                <span className="status-pill muted">Domain Profile</span>
+                <span className="status-pill blue">Domain Details</span>
                 {isLoadingDomainProfile && <LoadingIcon label="Loading domain profile" />}
               </div>
               {domainProfileError && <p className="inline-status">{domainProfileError}</p>}
-              {selectedDomainProfile && (
-                <div className="domain-contact-grid">
-                  {[
-                    ["Registrant", selectedDomainProfile.registrant],
-                    ["Admin", selectedDomainProfile.admin],
-                    ["Billing", selectedDomainProfile.billing],
-                    ["Technical", selectedDomainProfile.technical]
-                  ].map(([label, contact]) => (
-                    <article className="domain-contact-card" key={label}>
-                      <span>{label}</span>
-                      <strong>{[contact?.firstName, contact?.lastName].filter(Boolean).join(" ") || contact?.organization || "N/A"}</strong>
-                      <p>{contact?.organization || "N/A"}</p>
-                      <p>{contact?.email || "N/A"}</p>
-                      <p>{[contact?.address1, contact?.address2, contact?.city, contact?.state || contact?.province, contact?.postalCode, contact?.country].filter(Boolean).join(", ") || "N/A"}</p>
-                      <p>{contact?.phone || "N/A"}</p>
-                    </article>
-                  ))}
+              <dl className="domain-detail-list">
+                <div><dt>Domain Name</dt><dd>{selectedDomain.domainName}</dd></div>
+                <div><dt>Expires</dt><dd>{formatDate(selectedDomain.expirationDate)}</dd></div>
+                {renderNameserverDetailRow()}
+                <div>
+                  <dt>Auth Code</dt>
+                  <dd>
+                    <div className="domain-auth-code-action-row">
+                      <button className="secondary-button compact" type="button" disabled={isDomainActionBusy} onClick={() => runDomainRegistrarAction("auth-code")}>
+                        {isDomainActionBusy ? <LoadingIcon label="Sending auth code" /> : "Send Auth Code"}
+                      </button>
+                      {domainAuthCodeMessage && (
+                        <div className="renewal-action-message domain-auth-code-message success">
+                          {domainAuthCodeMessage}
+                        </div>
+                      )}
+                    </div>
+                  </dd>
                 </div>
-              )}
-            </div>
-            <div className="billing-action-row">
-              <button
-                className="primary-button"
-                type="button"
-                disabled={!selectedDomain.clientProductId || isDomainActionBusy}
-                onClick={renewSelectedDomain}
-              >
-                {isDomainActionBusy ? <LoadingIcon label="Checking domain renewal" /> : "Renew Domain"}
-              </button>
-            </div>
-            <div className="domain-quick-actions" aria-label="Domain quick actions">
+                <div><dt>Registrar Status</dt><dd>{selectedDomain.registerStatus || "N/A"}</dd></div>
+                <div><dt>Grace Period</dt><dd>{selectedDomain.gracePeriodDays ?? 0} days</dd></div>
+              </dl>
+            </section>
+            <section className="domain-profile-block">
+              <div className="billing-detail-header compact">
+                <span className="status-pill muted">Domain Contacts</span>
+                {isLoadingDomainProfile && <LoadingIcon label="Loading domain profile" />}
+              </div>
+              <div className="domain-contact-tabs" role="tablist" aria-label="Domain contact tabs">
+                {domainContactTabs.map(([tab, label]) => {
+                  const contact = selectedDomainProfile?.[tab];
+                  return (
+                    <button
+                      aria-selected={activeDomainContactTab === tab}
+                      className={activeDomainContactTab === tab ? "tab active" : "tab"}
+                      key={tab}
+                      role="tab"
+                      type="button"
+                      onClick={() => selectDomainContactTab(tab)}
+                    >
+                      <MenuIcon name={tab === "registrant" ? "shield" : tab === "admin" ? "settings" : tab === "billing" ? "card" : "server"} />
+                      <span>{label}</span>
+                      <strong>{domainContactName(contact)}</strong>
+                      <small>{contact?.email || "N/A"}</small>
+                      <small>{domainContactAddress(contact)}</small>
+                      <small>{domainContactPhone(contact)}</small>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+            <div className="domain-quick-actions hidden-domain-actions" aria-label="Domain quick actions">
               {[
                 ["status", "Status"],
                 ["auth-code", "Auth Code"],
-                ["lock", "Lock"],
-                ["unlock", "Unlock"],
-                ["privacy-on", "Privacy On"],
-                ["privacy-off", "Privacy Off"],
                 ["auto-renew-on", "Auto Renew On"],
-                ["auto-renew-off", "Auto Renew Off"],
-                ["dns", "DNS"]
+                ["auto-renew-off", "Auto Renew Off"]
               ].map(([action, label]) => (
                 <button
                   className={domainRegistrarForm.action === action ? "secondary-button compact active" : "secondary-button compact"}
@@ -9322,33 +10136,40 @@ function DomainSection() {
               ))}
             </div>
             <form className="domain-action-form" onSubmit={submitDomainRegistrarAction}>
-              <label>
-                Registrar Action
-                <select
-                  className="inline-select"
-                  value={domainRegistrarForm.action}
-                  onChange={(event) => selectDomainRegistrarAction(event.target.value)}
-                >
-                  <option value="nameservers">Update Nameservers</option>
-                  <option value="contact">Update Contact</option>
-                  <option value="privacy-on">Enable WHOIS Privacy</option>
-                  <option value="privacy-off">Disable WHOIS Privacy</option>
-                  <option value="lock">Lock Domain</option>
-                  <option value="unlock">Unlock Domain</option>
-                  <option value="status">Refresh Registrar Status</option>
-                  <option value="auth-code">Get Auth Code</option>
-                  <option value="auto-renew-on">Enable Auto Renew</option>
-                  <option value="auto-renew-off">Disable Auto Renew</option>
-                  <option value="forwarding">Update Forwarding Email</option>
-                  <option value="dns">Update DNS</option>
-                </select>
-              </label>
+              <input type="hidden" value={domainRegistrarForm.action} readOnly />
+              <div className="billing-detail-header compact">
+                <span className="status-pill blue">Edit {domainContactTabs.find(([tab]) => tab === activeDomainContactTab)?.[1] ?? "Contact"}</span>
+              </div>
               {renderDomainRegistrarFields()}
-              <button className="secondary-button" type="submit" disabled={isDomainActionBusy}>
-                {isDomainActionBusy ? "Working..." : "Run Action"}
+              {domainActionMessage && (
+                <div className={
+                  domainActionMessage.toLowerCase().includes("completed successfully")
+                    ? "renewal-action-message domain-contact-save-message success"
+                    : "renewal-action-message domain-contact-save-message"
+                }>
+                  <span>{domainActionMessage}</span>
+                  {domainActionUrl && (
+                    <button
+                      className="primary-button compact success-link-button"
+                      disabled={isDomainActionBusy}
+                      type="button"
+                      onClick={createDomainPrivacyCheckout}
+                    >
+                      {isDomainActionBusy ? <LoadingIcon label="Creating Whois Privacy checkout" /> : "Buy Whois Privacy"}
+                    </button>
+                  )}
+                </div>
+              )}
+              <button className="primary-button compact" type="submit" disabled={isDomainActionBusy || domainRegistrarForm.action !== "contact"}>
+                {isDomainActionBusy ? <LoadingIcon label="Saving domain contact" /> : "Save Contact"}
               </button>
             </form>
-            {domainActionMessage && <p className="renewal-action-message">{domainActionMessage}</p>}
+            {domainPrivacyCheckoutPreview && (
+              <CheckoutPreviewCard preview={domainPrivacyCheckoutPreview} onClose={() => setDomainPrivacyCheckoutPreview(null)} />
+            )}
+            {domainRenewalCheckoutPreview && (
+              <CheckoutPreviewCard preview={domainRenewalCheckoutPreview} onClose={() => setDomainRenewalCheckoutPreview(null)} />
+            )}
             {domainDnsPreview.length > 0 && (
               <div className="domain-dns-preview">
                 <span>DNS Preview</span>
@@ -9456,6 +10277,7 @@ function VpnSection() {
         return;
       }
 
+      if (goToCheckoutOrder(result.order)) return;
       setVpnCheckoutPreview(toCheckoutPreview(result.order, Number(vpnSelection.quantity) || 1));
       setVpnCheckoutMessage(result.message);
     } catch {
@@ -9507,25 +10329,6 @@ function VpnSection() {
 
   return (
     <section className="vpn-section">
-      <article className="panel-card vpn-summary">
-        <div className="billing-header">
-          <div>
-            <span className="status-pill blue">Live VPN</span>
-            <h2>VPN Services</h2>
-          </div>
-          <RefreshButton onClick={loadVpn} />
-        </div>
-        <div className="vpn-quota-row">
-          <div>
-            <span>VPN User Quota</span>
-            <strong>{quotaLabel}</strong>
-          </div>
-          <div className="vpn-quota-meter" aria-label={`VPN quota ${quotaPercent}% used`}>
-            <span style={{ width: `${quotaPercent}%` }} />
-          </div>
-        </div>
-      </article>
-
       {isLoadingVpn && <LoadingState label="Loading VPN services" />}
       {vpnError && (
         <div className="dashboard-error-panel inline-error">
@@ -9580,58 +10383,60 @@ function VpnSection() {
         </aside>
       )}
 
-      <article className="panel-card vpn-user-card">
-        <div className="billing-header">
-          <div>
-            <span className="status-pill blue">User</span>
-            <h2>Create VPN User</h2>
+      {!!services.length && (
+        <article className="panel-card vpn-user-card">
+          <div className="billing-header">
+            <div>
+              <span className="status-pill blue">User</span>
+              <h2>Create VPN User</h2>
+            </div>
           </div>
-        </div>
-        <form className="vpn-user-form" onSubmit={createVpnUser}>
-          <label>
-            Username
-            <input
-              type="text"
-              value={vpnUserForm.user}
-              onChange={(event) => setVpnUserForm((form) => ({ ...form, user: event.target.value }))}
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={vpnUserForm.password}
-              onChange={(event) => setVpnUserForm((form) => ({ ...form, password: event.target.value }))}
-            />
-          </label>
-          <label>
-            Type
-            <select
-              className="inline-select"
-              value={vpnUserForm.type}
-              onChange={(event) => setVpnUserForm((form) => ({ ...form, type: event.target.value }))}
-            >
-              <option value="IKEv2">IKEv2</option>
-              <option value="OpenVPN">OpenVPN</option>
-            </select>
-          </label>
-          <label>
-            Location
-            <select
-              className="inline-select"
-              value={vpnUserForm.area}
-              onChange={(event) => setVpnUserForm((form) => ({ ...form, area: event.target.value }))}
-            >
-              <option value="US">US</option>
-              <option value="EU">EU</option>
-              <option value="Asia">Asia</option>
-            </select>
-          </label>
-          <button className="primary-button compact" type="submit" disabled={isVpnActionBusy}>
-            {isVpnActionBusy ? "Preparing..." : "Create User"}
-          </button>
-        </form>
-      </article>
+          <form className="vpn-user-form" onSubmit={createVpnUser}>
+            <label>
+              Username
+              <input
+                type="text"
+                value={vpnUserForm.user}
+                onChange={(event) => setVpnUserForm((form) => ({ ...form, user: event.target.value }))}
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                value={vpnUserForm.password}
+                onChange={(event) => setVpnUserForm((form) => ({ ...form, password: event.target.value }))}
+              />
+            </label>
+            <label>
+              Type
+              <select
+                className="inline-select"
+                value={vpnUserForm.type}
+                onChange={(event) => setVpnUserForm((form) => ({ ...form, type: event.target.value }))}
+              >
+                <option value="IKEv2">IKEv2</option>
+                <option value="OpenVPN">OpenVPN</option>
+              </select>
+            </label>
+            <label>
+              Location
+              <select
+                className="inline-select"
+                value={vpnUserForm.area}
+                onChange={(event) => setVpnUserForm((form) => ({ ...form, area: event.target.value }))}
+              >
+                <option value="US">US</option>
+                <option value="EU">EU</option>
+                <option value="Asia">Asia</option>
+              </select>
+            </label>
+            <button className="primary-button compact" type="submit" disabled={isVpnActionBusy}>
+              {isVpnActionBusy ? "Preparing..." : "Create User"}
+            </button>
+          </form>
+        </article>
+      )}
 
       <div className="vpn-purchase-grid">
         <article className="service-card purchase-card vpn-purchase-card">
@@ -9706,7 +10511,6 @@ function AddonSection() {
   const [addonDashboard, setAddonDashboard] = useState(null);
   const [activeCategory, setActiveCategory] = useState("SSL");
   const [addonSearch, setAddonSearch] = useState("");
-  const [addonCart, setAddonCart] = useState([]);
   const [addonSelections, setAddonSelections] = useState({});
   const [addonCheckoutPreview, setAddonCheckoutPreview] = useState(null);
   const [addonCheckoutMessage, setAddonCheckoutMessage] = useState("");
@@ -9771,37 +10575,12 @@ function AddonSection() {
     }));
   }
 
-  function addAddonToCart(addon) {
+  async function checkoutAddon(addon) {
     const selection = getAddonSelection(addon);
     const price = addon.prices.find((item) => item.priceId === Number(selection.priceId)) ?? addon.prices[0];
     if (!price) return;
     const quantity = Math.max(1, Math.min(99, Number(selection.quantity) || 1));
     const cpId = Number(selection.cpId) || 0;
-    const hostingAccount = addonHostingAccounts.find((account) => Number(account.cpId) === cpId);
-    setAddonCart((items) => {
-      const existing = items.find((item) => item.productId === addon.productId && item.priceId === price.priceId && item.cpId === cpId);
-      if (existing) {
-        return items.map((item) => item === existing ? { ...item, qty: Math.min(99, item.qty + quantity) } : item);
-      }
-      return [...items, {
-        productId: addon.productId,
-        priceId: price.priceId,
-        cpId,
-        cpLabel: hostingAccount?.cpLogin ?? "No hosting target",
-        name: addon.name,
-        term: price.paymentTerm,
-        amount: price.amount,
-        currency: price.currency,
-        qty: quantity
-      }];
-    });
-  }
-
-  function removeAddonFromCart(productId, priceId, cpId) {
-    setAddonCart((items) => items.filter((item) => item.productId !== productId || item.priceId !== priceId || item.cpId !== cpId));
-  }
-
-  async function checkoutAddons() {
     setIsAddonCheckingOut(true);
     setAddonCheckoutMessage("");
     setAddonCheckoutPreview(null);
@@ -9810,7 +10589,7 @@ function AddonSection() {
       const response = await fetch("/api/account/addons/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: addonCart.map((item) => ({ productId: item.productId, priceId: item.priceId, quantity: item.qty, cpId: item.cpId })) })
+        body: JSON.stringify({ items: [{ productId: addon.productId, priceId: price.priceId, quantity, cpId }] })
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.success) {
@@ -9818,7 +10597,8 @@ function AddonSection() {
         return;
       }
 
-      setAddonCheckoutPreview(toCheckoutPreview(result.order, addonCart.length));
+      if (goToCheckoutOrder(result.order)) return;
+      setAddonCheckoutPreview(toCheckoutPreview(result.order, 1));
       setAddonCheckoutMessage(result.message);
     } catch {
       setAddonCheckoutMessage("Unable to reach add-on checkout service.");
@@ -9868,18 +10648,9 @@ function AddonSection() {
     setAddonActionMessage("");
   }
 
-  const addonCartTotal = addonCart.reduce((total, item) => total + (Number(item.amount) * item.qty), 0);
-
   return (
     <section className="addon-section">
       <article className="panel-card addon-catalog-panel">
-        <div className="billing-header">
-          <div>
-            <span className="status-pill blue">Live catalog</span>
-            <h2>Available Add-Ons</h2>
-          </div>
-          <RefreshButton onClick={loadAddons} />
-        </div>
         <div className="search-row compact-search">
           <input
             type="search"
@@ -9899,7 +10670,8 @@ function AddonSection() {
                 type="button"
                 onClick={() => setActiveCategory(category)}
               >
-                {category}
+                <MenuIcon name={addonCategoryIcon(category)} />
+                <span>{category}</span>
               </button>
             ))}
           </div>
@@ -9956,30 +10728,22 @@ function AddonSection() {
                   aria-label={`${addon.name} quantity`}
                   onChange={(event) => updateAddonSelection(addon.productId, { quantity: event.target.value })}
                 />,
-                <button className="secondary-button compact" type="button" onClick={() => addAddonToCart(addon)}>Add</button>
+                <button
+                  aria-label={`Buy ${addon.name}`}
+                  className="secondary-button compact icon-only-button"
+                  disabled={isAddonCheckingOut}
+                  title={`Buy ${addon.name}`}
+                  type="button"
+                  onClick={() => checkoutAddon(addon)}
+                >
+                  {isAddonCheckingOut ? <LoadingIcon label="Creating add-on checkout" /> : "+"}
+                </button>
               ];
             })}
           />
         )}
-        {!!addonCart.length && (
-          <div className="domain-cart">
-            <div className="domain-cart-header">
-              <span>Add-On Order Summary</span>
-              <strong>{formatMoney(addonCartTotal)}</strong>
-            </div>
-            {addonCart.map((item) => (
-              <div className="domain-cart-item" key={`${item.productId}-${item.priceId}-${item.cpId}`}>
-                <span>{item.name} · {formatPaymentTerm(item.term)} · {item.cpLabel} · Qty {item.qty}</span>
-                <button className="ghost-button compact" type="button" onClick={() => removeAddonFromCart(item.productId, item.priceId, item.cpId)}>Remove</button>
-              </div>
-            ))}
-            <button className="primary-button" type="button" disabled={isAddonCheckingOut} onClick={checkoutAddons}>
-              {isAddonCheckingOut ? <LoadingIcon label="Checking add-ons" /> : "Checkout Add-Ons"}
-            </button>
-            {addonCheckoutMessage && <p className="renewal-action-message">{addonCheckoutMessage}</p>}
-            {addonCheckoutPreview && <CheckoutPreviewCard preview={addonCheckoutPreview} onClose={() => setAddonCheckoutPreview(null)} />}
-          </div>
-        )}
+        {addonCheckoutMessage && <p className="renewal-action-message">{addonCheckoutMessage}</p>}
+        {addonCheckoutPreview && <CheckoutPreviewCard preview={addonCheckoutPreview} onClose={() => setAddonCheckoutPreview(null)} />}
       </article>
 
       <article className="panel-card addon-active-panel">
@@ -10044,12 +10808,25 @@ function AddonSection() {
   );
 }
 
-function BillingSection({ onChangeSection }) {
+function addonCategoryIcon(category) {
+  const normalized = String(category || "").toLowerCase();
+  if (normalized.includes("ssl")) return "ssl";
+  if (normalized.includes("backup")) return "backup";
+  if (normalized.includes("database") || normalized.includes("sql")) return "database";
+  if (normalized.includes("ram") || normalized.includes("memory")) return "server";
+  if (normalized.includes("domain")) return "globe";
+  if (normalized.includes("email") || normalized.includes("mail")) return "mail";
+  if (normalized.includes("security")) return "shield";
+  if (normalized.includes("all")) return "cards";
+  return "plus";
+}
+
+function BillingSection({ currentUser, onChangeSection }) {
   const billingTabsLive = [
-    ["purchases", "My Purchases"],
-    ["active", "Current Active Products"],
-    ["balance", "Account Balance"],
-    ["renewal", "Renewal Notice"]
+    ["purchases", "My Purchases", "invoice"],
+    ["active", "Current Active Products", "checklist"],
+    ["balance", "Account Balance", "card"],
+    ["renewal", "Renewal Notice", "warning"]
   ];
   const [activeTab, setActiveTab] = useState("purchases");
   const [billing, setBilling] = useState(null);
@@ -10068,6 +10845,7 @@ function BillingSection({ onChangeSection }) {
     setBillingError("");
     try {
       const params = new URLSearchParams();
+      params.set("mode", activeTab);
       if (purchaseDates.start) params.set("purchaseStart", purchaseDates.start);
       if (purchaseDates.end) params.set("purchaseEnd", purchaseDates.end);
       const response = await fetch(`/api/account/billing?${params.toString()}`);
@@ -10087,7 +10865,7 @@ function BillingSection({ onChangeSection }) {
 
   useEffect(() => {
     loadBilling();
-  }, []);
+  }, [activeTab]);
 
   function updatePurchaseDate(field, value) {
     setPurchaseDates((current) => ({ ...current, [field]: value }));
@@ -10095,15 +10873,8 @@ function BillingSection({ onChangeSection }) {
 
   return (
     <section className="panel-card billing-panel">
-      <div className="billing-header">
-        <div>
-          <span className="status-pill blue">Live billing</span>
-          <h2>Billing</h2>
-        </div>
-        <RefreshButton onClick={loadBilling} />
-      </div>
       <div className="tabs" role="tablist" aria-label="Billing tabs">
-        {billingTabsLive.map(([id, label]) => (
+        {billingTabsLive.map(([id, label, icon]) => (
           <button
             aria-selected={id === activeTab}
             className={id === activeTab ? "tab active" : "tab"}
@@ -10112,7 +10883,8 @@ function BillingSection({ onChangeSection }) {
             type="button"
             onClick={() => setActiveTab(id)}
           >
-            {label}
+            <MenuIcon name={icon} />
+            <span>{label}</span>
           </button>
         ))}
       </div>
@@ -10128,6 +10900,7 @@ function BillingSection({ onChangeSection }) {
         <BillingTabPanel
           activeTab={activeTab}
           billing={billing}
+          currentUser={currentUser}
           onReloadBilling={loadBilling}
           purchaseDates={purchaseDates}
           onPurchaseDateChange={updatePurchaseDate}
@@ -10137,15 +10910,14 @@ function BillingSection({ onChangeSection }) {
   );
 }
 
-function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, onPurchaseDateChange }) {
-  const [selectedPurchase, setSelectedPurchase] = useState(null);
+function BillingTabPanel({ activeTab, billing, currentUser, onReloadBilling, purchaseDates, onPurchaseDateChange }) {
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [renewalCatalog, setRenewalCatalog] = useState(null);
   const [renewalPreview, setRenewalPreview] = useState(null);
   const [selectedRenewalCheckoutPreview, setSelectedRenewalCheckoutPreview] = useState(null);
   const [renewalMessage, setRenewalMessage] = useState("");
   const [renewalBusyId, setRenewalBusyId] = useState(null);
-  const [invoiceMessage, setInvoiceMessage] = useState("");
-  const [invoiceBusyId, setInvoiceBusyId] = useState(null);
+  const [isRenewalPageLoading, setIsRenewalPageLoading] = useState(false);
   const [balanceActionMessage, setBalanceActionMessage] = useState("");
   const [depositAmount, setDepositAmount] = useState("25.00");
   const [balanceCheckoutPreview, setBalanceCheckoutPreview] = useState(null);
@@ -10154,24 +10926,26 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
   const [selectedRenewalIds, setSelectedRenewalIds] = useState([]);
   const creditTransactions = billing?.creditTransactions ?? [];
 
-  async function loadInvoice(purchase) {
-    setInvoiceBusyId(purchase.orderId);
-    setInvoiceMessage("");
-    setSelectedPurchase(null);
+  async function openProductRenewPage(product) {
+    setSelectedProduct(product);
+    setRenewalCatalog(null);
+    setRenewalPreview(null);
+    setRenewalMessage("");
+    setIsRenewalPageLoading(true);
 
     try {
-      const response = await fetch(`/api/account/billing/orders/${purchase.orderId}/invoice`);
+      const response = await fetch(`/api/account/renewals/${product.clientProductId}/options`);
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.success) {
-        setInvoiceMessage(result?.message ?? "Unable to load invoice.");
+        setRenewalMessage(result?.message ?? "Unable to load renewal payment terms.");
         return;
       }
 
-      setSelectedPurchase(result.invoice);
+      setRenewalCatalog(result.catalog);
     } catch {
-      setInvoiceMessage("Unable to reach invoice service.");
+      setRenewalMessage("Unable to reach renewal payment term service.");
     } finally {
-      setInvoiceBusyId(null);
+      setIsRenewalPageLoading(false);
     }
   }
 
@@ -10213,30 +10987,64 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
     return result.order;
   }
 
+  async function createProductRenewalCheckout(option) {
+    if (!renewalCatalog) return;
+    setRenewalBusyId(`product-renew-${renewalCatalog.product.clientProductId}`);
+    setRenewalMessage("");
+
+    try {
+      const response = await fetch(`/api/account/renewals/${renewalCatalog.product.clientProductId}/checkout-option`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentTerm: option.paymentTerm, currency: option.currency })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setRenewalMessage(result?.message ?? "Unable to create renewal checkout.");
+        return;
+      }
+
+      if (goToCheckoutOrder(result.order)) return;
+      setRenewalMessage("Renewal checkout order created.");
+    } catch {
+      setRenewalMessage("Unable to reach renewal checkout service.");
+    } finally {
+      setRenewalBusyId(null);
+    }
+  }
+
   async function createDepositCheckout() {
     setIsBalanceActionBusy(true);
     setBalanceActionMessage("");
     setBalanceCheckoutPreview(null);
 
-    try {
-      const response = await fetch("/api/account/billing/deposit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: Number(depositAmount) })
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !result?.success) {
-        setBalanceActionMessage(result?.message ?? "Unable to create deposit checkout.");
-        return;
-      }
-
-      setBalanceCheckoutPreview(toCheckoutPreview(result.order));
-      setBalanceActionMessage(result.message);
-    } catch {
-      setBalanceActionMessage("Unable to reach deposit checkout service.");
-    } finally {
+    const amount = Number(depositAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setBalanceActionMessage("Please enter a deposit amount greater than $0.");
       setIsBalanceActionBusy(false);
+      return;
     }
+
+    const brandName = billing?.balance?.brandName || "smarterasp.net";
+    const depositUrl = `https://member5.smarterasp.net/checkout_standalone/deposit?username=${encodeURIComponent(currentUser?.login ?? "")}&amount=${encodeURIComponent(amount.toFixed(2))}&brandname=${encodeURIComponent(brandName)}`;
+    const popup = openCenteredPopup(depositUrl, "AccountDeposit");
+    if (!popup) {
+      setBalanceActionMessage("Your browser blocked the deposit popup. Allow popups for this site, then try again.");
+      setIsBalanceActionBusy(false);
+      return;
+    }
+
+    setBalanceActionMessage("Deposit popup opened. Account balance will refresh when it closes.");
+    if (window.focus) popup.focus();
+
+    const popupTimer = window.setInterval(() => {
+      if (popup.closed) {
+        window.clearInterval(popupTimer);
+        setIsBalanceActionBusy(false);
+        setBalanceActionMessage("Deposit popup closed. Refreshing account balance.");
+        onReloadBilling();
+      }
+    }, 1000);
   }
 
   function toggleRenewalSelection(clientProductId) {
@@ -10274,6 +11082,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
       }
 
       setRenewalMessage(result.message);
+      if (goToCheckoutOrder(result.order)) return;
       setSelectedRenewalCheckoutPreview(toCheckoutPreview(result.order, selectedRenewalIds.length));
     } catch {
       setRenewalMessage("Unable to reach selected renewal checkout service.");
@@ -10335,7 +11144,11 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
                 <div><dt>Bank Code</dt><dd>387</dd></div>
                 <div><dt>Branch No.</dt><dd>747</dd></div>
               </dl>
-              <p>Bank wire processing fee is $30. Include the fee with the transfer.</p>
+              <p className="wire-fee-note">
+                <span>Bank wire processing fee</span>
+                <strong>$45</strong>
+                <em>Include the fee with the transfer.</em>
+              </p>
             </section>
             <section>
               <span>USDT Transfer</span>
@@ -10379,6 +11192,23 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
 
   if (activeTab === "active") {
     const products = billing?.activeProducts ?? [];
+    if (selectedProduct) {
+      return (
+        <ProductRenewPage
+          product={selectedProduct}
+          catalog={renewalCatalog}
+          message={renewalMessage}
+          busy={isRenewalPageLoading || renewalBusyId === `product-renew-${selectedProduct.clientProductId}`}
+          onBack={() => {
+            setSelectedProduct(null);
+            setRenewalCatalog(null);
+            setRenewalMessage("");
+          }}
+          onCheckout={createProductRenewalCheckout}
+        />
+      );
+    }
+
     return products.length ? (
       <div className="billing-detail-layout">
         {productActionMessage && <p className="renewal-action-message">{productActionMessage}</p>}
@@ -10390,17 +11220,16 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
             <span className={product.status === "Active" ? "status-pill" : "status-pill muted"}>{product.status}</span>,
             formatDate(product.nextDueDate),
             formatMoney(product.amount),
-            <button className="secondary-button compact" type="button" onClick={() => setSelectedProduct(product)}>Details</button>
+            product.nextDueDate ? (
+              <button className="primary-button compact" type="button" onClick={() => openProductRenewPage(product)}>
+                <MenuIcon name="order" />
+                <span>Renew</span>
+              </button>
+            ) : (
+              <span className="muted-count">N/A</span>
+            )
           ])}
         />
-        {selectedProduct && (
-          <BillingProductDetail
-            product={selectedProduct}
-            onClose={() => setSelectedProduct(null)}
-            onManage={() => manageProduct(selectedProduct)}
-            onRenew={() => runRenewalAction(selectedProduct, "renew")}
-          />
-        )}
         {renewalMessage && <p className="renewal-action-message">{renewalMessage}</p>}
         {renewalPreview && <RenewalCheckoutPreview renewal={renewalPreview} onClose={() => setRenewalPreview(null)} onCheckout={createBillingRenewalCheckout} />}
       </div>
@@ -10472,42 +11301,8 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
   }
 
   const purchases = billing?.purchases ?? [];
-  const pendingCheckouts = billing?.pendingCheckouts ?? [];
-  const pendingRenewCheckouts = billing?.pendingRenewCheckouts ?? [];
-  return purchases.length || pendingCheckouts.length || pendingRenewCheckouts.length ? (
+  return purchases.length ? (
     <div className="billing-detail-layout">
-      {!!(pendingCheckouts.length || pendingRenewCheckouts.length) && (
-        <section className="pending-checkout-panel">
-          <div className="billing-detail-header">
-            <div>
-              <span className="status-pill blue">Checkout Recovery</span>
-              <h3>Pending Checkouts</h3>
-            </div>
-          </div>
-          <DataTable
-            columns={["Created", "Product", "Total", "Payment", "Fulfillment", "Action"]}
-            rows={[
-              ...pendingCheckouts.map((checkout) => [
-                formatDate(checkout.addDate),
-                checkout.productName,
-                formatMoney(checkout.amount),
-                <span className={checkout.isPaid ? "status-pill" : "status-pill muted"}>{checkout.isPaid ? "Paid" : "Unpaid"}</span>,
-                <span className={checkout.processed ? "status-pill" : "status-pill muted"}>{checkout.processed ? "Processed" : "Waiting"}</span>,
-                <a className="secondary-button compact as-link" href={`/checkout?guid=${encodeURIComponent(checkout.id)}`}>Open</a>
-              ]),
-              ...pendingRenewCheckouts.map((checkout) => [
-                formatDate(checkout.addDate),
-                "Multiple Renewal",
-                formatMoney(checkout.amount),
-                <span className={checkout.isPaid ? "status-pill" : "status-pill muted"}>{checkout.isPaid ? "Paid" : "Unpaid"}</span>,
-                <span className={checkout.isProcessed ? "status-pill" : "status-pill muted"}>{checkout.isProcessed ? "Processed" : "Waiting"}</span>,
-                <a className="secondary-button compact as-link" href={`/checkout/renew?guid=${encodeURIComponent(checkout.id)}`}>Open</a>
-              ])
-            ]}
-          />
-        </section>
-      )}
-      {invoiceMessage && <p className="renewal-action-message">{invoiceMessage}</p>}
       <div className="billing-filter-bar">
         <label>
           From
@@ -10525,7 +11320,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
             onChange={(event) => onPurchaseDateChange("end", event.target.value)}
           />
         </label>
-        <button className="secondary-button compact icon-only-button" type="button" title="Search Purchases" aria-label="Search Purchases" onClick={onReloadBilling}>
+        <button className="secondary-button compact icon-only-button billing-search-button" type="button" title="Search Purchases" aria-label="Search Purchases" onClick={onReloadBilling}>
           <MenuIcon name="search" />
         </button>
       </div>
@@ -10538,22 +11333,19 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
             purchase.paymentTerm,
             formatMoney(purchase.amount),
             <span className={purchase.paymentStatus === "completed" ? "status-pill" : "status-pill muted"}>{purchase.paymentStatus}</span>,
-            <button
+            <a
               className="secondary-button compact icon-only-button"
-              type="button"
-              disabled={invoiceBusyId !== null}
-              onClick={() => loadInvoice(purchase)}
+              href={`/account/printreceipt?id=${encodeURIComponent(purchase.orderId)}`}
               aria-label="Invoice"
               title="Invoice"
             >
-              {invoiceBusyId === purchase.orderId ? <LoadingIcon label="Loading invoice" /> : <MenuIcon name="invoice" />}
-            </button>
+              <MenuIcon name="invoice" />
+            </a>
           ])}
         />
       ) : (
         <p className="empty-state">No completed purchases found.</p>
       )}
-      {selectedPurchase && <BillingPurchaseDetail purchase={selectedPurchase} onClose={() => setSelectedPurchase(null)} />}
     </div>
   ) : <p className="empty-state">No purchases found.</p>;
 }
@@ -10581,6 +11373,85 @@ function CheckoutPreviewCard({ preview, onClose }) {
   );
 }
 
+function ProductRenewPage({ product, catalog, message, busy, onBack, onCheckout }) {
+  const [selectedKey, setSelectedKey] = useState("");
+  const options = catalog?.options ?? [];
+  const selectedOption = options.find((option) => renewalOptionKey(option) === selectedKey);
+
+  useEffect(() => {
+    setSelectedKey("");
+  }, [product?.clientProductId]);
+
+  return (
+    <div className="billing-detail-layout">
+      <div className="billing-detail-card product-renew-page">
+        <div className="billing-detail-header">
+          <div>
+            <span className="status-pill blue">Product Renew</span>
+            <h3>{catalog?.renewalProductName || product.name}</h3>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={onBack}>Back</button>
+        </div>
+        <dl className="card-meta single">
+          <div><dt>Product</dt><dd>{product.name}</dd></div>
+          <div><dt>Description</dt><dd>{product.description}</dd></div>
+          <div><dt>Due Date</dt><dd>{formatDate(product.nextDueDate)}</dd></div>
+          <div><dt>Current Term</dt><dd>{product.paymentTerm || "N/A"}</dd></div>
+        </dl>
+        {busy && !catalog && (
+          <div className="inline-loading-row">
+            <LoadingIcon label="Loading renewal terms" />
+          </div>
+        )}
+        {catalog && (
+          <div className="product-renew-grid">
+            <label>
+              Payment Terms
+              <select value={selectedKey} onChange={(event) => setSelectedKey(event.target.value)}>
+                <option value="">Please choose a payment term</option>
+                {options.map((option) => (
+                  <option key={renewalOptionKey(option)} value={renewalOptionKey(option)}>
+                    {renewalOptionLabel(catalog, option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedOption && (
+              <section className="renewal-price-section">
+                <div><span>Payment Term</span><strong>{formatPaymentTerm(selectedOption.paymentTerm)}</strong></div>
+                <div><span>Total Price</span><strong>{formatMoney(selectedOption.amount, selectedOption.currency)}</strong></div>
+                <div><span>Monthly Price</span><strong>{formatMoney(selectedOption.monthlyAmount, selectedOption.currency)}</strong></div>
+                {Number(selectedOption.originalAmount) > Number(selectedOption.amount) && (
+                  <div><span>Original Price</span><strong>{formatMoney(selectedOption.originalAmount, selectedOption.currency)}</strong></div>
+                )}
+                <button className="primary-button" type="button" disabled={busy} onClick={() => onCheckout(selectedOption)}>
+                  {busy ? <LoadingIcon label="Creating renewal checkout" /> : "Continue to Cart"}
+                </button>
+              </section>
+            )}
+            {options.length === 1 && (
+              <p className="renewal-action-message">
+                Only one renewal term is available for this product in the live price table.
+              </p>
+            )}
+            {!options.length && <p className="empty-state">No renewal payment terms were found for this product.</p>}
+          </div>
+        )}
+        {message && <p className="renewal-action-message">{message}</p>}
+      </div>
+    </div>
+  );
+}
+
+function renewalOptionKey(option) {
+  return `${option.paymentTerm}|${option.currency}`;
+}
+
+function renewalOptionLabel(catalog, option) {
+  const monthly = Number(option.monthlyAmount) > 0 ? ` - ${formatMoney(option.monthlyAmount, option.currency)}/mo` : "";
+  return `${catalog.product.name} - ${formatPaymentTerm(option.paymentTerm)} - ${formatMoney(option.amount, option.currency)}${monthly}`;
+}
+
 function RenewalCheckoutPreview({ renewal, onClose, onCheckout }) {
   const [checkoutOrder, setCheckoutOrder] = useState(null);
   const [checkoutMessage, setCheckoutMessage] = useState("");
@@ -10594,6 +11465,7 @@ function RenewalCheckoutPreview({ renewal, onClose, onCheckout }) {
 
     try {
       const order = await onCheckout(renewal);
+      if (goToCheckoutOrder(order)) return;
       setCheckoutOrder(order);
       setCheckoutMessage("Checkout order created.");
     } catch (error) {
@@ -10775,6 +11647,213 @@ function profileFormFromSettings(profile) {
     billingAddress: editableAccountValue(profile?.billingAddress),
     billingPostcode: editableAccountValue(profile?.billingPostcode)
   };
+}
+
+function HelpdeskSection() {
+  const [dashboard, setDashboard] = useState(null);
+  const [form, setForm] = useState(null);
+  const [activeTab, setActiveTab] = useState("my");
+  const [isCreating, setIsCreating] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [ticketForm, setTicketForm] = useState({
+    subject: "",
+    email: "",
+    url: "",
+    description: "",
+    attachment: ""
+  });
+
+  async function loadHelpdesk() {
+    setIsLoading(true);
+    setError("");
+    try {
+      const [dashboardResponse, formResponse] = await Promise.all([
+        fetch("/api/account/helpdesk").then((response) => response.json()),
+        fetch("/api/account/helpdesk/form").then((response) => response.json())
+      ]);
+
+      if (!dashboardResponse.success) {
+        setError(dashboardResponse.message ?? "Unable to load helpdesk tickets.");
+      } else {
+        setDashboard(dashboardResponse.dashboard);
+      }
+
+      if (formResponse.success) {
+        setForm(formResponse.form);
+        setTicketForm((current) => ({
+          ...current,
+          email: current.email || formResponse.form?.defaultEmail || ""
+        }));
+      } else if (!dashboardResponse.success) {
+        setError(formResponse.message ?? "Unable to load helpdesk form.");
+      }
+    } catch {
+      setError("Unable to reach helpdesk service.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadHelpdesk();
+  }, []);
+
+  async function submitTicket(event) {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setMessage("");
+    setError("");
+    try {
+      const response = await fetch("/api/account/helpdesk/tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: ticketForm.subject,
+          email: ticketForm.email,
+          url: ticketForm.url,
+          description: ticketForm.description,
+          attachment: ticketForm.attachment
+        })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setError(result?.message ?? "Unable to submit ticket.");
+        return;
+      }
+
+      setMessage(result.message ?? "Ticket submitted.");
+      setTicketForm((current) => ({
+        ...current,
+        subject: "",
+        url: "",
+        description: "",
+        attachment: ""
+      }));
+      await loadHelpdesk();
+    } catch {
+      setError("Unable to submit ticket.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="helpdesk-section">
+      <div className="helpdesk-toolbar">
+        <div className="tabs" role="tablist" aria-label="Helpdesk tickets">
+          <button className={activeTab === "my" ? "tab active" : "tab"} type="button" role="tab" aria-selected={activeTab === "my"} onClick={() => setActiveTab("my")}>
+            <MenuIcon name="ticket" />
+            <span>My Tickets</span>
+          </button>
+          <button className={activeTab === "closed" ? "tab active" : "tab"} type="button" role="tab" aria-selected={activeTab === "closed"} onClick={() => setActiveTab("closed")}>
+            <MenuIcon name="checklist" />
+            <span>Closed Tickets</span>
+          </button>
+        </div>
+        <button className="primary-button compact" type="button" onClick={() => setIsCreating((value) => !value)}>
+          {isCreating ? "Close" : "+ Create New Ticket"}
+        </button>
+      </div>
+
+      {isCreating && (
+        <article className="panel-card helpdesk-submit-card">
+          <form className="helpdesk-form" onSubmit={submitTicket}>
+            <div className="form-grid two">
+              <label>
+                Subject
+                <input value={ticketForm.subject} onChange={(event) => setTicketForm((current) => ({ ...current, subject: event.target.value }))} required />
+              </label>
+              <label>
+                Domain
+                <input value={ticketForm.url} onChange={(event) => setTicketForm((current) => ({ ...current, url: event.target.value }))} required />
+              </label>
+              <label>
+                Contact Email
+                <input value={ticketForm.email} onChange={(event) => setTicketForm((current) => ({ ...current, email: event.target.value }))} />
+              </label>
+            </div>
+
+            <label>
+              Description
+              <textarea value={ticketForm.description} onChange={(event) => setTicketForm((current) => ({ ...current, description: event.target.value }))} rows={6} required />
+            </label>
+            <label>
+              Attachment
+              <textarea value={ticketForm.attachment} onChange={(event) => setTicketForm((current) => ({ ...current, attachment: event.target.value }))} rows={3} />
+            </label>
+
+            <div className="form-actions right">
+              <button className="primary-button compact" type="submit" disabled={isSubmitting}>
+                {isSubmitting ? <LoadingIcon label="Submitting ticket" /> : "Submit Ticket"}
+              </button>
+            </div>
+          </form>
+          {message && <p className="renewal-action-message success">{message}</p>}
+          {error && <p className="renewal-action-message error">{error}</p>}
+        </article>
+      )}
+
+      {!isCreating && error && <p className="renewal-action-message error">{error}</p>}
+
+      {isLoading && <LoadingState label="Loading helpdesk tickets" />}
+      {dashboard && (
+        <article className="panel-card helpdesk-ticket-panel">
+          <HelpdeskTicketTable
+            tickets={activeTab === "my" ? dashboard.openTickets ?? [] : dashboard.closedTickets ?? []}
+            emptyText={activeTab === "my" ? "No current tickets." : "No closed tickets."}
+            mode={activeTab}
+          />
+        </article>
+      )}
+    </section>
+  );
+}
+
+function helpdeskStatusInfo(ticket) {
+  const state = String(ticket.state ?? "").toLowerCase();
+  const staffReplied = ticket.replyCount > 0 && !state.includes("pending") && !state.includes("q");
+  return staffReplied
+    ? { label: "Staff Replied", tone: "staff" }
+    : { label: "Pending", tone: "pending" };
+}
+
+function HelpdeskTicketTable({ tickets, emptyText, mode = "my" }) {
+  if (mode === "closed") {
+    return tickets.length ? (
+      <DataTable
+        columns={["Ticket ID", "Priority", "Subject", "Closed Time"]}
+        rows={tickets.map((ticket) => [
+          ticket.callId,
+          ticket.priority,
+          ticket.subject,
+          formatDateTime(ticket.closeDate)
+        ])}
+      />
+    ) : (
+      <p className="empty-text">{emptyText}</p>
+    );
+  }
+
+  return tickets.length ? (
+    <DataTable
+      columns={["Ticket ID", "Priority", "Subject", "Created Time", "Status"]}
+      rows={tickets.map((ticket) => {
+        const status = helpdeskStatusInfo(ticket);
+        return [
+          ticket.callId,
+          `Priority${ticket.priority}`,
+          ticket.subject,
+          formatDateTime(ticket.enterDate),
+          <span className={`helpdesk-status ${status.tone}`}><span />{status.label}</span>
+        ];
+      })}
+    />
+  ) : (
+    <p className="empty-text">{emptyText}</p>
+  );
 }
 
 function SettingsSection() {
@@ -11000,13 +12079,6 @@ function SettingsSection() {
   return (
     <section className="settings-section">
       <article className="panel-card settings-overview-card">
-        <div className="billing-header">
-          <div>
-            <span className="status-pill blue">Live account</span>
-            <h2>Account Settings</h2>
-          </div>
-          <RefreshButton onClick={loadSettings} />
-        </div>
         {isLoadingSettings && <LoadingState label="Loading account settings" />}
         {settingsError && (
           <div className="dashboard-error-panel inline-error">
@@ -11021,7 +12093,6 @@ function SettingsSection() {
               <dl className="card-meta single">
                 <div><dt>Customer ID</dt><dd>{profile.customerId}</dd></div>
                 <div><dt>Login</dt><dd>{profile.login}</dd></div>
-                <div><dt>Account Type</dt><dd>{profile.customerType}</dd></div>
                 <div><dt>Status</dt><dd>{profile.status}</dd></div>
                 <div><dt>Name</dt><dd>{profile.name || "N/A"}</dd></div>
                 <div><dt>Company</dt><dd>{profile.companyName || "N/A"}</dd></div>
@@ -11035,7 +12106,6 @@ function SettingsSection() {
                 <div><dt>Email</dt><dd>{profile.emailDisplay || "Stored securely"}</dd></div>
                 <div><dt>Mobile</dt><dd>{profile.mobileNumber || "N/A"}</dd></div>
                 <div><dt>Email Verified</dt><dd>{profile.reVerify ? "Yes" : "Needs verification"}</dd></div>
-                <div><dt>Security Version</dt><dd>{profile.securityVersion || "N/A"}</dd></div>
                 <div><dt>2FA Status</dt><dd>{twoFactor?.isEnabled ? "Enabled" : "Disabled"}</dd></div>
                 <div><dt>2FA Created</dt><dd>{formatDate(twoFactor?.enterDate)}</dd></div>
               </dl>
@@ -11075,14 +12145,6 @@ function SettingsSection() {
               disabled
               title="Mobile changes require SMS PIN verification in the Classic ASP flow."
               onChange={(event) => updateProfileField("mobileNumber", event.target.value)}
-            />
-          </label>
-          <label>
-            Browser Language
-            <input
-              type="text"
-              value={profileForm.browserLanguage}
-              onChange={(event) => updateProfileField("browserLanguage", event.target.value)}
             />
           </label>
           <label>
@@ -11271,13 +12333,13 @@ function SettingsSection() {
 
 function AffiliateSection() {
   const tabs = [
-    ["getting-started", "Getting Started"],
-    ["referrals", "My Referrals"],
-    ["pending", "Pending Commission"],
-    ["current", "Current Commission"],
-    ["withdraw", "Withdraw"],
-    ["pay-log", "Pay Log"],
-    ["promo-assets", "Promo Assets"]
+    ["getting-started", "Getting Started", "rocket"],
+    ["referrals", "My Referrals", "share"],
+    ["pending", "Pending Commission", "warning"],
+    ["current", "Current Commission", "stats"],
+    ["withdraw", "Withdraw", "download"],
+    ["pay-log", "Pay Log", "invoice"],
+    ["promo-assets", "Promo Assets", "cards"]
   ];
   const [activeTab, setActiveTab] = useState("getting-started");
   const [affiliate, setAffiliate] = useState(null);
@@ -11315,14 +12377,6 @@ function AffiliateSection() {
   return (
     <section className="affiliate-stack">
       <article className="panel-card affiliate-panel">
-        <div className="billing-header">
-          <div>
-            <span className="status-pill blue">Pays 60%</span>
-            <h2>Affiliate Program</h2>
-          </div>
-          <RefreshButton onClick={loadAffiliate} />
-        </div>
-
         <div className="affiliate-summary-grid">
           <AffiliateMetric label="Referrals" value={summary?.totalReferrals ?? "..."} />
           <AffiliateMetric label="Paid Referrals" value={summary?.paidReferrals ?? "..."} />
@@ -11331,7 +12385,7 @@ function AffiliateSection() {
         </div>
 
         <div className="tabs" role="tablist" aria-label="Affiliate tabs">
-          {tabs.map(([id, label]) => (
+          {tabs.map(([id, label, icon]) => (
             <button
               aria-selected={id === activeTab}
               className={id === activeTab ? "tab active" : "tab"}
@@ -11340,7 +12394,8 @@ function AffiliateSection() {
               type="button"
               onClick={() => setActiveTab(id)}
             >
-              {label}
+              <MenuIcon name={icon} />
+              <span>{label}</span>
             </button>
           ))}
         </div>
@@ -11364,7 +12419,6 @@ function AffiliateSection() {
           </div>
         )}
       </article>
-      <KnowledgeBaseCard title="Reseller Guides" articles={resellerKbArticles} />
     </section>
   );
 }
@@ -11549,7 +12603,8 @@ function AffiliatePayLog({ payouts }) {
 function AffiliatePromoAssets({ affiliate }) {
   const [copiedSize, setCopiedSize] = useState("");
   const referralCode = affiliate?.login || "jyu001";
-  const banners = buildAffiliateBanners(referralCode);
+  const brandDomain = normalizeAffiliateBrandDomain(affiliate?.brandDomain);
+  const banners = buildAffiliateBanners(referralCode, brandDomain);
 
   async function copyBannerCode(banner) {
     if (await writeTextToClipboard(banner.code)) {
@@ -11580,20 +12635,21 @@ function AffiliatePromoAssets({ affiliate }) {
 function AffiliateGettingStarted({ affiliate }) {
   const referralCode = affiliate?.login || "jyu001";
   const referralCustomerId = affiliate?.customerId ? String(affiliate.customerId) : "";
-  const banners = buildAffiliateBanners(referralCode);
+  const brandDomain = normalizeAffiliateBrandDomain(affiliate?.brandDomain);
+  const banners = buildAffiliateBanners(referralCode, brandDomain);
   const [activeBannerSize, setActiveBannerSize] = useState(banners[0]?.size ?? "728X90");
   const [copiedBanner, setCopiedBanner] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteCopied, setInviteCopied] = useState("");
   const activeBanner = banners.find((banner) => banner.size === activeBannerSize) ?? banners[0];
-  const referralUrl = `https://www.SmarterASP.NET/index?r=${encodeURIComponent(referralCode)}`;
-  const referralIdUrl = referralCustomerId ? `https://www.SmarterASP.NET/index?r=${encodeURIComponent(referralCustomerId)}` : "";
-  const inviteSubject = "Try SmarterASP.NET hosting";
+  const referralUrl = `https://www.${brandDomain}/index?r=${encodeURIComponent(referralCode)}`;
+  const referralIdUrl = referralCustomerId ? `https://www.${brandDomain}/index?r=${encodeURIComponent(referralCustomerId)}` : "";
+  const inviteSubject = `Try ${brandDomain} hosting`;
   const inviteBody = [
     `Hi${inviteName.trim() ? ` ${inviteName.trim()}` : ""},`,
     "",
-    "I wanted to share SmarterASP.NET with you. They offer Windows ASP.NET hosting, domains, VPN services, SSL certificates, and add-ons.",
+    `I wanted to share ${brandDomain} with you. They offer Windows ASP.NET hosting, domains, VPN services, SSL certificates, and add-ons.`,
     "",
     `You can start here: ${referralUrl}`,
     "",
@@ -11707,7 +12763,7 @@ function AffiliateGettingStarted({ affiliate }) {
             <img src={activeBanner?.url ?? ""} alt={`${activeBanner?.size ?? "Affiliate"} banner preview`} />
           </div>
         </div>
-        <a className="affiliate-terms" href="#affiliate-terms">*Click here to see our Affiliate Terms and Condition</a>
+        <a className="affiliate-terms" href={`https://www.${brandDomain}/affiliate_terms`} target="_blank" rel="noreferrer">*Click here to see our Affiliate Terms and Condition</a>
       </article>
     </div>
   );
