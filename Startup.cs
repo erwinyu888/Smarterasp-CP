@@ -43,6 +43,7 @@ namespace controlpanel
         private const int ConstPageTypeEmailQuota = 17;
         private const int ConstPageTypeWhoisPrivacy = 19;
         private const int ConstPageTypeReseller = 20;
+        private const int ConstPageTypeUpgradePlan = 21;
         private const int ConstPageTypeGeneral = 22;
         private const int ConstPageTypeWebUser = 23;
         private const int ConstPageTypeDailySentLimit = 24;
@@ -61,7 +62,9 @@ namespace controlpanel
         private const int ConstPageTypeCloudBackup = 38;
         private const int ConstPageTypeDataBackup = 39;
         private const string FileManagerEditAllowlist = ".json|.js|.cshtml|.htaccess|.ashx|.cer|.asax|.pl|.asp|.ascx|.aspx|.php|.asa|.config|.bas|.vbs|.xml|.htm|.html|.txt|.sql|.css|.tar|.url|.cfm|.shtml|.shtm|.ssi|.cs|.vb|.xaml|.master|.inc|.sitemap|";
+        private const string PersistentSessionCookieName = "cp_session";
         private const int ConstPageTypeServerBackup = 40;
+        private const string LegacyAccountTimeZone = "America/Los_Angeles";
 
         private readonly IConfiguration _configuration;
 
@@ -121,6 +124,10 @@ namespace controlpanel
                 endpoints.MapPost("/api/account/renewals/{clientProductId:int}/renew", HandleRenewalCheckoutPreviewAsync);
                 endpoints.MapPost("/api/account/renewals/{clientProductId:int}/checkout", HandleRenewalCheckoutAsync);
                 endpoints.MapPost("/api/account/renewals/checkout-many", HandleMultipleRenewalCheckoutAsync);
+                endpoints.MapGet("/api/account/hosting-upgrade/{cpId:int}", HandleHostingUpgradeCatalogAsync);
+                endpoints.MapPost("/api/account/hosting-upgrade/preview", HandleHostingUpgradePreviewAsync);
+                endpoints.MapPost("/api/account/hosting-upgrade/checkout", HandleHostingUpgradeCheckoutAsync);
+                endpoints.MapPost("/api/account/hosting-upgrade/downgrade", HandleHostingDowngradeAsync);
                 endpoints.MapGet("/api/account/vpn", HandleAccountVpnAsync);
                 endpoints.MapPost("/api/account/vpn/checkout", HandleVpnCheckoutAsync);
                 endpoints.MapPost("/api/account/vpn/users", HandleVpnUserCreatePreviewAsync);
@@ -146,6 +153,8 @@ namespace controlpanel
                 endpoints.MapPost("/api/account/reverify/send", HandleAccountReverifySendAsync);
                 endpoints.MapPost("/api/account/password-expiring/skip", HandlePasswordExpiringSkipAsync);
                 endpoints.MapPost("/api/account/password-change/code", HandlePasswordChangeCodeAsync);
+                endpoints.MapPost("/api/account/settings/2fa/start", HandleAccountTwoFactorStartAsync);
+                endpoints.MapPost("/api/account/settings/2fa/confirm", HandleAccountTwoFactorConfirmAsync);
                 endpoints.MapPost("/api/account/settings/2fa/disable", HandleAccountTwoFactorDisableAsync);
                 endpoints.MapGet("/api/account/checkout-temp/{guid}", HandleCheckoutTempOrderAsync);
                 endpoints.MapPost("/api/account/checkout-temp/{guid}/pay-with-balance", HandleCheckoutPayWithBalanceAsync);
@@ -298,12 +307,13 @@ namespace controlpanel
             var hostingAccounts = await LoadHostingAccountsAsync(connection, sessionUser.CustomerId);
             var statusSummary = await LoadHostingStatusSummaryAsync(connection, sessionUser.CustomerId);
             var urgentLogs = await LoadUrgentLogsAsync(connection, sessionUser.CustomerId);
+            var renewalProducts = await LoadProductRenewalsAsync(connection, sessionUser.CustomerId, 30);
 
             var dashboard = new AccountDashboard(
                 customer,
                 hostingAccounts,
                 statusSummary,
-                BuildRenewalNotices(hostingAccounts),
+                BuildRenewalNotices(renewalProducts),
                 urgentLogs
             );
 
@@ -697,6 +707,16 @@ WHERE customer_urgent_log_id = @logId
                 {
                     await Results.BadRequest(new AccountActionResponse(false, "Domain manager profile credentials were not found for this domain.")).ExecuteAsync(context);
                     return;
+                }
+
+                if (action is "privacy-on" or "privacy-off")
+                {
+                    var privacyCheck = ValidateDomainPrivacyAction(domain, action == "privacy-on");
+                    if (!privacyCheck.Success)
+                    {
+                        await Results.BadRequest(new AccountActionResponse(false, privacyCheck.Message)).ExecuteAsync(context);
+                        return;
+                    }
                 }
 
                 using var httpClient = new HttpClient
@@ -1211,6 +1231,218 @@ WHERE client_product_id = @clientProductId
             )).ExecuteAsync(context);
         }
 
+        private async Task HandleHostingUpgradeCatalogAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new HostingUpgradeCatalogResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (!TryReadRouteInt(context, "cpId", out var cpId))
+            {
+                await Results.BadRequest(new HostingUpgradeCatalogResponse(false, "Missing hosting plan.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var current = await LoadHostingUpgradeCurrentAsync(connection, sessionUser.CustomerId, cpId);
+            if (current == null)
+            {
+                await Results.Json(
+                    new HostingUpgradeCatalogResponse(false, "Hosting plan was not found on this account.", null),
+                    statusCode: StatusCodes.Status404NotFound
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var targets = await LoadHostingUpgradeTargetsAsync(connection, current, sessionUser.CustomerType);
+            var catalog = new HostingUpgradeCatalog(
+                current,
+                targets,
+                "account/upgrade_plan.asp -> account/upgrade_plan_action.asp -> account/addon_purchase_action.asp",
+                "Choose an eligible target plan. The next step calculates the prorated difference just like the old upgrade_plan_action.asp page."
+            );
+
+            await Results.Ok(new HostingUpgradeCatalogResponse(true, "Hosting upgrade options loaded.", catalog)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingUpgradePreviewAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new HostingUpgradePreviewResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<HostingUpgradeRequest>();
+            if (request == null || request.CpId <= 0 || request.TargetProductId <= 0)
+            {
+                await Results.BadRequest(new HostingUpgradePreviewResponse(false, "Choose a hosting plan and upgrade target.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var preview = await BuildHostingUpgradePreviewAsync(connection, sessionUser.CustomerId, request.CpId, request.TargetProductId);
+            if (preview == null)
+            {
+                await Results.Json(
+                    new HostingUpgradePreviewResponse(false, "Unable to calculate this upgrade. Confirm the plan is active and has matching old billing terms.", null),
+                    statusCode: StatusCodes.Status404NotFound
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            await Results.Ok(new HostingUpgradePreviewResponse(preview.CanCheckout, preview.Message, preview)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingUpgradeCheckoutAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new CheckoutCreateResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<HostingUpgradeRequest>();
+            if (request == null || request.CpId <= 0 || request.TargetProductId <= 0)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Choose a hosting plan and upgrade target.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var preview = await BuildHostingUpgradePreviewAsync(connection, sessionUser.CustomerId, request.CpId, request.TargetProductId);
+            if (preview == null)
+            {
+                await Results.Json(
+                    new CheckoutCreateResponse(false, "Unable to calculate this upgrade. Confirm the plan is active and has matching old billing terms.", null),
+                    statusCode: StatusCodes.Status404NotFound
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (!preview.CanCheckout)
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, preview.Message, null)).ExecuteAsync(context);
+                return;
+            }
+
+            var guid = await CreateBuyerTempOrderAsync(
+                connection,
+                sessionUser.CustomerId,
+                458,
+                $"Account Upgrade - {preview.Current.CpLogin}",
+                preview.TotalAmount,
+                "none",
+                "usd",
+                preview.Target.ProductId.ToString(CultureInfo.InvariantCulture),
+                preview.DaysLeft.ToString(CultureInfo.InvariantCulture),
+                preview.Current.CpId.ToString(CultureInfo.InvariantCulture),
+                ConstPageTypeUpgradePlan
+            );
+
+            var order = new CheckoutOrder(
+                guid,
+                BuildLegacyCheckoutUrl(guid),
+                $"Account Upgrade - {preview.Current.CpLogin}",
+                preview.TotalAmount,
+                "USD",
+                ConstPageTypeUpgradePlan,
+                "Created oms.dbo.buyer_temp upgrade order using legacy product 458 and page type 21. info3=target product, info4=days left, info5=cpID."
+            );
+
+            await Results.Ok(new CheckoutCreateResponse(true, "Upgrade checkout order created.", order)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingDowngradeAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Not signed in."),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<HostingUpgradeRequest>();
+            if (request == null || request.CpId <= 0 || request.TargetProductId <= 0)
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Choose a hosting plan and downgrade target.")).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var preview = await BuildHostingUpgradePreviewAsync(connection, sessionUser.CustomerId, request.CpId, request.TargetProductId);
+            if (preview == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Unable to validate this downgrade path."),
+                    statusCode: StatusCodes.Status404NotFound
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (!preview.IsDowngrade)
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "This selected plan is an upgrade. Use Upgrade Now to create checkout.")).ExecuteAsync(context);
+                return;
+            }
+
+            var result = await DowngradeHostingPlanAsync(connection, sessionUser.CustomerId, preview.Current, preview.Target, sessionUser.CustomerType);
+            await Results.Json(result, statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+        }
+
         private async Task HandleAccountVpnAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -1369,10 +1601,10 @@ WHERE client_product_id = @clientProductId
 
             var location = string.IsNullOrWhiteSpace(area) ? "automatic location" : area;
             var vpnType = string.IsNullOrWhiteSpace(type) ? "IKEv2" : type;
-            await Results.Ok(new AccountActionResponse(
-                true,
-                $"{user} passed account and quota checks for {vpnType} in {location}. Live VPN host provisioning is queued for the control-plane worker step."
-            )).ExecuteAsync(context);
+            await Results.Json(new AccountActionResponse(
+                false,
+                $"{user} passed account and quota checks for {vpnType} in {location}, but live VPN creation is blocked until legacy encryptpwd/decryptserverpwd and member5 SSH command parity are configured. No DB or VPN host changes were made."
+            ), statusCode: StatusCodes.Status409Conflict).ExecuteAsync(context);
         }
 
         private async Task HandleVpnUserActionAsync(HttpContext context)
@@ -1439,10 +1671,10 @@ WHERE client_product_id = @clientProductId
                 _ => "VPN action"
             };
 
-            await Results.Ok(new AccountActionResponse(
-                true,
-                $"{actionLabel} is ready for {service.User}. Live VPN host changes are intentionally held for the worker/provisioning step."
-            )).ExecuteAsync(context);
+            await Results.Json(new AccountActionResponse(
+                false,
+                $"{actionLabel} for {service.User} requires the old vpn_action.asp SSH/config flow and is blocked until legacy decryptserverpwd, remoteSSHCommand/member5 bridge, and OpenVPN file streaming are configured. No VPN host changes were made."
+            ), statusCode: StatusCodes.Status409Conflict).ExecuteAsync(context);
         }
 
         private async Task HandleAccountAddonsAsync(HttpContext context)
@@ -2299,8 +2531,8 @@ WHERE client_product_id = @clientProductId
 
             const string sql = @"
 UPDATE dbo.customer_profile
-SET name_en = @name,
-    company_name_en = @companyName,
+SET name_zh_cn = @name,
+    company_name_zh_cn = @companyName,
     browserlang = @browserLanguage,
     vat = @vat,
     country_zh_cn = @contactCountry,
@@ -2415,11 +2647,13 @@ WHERE customerID = @customerId";
             command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
             await command.ExecuteNonQueryAsync();
 
+            var syncResult = await SyncAccountPasswordTargetsAsync(connection, sessionUser.CustomerId, newPassword);
+
             context.Session.SetString("customerID", sessionUser.CustomerId.ToString(CultureInfo.InvariantCulture));
             context.Session.SetString("customerLogin", sessionUser.Login);
             context.Session.SetString("customerType", sessionUser.CustomerType);
 
-            await Results.Ok(new AccountActionResponse(true, "Account password updated. CP, FTP, and IIS password sync will be handled in the hosting control panel workflow.")).ExecuteAsync(context);
+            await Results.Ok(new AccountActionResponse(true, FormatPasswordSyncMessage("Account password updated.", syncResult))).ExecuteAsync(context);
         }
 
         private async Task HandleAccountEmailChangeRequestAsync(HttpContext context)
@@ -2559,8 +2793,39 @@ ORDER BY rv.create_date DESC";
                 return;
             }
 
-            var message = $"Verified pending email change for customer {customerId}. The final customer_profile.email update still needs the legacy encryptpwd-compatible writer before this app can safely complete the change.";
-            await Results.Ok(new EmailChangeVerifyResponse(true, message, false, newEmail, createdAt)).ExecuteAsync(context);
+            var encryptedEmail = TryLegacyEncryptPwd(newEmail);
+            if (string.IsNullOrWhiteSpace(encryptedEmail))
+            {
+                await Results.Json(
+                    new EmailChangeVerifyResponse(false, "Email verified, but customer_profile.email was not changed because legacy encryptpwd-compatible email writing is not configured yet.", false, newEmail, createdAt),
+                    statusCode: StatusCodes.Status409Conflict
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            await using (var updateCommand = new SqlCommand(@"
+UPDATE dbo.customer_profile
+SET email = @email
+WHERE customerID = @customerId
+  AND LOWER(customerLogin) = LOWER(@login)", connection))
+            {
+                updateCommand.Parameters.AddWithValue("@email", encryptedEmail);
+                updateCommand.Parameters.AddWithValue("@customerId", customerId);
+                updateCommand.Parameters.AddWithValue("@login", customerLogin);
+                await updateCommand.ExecuteNonQueryAsync();
+            }
+
+            await using (var deleteCommand = new SqlCommand("DELETE FROM dbo.reset_verify WHERE customerID = @customerId", connection))
+            {
+                deleteCommand.Parameters.AddWithValue("@customerId", customerId);
+                await deleteCommand.ExecuteNonQueryAsync();
+            }
+
+            var helpdeskResult = await UpdateHelpdeskLoginEmailAsync(customerLogin, newEmail);
+            var message = helpdeskResult.Success
+                ? "Email Updated"
+                : $"Email Updated. Helpdesk login email sync needs attention: {helpdeskResult.Message}";
+            await Results.Ok(new EmailChangeVerifyResponse(true, message, true, newEmail, createdAt)).ExecuteAsync(context);
         }
 
         private async Task HandleAccountActivationResendAsync(HttpContext context)
@@ -2707,6 +2972,107 @@ WHERE customerID = @customerId", connection);
             await WriteAccountMailResultAsync(context, mailResult, "Sent! Please check your email.");
         }
 
+        private async Task HandleAccountTwoFactorStartAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new TwoFactorActionResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var secretResult = await GetLegacyTwoFactorSecretAsync();
+            if (!secretResult.Success || string.IsNullOrWhiteSpace(secretResult.Secret))
+            {
+                await Results.Json(new TwoFactorActionResponse(false, secretResult.Message, null), statusCode: StatusCodes.Status502BadGateway).ExecuteAsync(context);
+                return;
+            }
+
+            context.Session.SetString("2fa_pending_secret", secretResult.Secret);
+            context.Session.SetInt32("2fa_verify_failcount", 0);
+
+            var name = $"{GetBrandDomainForCustomer(sessionUser.CustomerId)}-{sessionUser.Login}";
+            var qrResult = await GetLegacyTwoFactorQrUrlAsync(name, secretResult.Secret);
+            var setup = new TwoFactorSetupSummary(secretResult.Secret, qrResult.Success ? qrResult.QrCodeUrl : "");
+            await Results.Ok(new TwoFactorActionResponse(true, qrResult.Success ? "Scan the QR code and enter the six-digit code from your authenticator app." : qrResult.Message, setup)).ExecuteAsync(context);
+        }
+
+        private async Task HandleAccountTwoFactorConfirmAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountSettingsResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<TwoFactorConfirmRequest>();
+            var code = new string((request?.OneCode ?? "").Where(char.IsDigit).ToArray());
+            if (code.Length != 6)
+            {
+                await Results.BadRequest(new AccountSettingsResponse(false, "Enter the six-digit authenticator code.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var failCount = context.Session.GetInt32("2fa_verify_failcount") ?? 0;
+            if (failCount > 3)
+            {
+                context.Session.Remove("2fa_pending_secret");
+                context.Session.SetInt32("2fa_verify_failcount", 0);
+                await Results.Json(new AccountSettingsResponse(false, "Too many invalid 2FA attempts. Start setup again.", null), statusCode: StatusCodes.Status429TooManyRequests).ExecuteAsync(context);
+                return;
+            }
+
+            var secret = context.Session.GetString("2fa_pending_secret") ?? "";
+            if (string.IsNullOrWhiteSpace(secret))
+            {
+                await Results.BadRequest(new AccountSettingsResponse(false, "Start 2FA setup before confirming a code.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var verifyResult = await VerifyLegacyTwoFactorCodeAsync(secret, code);
+            if (!verifyResult.Success)
+            {
+                context.Session.SetInt32("2fa_verify_failcount", failCount + 1);
+                await Results.BadRequest(new AccountSettingsResponse(false, verifyResult.Message, null)).ExecuteAsync(context);
+                return;
+            }
+
+            var encryptedSecret = TryLegacyEncryptPwd(secret);
+            if (string.IsNullOrWhiteSpace(encryptedSecret))
+            {
+                await Results.Json(
+                    new AccountSettingsResponse(false, "2FA code verified, but setup cannot be saved because legacy encryptpwd-compatible secret writing is not configured yet.", null),
+                    statusCode: StatusCodes.Status409Conflict
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            await ExecuteNonQueryAsync(connection, @"
+DELETE FROM dbo.[2fa] WHERE customerID = @customerId;
+INSERT INTO dbo.[2fa] (customerID, secret, enterdate, IsEnabled)
+VALUES (@customerId, @secret, GETDATE(), 1);", command =>
+            {
+                command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+                command.Parameters.AddWithValue("@secret", encryptedSecret);
+            });
+
+            context.Session.Remove("2fa_pending_secret");
+            context.Session.SetInt32("2fa_verify_failcount", 0);
+
+            var settings = await LoadAccountSettingsAsync(connection, sessionUser.CustomerId);
+            await Results.Ok(new AccountSettingsResponse(true, "2FA has been enabled.", settings)).ExecuteAsync(context);
+        }
+
         private async Task HandleAccountTwoFactorDisableAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -2729,10 +3095,7 @@ WHERE customerID = @customerId", connection);
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
 
-            const string sql = @"
-UPDATE dbo.[2fa]
-SET IsEnabled = 0
-WHERE customerID = @customerId";
+            const string sql = "DELETE FROM dbo.[2fa] WHERE customerID = @customerId";
 
             await using var command = new SqlCommand(sql, connection);
             command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
@@ -4441,6 +4804,7 @@ WHERE id = @jobId
         private static async Task HandleLogoutAsync(HttpContext context)
         {
             context.Session.Clear();
+            context.Response.Cookies.Delete(PersistentSessionCookieName);
             await Results.Ok(new { success = true, message = "Logged out." }).ExecuteAsync(context);
         }
 
@@ -4484,7 +4848,8 @@ WHERE id = @jobId
             }
 
             var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
-            await Results.Ok(BuildCheckoutTempOrderResponse("Checkout temp order loaded.", order, balance)).ExecuteAsync(context);
+            var brandName = GetBrandDomainForCustomer(sessionUser.CustomerId);
+            await Results.Ok(BuildCheckoutTempOrderResponse("Checkout temp order loaded.", order, balance, brandName: brandName)).ExecuteAsync(context);
         }
 
         private async Task HandleCheckoutPayWithBalanceAsync(HttpContext context)
@@ -4527,22 +4892,23 @@ WHERE id = @jobId
             }
 
             var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+            var brandName = GetBrandDomainForCustomer(sessionUser.CustomerId);
 
             if (order.Processed)
             {
-                await Results.BadRequest(BuildCheckoutTempOrderResponse("This checkout order has already been processed.", order, balance, success: false)).ExecuteAsync(context);
+                await Results.BadRequest(BuildCheckoutTempOrderResponse("This checkout order has already been processed.", order, balance, success: false, brandName: brandName)).ExecuteAsync(context);
                 return;
             }
 
             if (order.IsPaid)
             {
-                await Results.Ok(BuildCheckoutTempOrderResponse("Checkout order is already marked paid.", order, balance)).ExecuteAsync(context);
+                await Results.Ok(BuildCheckoutTempOrderResponse("Checkout order is already marked paid.", order, balance, brandName: brandName)).ExecuteAsync(context);
                 return;
             }
 
             if (balance < order.Amount)
             {
-                await Results.BadRequest(BuildCheckoutTempOrderResponse($"Account balance is {balance.ToString("C", CultureInfo.GetCultureInfo("en-US"))}; this checkout needs {order.Amount.ToString("C", CultureInfo.GetCultureInfo("en-US"))}.", order, balance, success: false)).ExecuteAsync(context);
+                await Results.BadRequest(BuildCheckoutTempOrderResponse($"Account balance is {balance.ToString("C", CultureInfo.GetCultureInfo("en-US"))}; this checkout needs {order.Amount.ToString("C", CultureInfo.GetCultureInfo("en-US"))}.", order, balance, success: false, brandName: brandName)).ExecuteAsync(context);
                 return;
             }
 
@@ -4559,7 +4925,7 @@ WHERE id = @id
             await command.ExecuteNonQueryAsync();
 
             var updated = await LoadCheckoutTempOrderAsync(connection, sessionUser.CustomerId, guid);
-            await Results.Ok(BuildCheckoutTempOrderResponse("Account balance covers this checkout. Continue purchase setup to finish provisioning.", updated, balance)).ExecuteAsync(context);
+            await Results.Ok(BuildCheckoutTempOrderResponse("Account balance covers this checkout. Continue purchase setup to finish provisioning.", updated, balance, brandName: brandName)).ExecuteAsync(context);
         }
 
         private async Task HandleRenewTempOrderAsync(HttpContext context)
@@ -4601,7 +4967,9 @@ WHERE id = @id
                 return;
             }
 
-            await Results.Ok(new RenewTempOrderResponse(true, "Renewal temp order loaded.", order)).ExecuteAsync(context);
+            var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+            var brandName = GetBrandDomainForCustomer(sessionUser.CustomerId);
+            await Results.Ok(BuildRenewTempOrderResponse("Renewal temp order loaded.", order, balance, brandName: brandName)).ExecuteAsync(context);
         }
 
         private async Task HandleRenewTempPayWithBalanceAsync(HttpContext context)
@@ -4645,20 +5013,23 @@ WHERE id = @id
 
             if (order.IsProcessed)
             {
-                await Results.BadRequest(new RenewTempOrderResponse(false, "This renewal checkout has already been processed.", order)).ExecuteAsync(context);
-                return;
-            }
-
-            if (order.IsPaid)
-            {
-                await Results.Ok(new RenewTempOrderResponse(true, "Renewal checkout is already marked paid.", order)).ExecuteAsync(context);
+                var processedBalance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+                var processedBrandName = GetBrandDomainForCustomer(sessionUser.CustomerId);
+                await Results.BadRequest(BuildRenewTempOrderResponse("This renewal checkout has already been processed.", order, processedBalance, success: false, brandName: processedBrandName)).ExecuteAsync(context);
                 return;
             }
 
             var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+            var brandName = GetBrandDomainForCustomer(sessionUser.CustomerId);
+            if (order.IsPaid)
+            {
+                await Results.Ok(BuildRenewTempOrderResponse("Renewal checkout is already marked paid.", order, balance, brandName: brandName)).ExecuteAsync(context);
+                return;
+            }
+
             if (balance < order.Amount)
             {
-                await Results.BadRequest(new RenewTempOrderResponse(false, $"Account balance is {balance.ToString("C", CultureInfo.GetCultureInfo("en-US"))}; this renewal checkout needs {order.Amount.ToString("C", CultureInfo.GetCultureInfo("en-US"))}.", order)).ExecuteAsync(context);
+                await Results.BadRequest(BuildRenewTempOrderResponse($"Account balance is {balance.ToString("C", CultureInfo.GetCultureInfo("en-US"))}; this renewal checkout needs {order.Amount.ToString("C", CultureInfo.GetCultureInfo("en-US"))}.", order, balance, success: false, brandName: brandName)).ExecuteAsync(context);
                 return;
             }
 
@@ -4675,7 +5046,7 @@ WHERE id = @id
             await command.ExecuteNonQueryAsync();
 
             var updated = await LoadRenewTempOrderAsync(connection, sessionUser.CustomerId, guid);
-            await Results.Ok(new RenewTempOrderResponse(true, "Account balance covers this renewal checkout. The renewal temp order is now marked paid.", updated)).ExecuteAsync(context);
+            await Results.Ok(BuildRenewTempOrderResponse("Account balance covers this renewal checkout. Continue to finish the renewal setup.", updated, balance, brandName: brandName)).ExecuteAsync(context);
         }
 
         private async Task HandleLoginAsync(HttpContext context)
@@ -4763,6 +5134,7 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
             context.Session.SetString("customerID", customerId.ToString());
             context.Session.SetString("customerLogin", customerLogin);
             context.Session.SetString("customerType", customerType);
+            SetPersistentSessionCookie(context, new LoginUser(customerId, customerLogin, customerType));
             ClearFailedLogin(context, login);
 
             await Results.Ok(new LoginResponse(true, "Login successful.", new LoginUser(customerId, customerLogin, customerType))).ExecuteAsync(context);
@@ -4947,7 +5319,7 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
             await using (var cleanupCommand = new SqlCommand(@"
 DELETE FROM dbo.reset_verify
 WHERE customerID = @customerId
-   OR DATEDIFF(minute, create_date, SYSDATETIME()) > 30", connection))
+   OR DATEDIFF(hour, create_date, SYSDATETIME()) > 2", connection))
             {
                 cleanupCommand.Parameters.AddWithValue("@customerId", customerId);
                 await cleanupCommand.ExecuteNonQueryAsync();
@@ -4979,12 +5351,12 @@ VALUES (@resetStr, @customerId, GETDATE())", connection))
                 "SmarterASP.NET password reset",
                 $@"
 <p>Hello {WebUtility.HtmlEncode(login)},</p>
-<p>Use the link below to reset your SmarterASP.NET account password. This link expires in 30 minutes.</p>
+<p>Use the link below to reset your SmarterASP.NET account password. This link expires in 2 hours.</p>
 <p><a href=""{WebUtility.HtmlEncode(absoluteResetUrl)}"">Reset your password</a></p>
 <p>If you did not request this, you can ignore this email.</p>",
                 $@"Hello {login},
 
-Use this link to reset your SmarterASP.NET account password. This link expires in 30 minutes.
+Use this link to reset your SmarterASP.NET account password. This link expires in 2 hours.
 
 {absoluteResetUrl}
 
@@ -5061,7 +5433,7 @@ ORDER BY create_date DESC", connection))
                 tokenAgeMinutes = ReadInt32(reader, 1, 9999);
             }
 
-            if (tokenAgeMinutes > 30)
+            if (tokenAgeMinutes > 120)
             {
                 await using var expiredDeleteCommand = new SqlCommand("DELETE FROM dbo.reset_verify WHERE reset_str = @resetStr", connection);
                 expiredDeleteCommand.Parameters.AddWithValue("@resetStr", token);
@@ -5090,7 +5462,229 @@ WHERE customerID = @customerId", connection))
                 await deleteCommand.ExecuteNonQueryAsync();
             }
 
-            await Results.Ok(new AccountActionResponse(true, "Password reset completed. FTP, Web Deploy, and hosting control panel passwords can be synced from the hosting control panel workflow.")).ExecuteAsync(context);
+            var syncResult = await SyncAccountPasswordTargetsAsync(connection, customerId, newPassword);
+
+            await Results.Ok(new AccountActionResponse(true, FormatPasswordSyncMessage("Password reset completed.", syncResult))).ExecuteAsync(context);
+        }
+
+        private async Task<PasswordSyncResult> SyncAccountPasswordTargetsAsync(SqlConnection connection, long customerId, string newPassword)
+        {
+            var synced = new List<string>();
+            var blocked = new List<string>();
+            var accounts = await LoadHostingAccountsAsync(connection, customerId);
+            var activeAccounts = accounts
+                .Where(account => account.Status.Equals("Active", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (activeAccounts.Count == 0)
+            {
+                return new PasswordSyncResult(synced, blocked);
+            }
+
+            var passwordHash = HashHex(SHA256.HashData(Encoding.UTF8.GetBytes(newPassword)));
+            var agent = GetLegacyAgentSettings();
+
+            foreach (var account in activeAccounts)
+            {
+                var label = string.IsNullOrWhiteSpace(account.CpLogin) ? $"CP #{account.CpId}" : account.CpLogin;
+
+                var cpUpdated = await ExecuteNonQueryAsync(connection, @"
+UPDATE dbo.cp_config
+SET pp1 = @passwordHash
+WHERE cpID = @cpId
+  AND customerID = @customerId", command =>
+                {
+                    command.Parameters.AddWithValue("@passwordHash", passwordHash);
+                    command.Parameters.AddWithValue("@cpId", account.CpId);
+                    command.Parameters.AddWithValue("@customerId", customerId);
+                });
+
+                if (cpUpdated > 0)
+                {
+                    synced.Add($"{label}: CP login hash updated.");
+                    blocked.Add($"{label}: cpPasswordHash was not rewritten because Classic ASP encryptpwd compatibility is not finished yet.");
+                }
+                else
+                {
+                    blocked.Add($"{label}: CP login hash was not updated because the account row was not found.");
+                }
+
+                if (IsLinuxHosting(account.WebHostType))
+                {
+                    var linuxResult = await SyncLinuxHostingPasswordAsync(connection, account, newPassword);
+                    AddPasswordSyncCallResult(label, "Linux cPanel password", linuxResult, synced, blocked);
+                    continue;
+                }
+
+                blocked.Add($"{label}: FTP password DB sync is blocked until Classic ASP encryptpwd/encryptFtpPwd compatibility is finished.");
+
+                if (string.IsNullOrWhiteSpace(account.ServerId))
+                {
+                    blocked.Add($"{label}: IIS Manager/Web Deploy sync skipped because ServerID is missing.");
+                }
+                else
+                {
+                    var iisPasswordHash = passwordHash;
+                    var iisAdd = await PostLegacyAgentAsync(agent, account.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                    {
+                        ["action"] = "SetIISManagerUser",
+                        ["SetAction"] = "AddUser",
+                        ["user"] = account.CpLogin,
+                        ["pwd"] = iisPasswordHash
+                    });
+                    AddPasswordSyncCallResult(label, "IIS Manager AddUser", iisAdd, synced, blocked);
+
+                    var iisReset = await PostLegacyAgentAsync(agent, account.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                    {
+                        ["action"] = "SetIISManagerUser",
+                        ["SetAction"] = "ResetUser",
+                        ["user"] = account.CpLogin,
+                        ["pwd"] = iisPasswordHash
+                    });
+                    AddPasswordSyncCallResult(label, "IIS Manager ResetUser", iisReset, synced, blocked);
+                }
+
+                var ssrsServerId = await LoadSsrsServerIdAsync(connection, account.CpId);
+                if (!string.IsNullOrWhiteSpace(ssrsServerId))
+                {
+                    var ssrsAdd = await PostLegacyAgentAsync(agent, ssrsServerId, "/aspuser.asp", new Dictionary<string, string>
+                    {
+                        ["action"] = "LocalUserAdd",
+                        ["UserID"] = account.CpLogin,
+                        ["Password"] = newPassword,
+                        ["cpID"] = account.CpId.ToString(CultureInfo.InvariantCulture)
+                    });
+                    AddPasswordSyncCallResult(label, "SSRS local user add", ssrsAdd, synced, blocked);
+
+                    var ssrsReset = await PostLegacyAgentAsync(agent, ssrsServerId, "/aspuser.asp", new Dictionary<string, string>
+                    {
+                        ["action"] = "LocalUserPasswordReset",
+                        ["UserID"] = account.CpLogin,
+                        ["Password"] = newPassword,
+                        ["cpID"] = account.CpId.ToString(CultureInfo.InvariantCulture)
+                    });
+                    AddPasswordSyncCallResult(label, "SSRS local user reset", ssrsReset, synced, blocked);
+                }
+            }
+
+            return new PasswordSyncResult(synced, blocked);
+        }
+
+        private async Task<LegacyAgentCallResult> SyncLinuxHostingPasswordAsync(SqlConnection connection, HostingAccountSummary account, string newPassword)
+        {
+            var whmAuth = ConfigOrEnv("LinuxCpanel:WhmAuthorization", "LCP_WHM_AUTHORIZATION").Trim();
+            if (string.IsNullOrWhiteSpace(whmAuth))
+            {
+                return new LegacyAgentCallResult(false, "Linux WHM Authorization header is not configured.", "", "", null);
+            }
+
+            var cpanelLogin = await LoadCpanelLoginByCpLoginAsync(connection, account.CpLogin);
+            if (string.IsNullOrWhiteSpace(cpanelLogin))
+            {
+                return new LegacyAgentCallResult(false, "Linux cPanel alias login was not found.", "", "", null);
+            }
+
+            var whmHost = await LoadServerTempUrlIpAsync(connection, account.ServerId);
+            if (string.IsNullOrWhiteSpace(whmHost))
+            {
+                whmHost = BuildLegacyPublicHost(account.ServerId);
+            }
+
+            if (string.IsNullOrWhiteSpace(whmHost))
+            {
+                return new LegacyAgentCallResult(false, "Linux WHM host could not be resolved.", "", "", null);
+            }
+
+            var scheme = ConfigOrEnv("LinuxCpanel:WhmScheme", "LCP_WHM_SCHEME", "https").Trim();
+            var portText = ConfigOrEnv("LinuxCpanel:WhmPort", "LCP_WHM_PORT", "2087").Trim();
+            var port = int.TryParse(portText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var configuredPort)
+                ? configuredPort
+                : 2087;
+            var url = $"{(string.IsNullOrWhiteSpace(scheme) ? "https" : scheme)}://{whmHost}:{port}/json-api/passwd";
+
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+                using var request = new HttpRequestMessage(HttpMethod.Post, url);
+                request.Headers.TryAddWithoutValidation("Authorization", whmAuth);
+                request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["user"] = cpanelLogin,
+                    ["pass"] = newPassword
+                });
+
+                var response = await httpClient.SendAsync(request);
+                var body = await response.Content.ReadAsStringAsync();
+                var accepted = response.IsSuccessStatusCode && body.Contains("\"status\":1", StringComparison.OrdinalIgnoreCase);
+                return accepted
+                    ? new LegacyAgentCallResult(true, "WHM accepted the password change.", url, Preview(body), new { status = (int)response.StatusCode })
+                    : new LegacyAgentCallResult(false, $"WHM rejected the password change: {Preview(body)}", url, Preview(body), new { status = (int)response.StatusCode });
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return new LegacyAgentCallResult(false, $"WHM password call failed: {ex.Message}", url, "", null);
+            }
+        }
+
+        private static async Task<string> LoadSsrsServerIdAsync(SqlConnection connection, long cpId)
+        {
+            return await ExecuteScalarAsync<string>(connection, @"
+SELECT TOP 1 serverid
+FROM dbo.cp_config_SSR
+WHERE cpid = @cpId", command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cpId);
+            }) ?? "";
+        }
+
+        private static async Task<string> LoadCpanelLoginByCpLoginAsync(SqlConnection connection, string cpLogin)
+        {
+            return await ExecuteScalarAsync<string>(connection, @"
+SELECT TOP 1 username
+FROM dbo.cp_loginAlias
+WHERE LOWER(forloginid) = LOWER(@cpLogin)
+ORDER BY username", command =>
+            {
+                command.Parameters.AddWithValue("@cpLogin", cpLogin);
+            }) ?? "";
+        }
+
+        private static bool IsLinuxHosting(string webHostType)
+        {
+            return !string.IsNullOrWhiteSpace(webHostType)
+                && webHostType.Contains("LX-", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void AddPasswordSyncCallResult(string account, string target, LegacyAgentCallResult result, List<string> synced, List<string> blocked)
+        {
+            if (result.Success)
+            {
+                synced.Add($"{account}: {target} synced.");
+                return;
+            }
+
+            blocked.Add($"{account}: {target} failed - {result.Message}");
+        }
+
+        private static string FormatPasswordSyncMessage(string prefix, PasswordSyncResult result)
+        {
+            var message = new StringBuilder(prefix);
+            if (result.Synced.Count > 0)
+            {
+                message.Append(' ').Append(result.Synced.Count.ToString(CultureInfo.InvariantCulture)).Append(" sync step(s) completed.");
+            }
+
+            if (result.Blocked.Count > 0)
+            {
+                message.Append(' ').Append(result.Blocked.Count.ToString(CultureInfo.InvariantCulture)).Append(" sync step(s) need attention.");
+            }
+
+            if (result.Synced.Count == 0 && result.Blocked.Count == 0)
+            {
+                message.Append(" No active hosting accounts needed syncing.");
+            }
+
+            return message.ToString();
         }
 
         private static bool PasswordMatches(string password, string storedHash)
@@ -5295,9 +5889,181 @@ WHERE customerID = @customerId", connection))
             return new ReadableCustomerEmailResult(true, email, "Customer email loaded.");
         }
 
+        private string TryLegacyEncryptPwd(string plainText)
+        {
+            var mode = ConfigOrEnv("LegacyCrypto:EncryptPwdMode", "LEGACY_ENCRYPTPWD_MODE").Trim();
+            if (mode.Equals("modern-dev-only", StringComparison.OrdinalIgnoreCase))
+            {
+                var key = ConfigOrEnv("Crypto:ModernKey", "CONTROL_PANEL_CRYPTO_KEY").Trim();
+                return string.IsNullOrWhiteSpace(key) ? "" : CryptoHelper.Encrypt(key, plainText);
+            }
+
+            return "";
+        }
+
+        private async Task<EmailSendResult> UpdateHelpdeskLoginEmailAsync(string username, string email)
+        {
+            var apiUrl = ConfigOrEnv("Helpdesk:UserUpdateApi", "HELPDESK_USER_UPDATE_API").Trim();
+            if (string.IsNullOrWhiteSpace(apiUrl))
+            {
+                return new EmailSendResult(false, "HELPDESK_USER_UPDATE_API is not configured.");
+            }
+
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                var request = new HttpRequestMessage(HttpMethod.Post, apiUrl)
+                {
+                    Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                    {
+                        ["txtUserName"] = username,
+                        ["txtemail"] = email,
+                        ["txtpass"] = ""
+                    })
+                };
+
+                var basicUser = ConfigOrEnv("Helpdesk:BasicUser", "HELPDESK_BASIC_USER").Trim();
+                var basicPassword = ConfigOrEnv("Helpdesk:BasicPassword", "HELPDESK_BASIC_PASSWORD").Trim();
+                if (!string.IsNullOrWhiteSpace(basicUser) || !string.IsNullOrWhiteSpace(basicPassword))
+                {
+                    var token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{basicUser}:{basicPassword}"));
+                    request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", token);
+                }
+
+                var response = await httpClient.SendAsync(request);
+                var body = await response.Content.ReadAsStringAsync();
+                return response.IsSuccessStatusCode && body.Contains("ok", StringComparison.OrdinalIgnoreCase)
+                    ? new EmailSendResult(true, "Helpdesk login email updated.")
+                    : new EmailSendResult(false, $"Helpdesk API returned {(int)response.StatusCode}: {Preview(body)}");
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return new EmailSendResult(false, ex.Message);
+            }
+        }
+
+        private async Task<TwoFactorSecretResult> GetLegacyTwoFactorSecretAsync()
+        {
+            var baseUrl = ConfigOrEnv("TwoFactor:LegacyBaseUrl", "TWO_FACTOR_LEGACY_BASE_URL", "http://member5.smarterasp.net/2fa").TrimEnd('/');
+            if (string.IsNullOrWhiteSpace(baseUrl))
+            {
+                return new TwoFactorSecretResult(false, "", "2FA legacy service base URL is not configured.");
+            }
+
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                var secret = (await httpClient.GetStringAsync($"{baseUrl}/ga_create.php")).Trim();
+                return secret.Length == 16
+                    ? new TwoFactorSecretResult(true, secret, "2FA secret created.")
+                    : new TwoFactorSecretResult(false, "", $"2FA legacy service returned an invalid secret: {Preview(secret)}");
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return new TwoFactorSecretResult(false, "", $"2FA legacy service failed: {ex.Message}");
+            }
+        }
+
+        private async Task<TwoFactorQrResult> GetLegacyTwoFactorQrUrlAsync(string name, string secret)
+        {
+            var baseUrl = ConfigOrEnv("TwoFactor:LegacyBaseUrl", "TWO_FACTOR_LEGACY_BASE_URL", "http://member5.smarterasp.net/2fa").TrimEnd('/');
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                var qr = (await httpClient.GetStringAsync($"{baseUrl}/ga_qrcodeurl.php?secret={Uri.EscapeDataString(secret)}&name={Uri.EscapeDataString(name)}")).Trim();
+                return string.IsNullOrWhiteSpace(qr)
+                    ? new TwoFactorQrResult(false, "", "2FA QR service returned an empty response.")
+                    : new TwoFactorQrResult(true, qr, "2FA QR URL created.");
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return new TwoFactorQrResult(false, "", $"2FA QR service failed: {ex.Message}");
+            }
+        }
+
+        private async Task<EmailSendResult> VerifyLegacyTwoFactorCodeAsync(string secret, string oneCode)
+        {
+            var baseUrl = ConfigOrEnv("TwoFactor:LegacyBaseUrl", "TWO_FACTOR_LEGACY_BASE_URL", "http://member5.smarterasp.net/2fa").TrimEnd('/');
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                var result = (await httpClient.GetStringAsync($"{baseUrl}/ga_verify.php?secret={Uri.EscapeDataString(secret)}&onecode={Uri.EscapeDataString(oneCode)}")).Trim();
+                return result.Equals("OK", StringComparison.OrdinalIgnoreCase)
+                    ? new EmailSendResult(true, "2FA code verified.")
+                    : new EmailSendResult(false, "Invalid PIN.");
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return new EmailSendResult(false, $"2FA verify service failed: {ex.Message}");
+            }
+        }
+
         private string GetBrandDomainForCustomer(long customerId)
         {
-            return ConfigOrEnv("Legacy:PublicDomain", "LEGACY_PUBLIC_DOMAIN", "smarterasp.net").Trim();
+            var fallback = ConfigOrEnv("Legacy:PublicDomain", "LEGACY_PUBLIC_DOMAIN", "smarterasp.net").Trim();
+            if (fallback.Equals("site4now.net", StringComparison.OrdinalIgnoreCase))
+            {
+                fallback = "smarterasp.net";
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                using var connection = new SqlConnection(connectionString);
+                connection.Open();
+
+                const string sql = @"
+SELECT TOP 1 customer_type, resellerownerid
+FROM dbo.customer_profile
+WHERE customerID = @customerId";
+
+                using var command = new SqlCommand(sql, connection);
+                command.Parameters.AddWithValue("@customerId", customerId);
+                using var reader = command.ExecuteReader();
+                if (!reader.Read())
+                {
+                    return fallback;
+                }
+
+                var customerType = reader.IsDBNull(0) ? "" : reader.GetString(0).Trim().ToLowerInvariant();
+                var resellerOwnerId = reader.IsDBNull(1) ? 0L : Convert.ToInt64(reader.GetValue(1), CultureInfo.InvariantCulture);
+                if (customerType == "resell" && resellerOwnerId == customerId)
+                {
+                    customerType = "individual";
+                }
+
+                return CustomerTypeToBrandDomain(customerType, fallback);
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
+        private static string CustomerTypeToBrandDomain(string customerType, string fallback)
+        {
+            return customerType switch
+            {
+                "individual" => "smarterasp.net",
+                "resell" => "mysitepanel.net",
+                "abuckanapp" => "abuckanapp.com",
+                "wordpress4life" => "wordpress4life.com",
+                "mywindowshosting" => "mywindowsHosting.com",
+                "myaspnet" => "myasp.net",
+                "wproyal" => "wproyal.com",
+                "dollarwp" => "dollarwp.com",
+                "hostbuddy" => "hostbuddy.com",
+                "dollarpresta" => "dollarpresta.com",
+                "phpfast" => "phpfast.com",
+                "dreamnix" => "dreamnix.com",
+                "sharkasp" => "sharkasp.net",
+                _ => fallback
+            };
         }
 
         private async Task<EmailSendResult> SendCustomerNotificationEmailAsync(long customerId, string fromEmail, string subject, string htmlBody, string textBody)
@@ -5400,12 +6166,122 @@ Please confirm your {brandDomain} account:
             var customerLogin = context.Session.GetString("customerLogin");
             var customerType = context.Session.GetString("customerType");
 
-            if (!long.TryParse(customerIdText, out var customerId) || string.IsNullOrWhiteSpace(customerLogin) || string.IsNullOrWhiteSpace(customerType))
+            if (long.TryParse(customerIdText, out var customerId) && !string.IsNullOrWhiteSpace(customerLogin) && !string.IsNullOrWhiteSpace(customerType))
+            {
+                return new LoginUser(customerId, customerLogin, customerType);
+            }
+
+            var persistentUser = ReadPersistentSessionCookie(context);
+            if (persistentUser == null)
             {
                 return null;
             }
 
-            return new LoginUser(customerId, customerLogin, customerType);
+            context.Session.SetString("customerID", persistentUser.CustomerId.ToString(CultureInfo.InvariantCulture));
+            context.Session.SetString("customerLogin", persistentUser.Login);
+            context.Session.SetString("customerType", persistentUser.CustomerType);
+            return persistentUser;
+        }
+
+        private static void SetPersistentSessionCookie(HttpContext context, LoginUser user)
+        {
+            var issuedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var payload = $"{user.CustomerId}|{Base64UrlEncode(user.Login)}|{Base64UrlEncode(user.CustomerType)}|{issuedAt}";
+            var signature = SignPersistentSessionPayload(context, payload);
+            var cookieValue = $"{Base64UrlEncode(payload)}.{signature}";
+
+            context.Response.Cookies.Append(PersistentSessionCookieName, cookieValue, new CookieOptions
+            {
+                HttpOnly = true,
+                IsEssential = true,
+                MaxAge = TimeSpan.FromHours(8),
+                SameSite = SameSiteMode.Lax,
+                Secure = context.Request.IsHttps
+            });
+        }
+
+        private static LoginUser? ReadPersistentSessionCookie(HttpContext context)
+        {
+            if (!context.Request.Cookies.TryGetValue(PersistentSessionCookieName, out var cookieValue) || string.IsNullOrWhiteSpace(cookieValue))
+            {
+                return null;
+            }
+
+            var parts = cookieValue.Split('.', 2);
+            if (parts.Length != 2)
+            {
+                return null;
+            }
+
+            var payload = Base64UrlDecode(parts[0]);
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return null;
+            }
+
+            var expectedSignature = SignPersistentSessionPayload(context, payload);
+            if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(parts[1]), Encoding.UTF8.GetBytes(expectedSignature)))
+            {
+                return null;
+            }
+
+            var payloadParts = payload.Split('|');
+            if (payloadParts.Length != 4 ||
+                !long.TryParse(payloadParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var customerId) ||
+                !long.TryParse(payloadParts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var issuedAt))
+            {
+                return null;
+            }
+
+            var age = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(issuedAt);
+            if (age < TimeSpan.Zero || age > TimeSpan.FromHours(8))
+            {
+                return null;
+            }
+
+            var login = Base64UrlDecode(payloadParts[1]);
+            var customerType = Base64UrlDecode(payloadParts[2]);
+            return string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(customerType)
+                ? null
+                : new LoginUser(customerId, login, customerType);
+        }
+
+        private static string SignPersistentSessionPayload(HttpContext context, string payload)
+        {
+            var configuredKey = context.RequestServices.GetRequiredService<IConfiguration>()["Auth:PersistentSessionKey"];
+            var envKey = Environment.GetEnvironmentVariable("AUTH_PERSISTENT_SESSION_KEY");
+            var key = !string.IsNullOrWhiteSpace(configuredKey)
+                ? configuredKey
+                : !string.IsNullOrWhiteSpace(envKey)
+                    ? envKey
+                    : "controlpanel-dev-session-key";
+
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
+            return Base64UrlEncode(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+        }
+
+        private static string Base64UrlEncode(string value) => Base64UrlEncode(Encoding.UTF8.GetBytes(value));
+
+        private static string Base64UrlEncode(byte[] bytes)
+        {
+            return Convert.ToBase64String(bytes)
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+        }
+
+        private static string Base64UrlDecode(string value)
+        {
+            try
+            {
+                var padded = value.Replace('-', '+').Replace('_', '/');
+                padded = padded.PadRight(padded.Length + (4 - padded.Length % 4) % 4, '=');
+                return Encoding.UTF8.GetString(Convert.FromBase64String(padded));
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         private static bool TryReadRouteInt(HttpContext context, string name, out int value)
@@ -5494,7 +6370,7 @@ WHERE id = @id
             );
         }
 
-        private static CheckoutTempOrderResponse BuildCheckoutTempOrderResponse(string message, CheckoutTempOrder? order, decimal balance, bool success = true)
+        private static CheckoutTempOrderResponse BuildCheckoutTempOrderResponse(string message, CheckoutTempOrder? order, decimal balance, bool success = true, string brandName = "")
         {
             var shortfall = order == null ? 0m : Math.Max(0m, order.Amount - balance);
             var canContinue = order != null
@@ -5507,7 +6383,26 @@ WHERE id = @id
                 order,
                 new AccountBalanceSummary(balance, "USD", "Account credit ledger"),
                 canContinue,
-                shortfall
+                shortfall,
+                brandName
+            );
+        }
+
+        private static RenewTempOrderResponse BuildRenewTempOrderResponse(string message, RenewTempOrder? order, decimal balance, bool success = true, string brandName = "")
+        {
+            var shortfall = order == null ? 0m : Math.Max(0m, order.Amount - balance);
+            var canContinue = order != null
+                && !order.IsProcessed
+                && (order.IsPaid || balance >= order.Amount);
+
+            return new RenewTempOrderResponse(
+                success,
+                message,
+                order,
+                new AccountBalanceSummary(balance, "USD", "Account credit ledger"),
+                canContinue,
+                shortfall,
+                brandName
             );
         }
 
@@ -5634,6 +6529,7 @@ ORDER BY adddate DESC";
             ConstPageTypeFullRestore => "/account/addon_purchase_detail?type=14",
             ConstPageTypeEmailQuota => "/account/addon_purchase_detail?type=17",
             ConstPageTypeWhoisPrivacy => "/account/addon_purchase_detail?type=19",
+            ConstPageTypeUpgradePlan => "/account/upgrade_plan_action",
             ConstPageTypeGeneral => "/account/addon_purchase_detail?type=22",
             ConstPageTypeWebUser => "/account/addon_purchase_detail?type=23",
             ConstPageTypeDailySentLimit => "/account/addon_purchase_detail?type=24",
@@ -5946,6 +6842,40 @@ WHERE id = @registerInfoId
             {
                 await DeleteOpenSrsCookieAsync(httpClient, openSrs, cookieResult.Cookie);
             }
+        }
+
+        private static AccountActionResponse ValidateDomainPrivacyAction(AccountDomainSummary domain, bool shouldEnable)
+        {
+            if (!domain.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+            {
+                return new AccountActionResponse(false, "Whois Privacy can only be changed for completed domains.");
+            }
+
+            if (domain.DaysLeft is < 0)
+            {
+                return new AccountActionResponse(false, "Whois Privacy cannot be changed for an expired domain.");
+            }
+
+            if (!domain.WhoisPrivacySupported)
+            {
+                return new AccountActionResponse(false, "Whois Privacy is not supported on this domain extension.");
+            }
+
+            if (shouldEnable && !domain.WhoisPrivacyPurchased)
+            {
+                return new AccountActionResponse(false, $"Whois Privacy must be purchased before it can be enabled. Buy it from /account/addon_purchase_domain_privacy?profileid={domain.RegisterInfoId}.");
+            }
+
+            if (shouldEnable && domain.WhoisPrivacyTurnOnDate != null)
+            {
+                var availableDate = domain.WhoisPrivacyTurnOnDate.Value.AddDays(1);
+                if (availableDate > DateOnly.FromDateTime(DateTime.UtcNow))
+                {
+                    return new AccountActionResponse(false, $"You cannot turn Whois Privacy on until {availableDate:MMM d, yyyy}.");
+                }
+            }
+
+            return new AccountActionResponse(true, "Whois Privacy action is allowed.");
         }
 
         private static async Task<OpenSrsActionResult> GetDomainStatusWithOpenSrsAsync(
@@ -6890,25 +7820,38 @@ WHERE customerID = @customerId";
             const string sql = @"
 SELECT c.cpID, c.cpLogin, c.WebHostType, c.ServerID, c.status, c.client_product_id,
        c.AdditionalSite, c.AdditionalSiteLimit, c.firstDomain, c.AdditionalRAM,
-       cp.next_due_date, cp.product_id
+       cp.next_due_date, cp.product_id, d.domain_name
 FROM dbo.cp_config c
 LEFT JOIN oms.dbo.client_product cp ON cp.client_product_id = c.client_product_id
+LEFT JOIN dbo.cp_config_Sites s ON s.cpID = c.cpID
+LEFT JOIN dbo.cp_config_Domains d ON d.site_Uid = s.site_Uid
+    AND NULLIF(LTRIM(RTRIM(d.domain_name)), '') IS NOT NULL
+    AND d.domain_name NOT LIKE '%tempurl%'
 WHERE c.customerID = @customerId
   AND ISNULL(c.hideit, 0) = 0
   AND c.status <> 3
-ORDER BY CASE WHEN c.status = 1 THEN 0 ELSE 1 END, c.cpID";
+ORDER BY CASE WHEN c.status = 1 THEN 0 ELSE 1 END, c.cpID, d.domain_name";
 
             await using var command = new SqlCommand(sql, connection);
             command.Parameters.AddWithValue("@customerId", customerId);
 
             var accounts = new List<HostingAccountSummary>();
+            var accountIndex = new Dictionary<long, int>();
+            var accountDomains = new Dictionary<long, List<string>>();
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
-                var firstDomain = reader.IsDBNull(8) ? "" : reader.GetString(8).Trim();
-                if (string.IsNullOrWhiteSpace(firstDomain) || firstDomain.Equals("-NONE-", StringComparison.OrdinalIgnoreCase))
+                var cpId = reader.GetInt64(0);
+                if (accountIndex.TryGetValue(cpId, out var existingIndex))
                 {
-                    firstDomain = "No primary domain";
+                    AddHostingDomain(accountDomains[cpId], reader.IsDBNull(12) ? "" : reader.GetString(12));
+                    var existingAccount = accounts[existingIndex];
+                    accounts[existingIndex] = existingAccount with
+                    {
+                        PrimaryDomain = accountDomains[cpId].FirstOrDefault() ?? "No Primary domain",
+                        Domains = accountDomains[cpId]
+                    };
+                    continue;
                 }
 
                 var additionalSite = reader.IsDBNull(6) ? 0 : reader.GetInt32(6);
@@ -6919,9 +7862,14 @@ ORDER BY CASE WHEN c.status = 1 THEN 0 ELSE 1 END, c.cpID";
                 var clientProductId = reader.IsDBNull(5) ? 0 : Convert.ToInt64(reader.GetValue(5), CultureInfo.InvariantCulture);
 
                 dueDate = NormalizeHostingDueDate(cpLogin, clientProductId, dueDate);
+                var domains = new List<string>();
+                AddHostingDomain(domains, reader.IsDBNull(12) ? "" : reader.GetString(12));
+                var firstDomain = domains.FirstOrDefault() ?? "No Primary domain";
 
+                accountIndex[cpId] = accounts.Count;
+                accountDomains[cpId] = domains;
                 accounts.Add(new HostingAccountSummary(
-                    reader.GetInt64(0),
+                    cpId,
                     cpLogin,
                     firstDomain,
                     reader.GetString(2),
@@ -6931,11 +7879,25 @@ ORDER BY CASE WHEN c.status = 1 THEN 0 ELSE 1 END, c.cpID";
                     reader.IsDBNull(11) ? 0 : Convert.ToInt32(reader.GetValue(11), CultureInfo.InvariantCulture),
                     dueDate,
                     totalSites,
-                    reader.IsDBNull(9) ? 0 : reader.GetInt32(9)
+                    reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
+                    domains
                 ));
             }
 
             return accounts;
+        }
+
+        private static void AddHostingDomain(List<string> domains, string domain)
+        {
+            var cleanDomain = domain.Trim();
+            if (string.IsNullOrWhiteSpace(cleanDomain) ||
+                cleanDomain.Contains("tempurl", StringComparison.OrdinalIgnoreCase) ||
+                domains.Contains(cleanDomain, StringComparer.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            domains.Add(cleanDomain);
         }
 
         private static DateOnly? NormalizeHostingDueDate(string cpLogin, long clientProductId, DateOnly? dueDate)
@@ -6956,6 +7918,402 @@ ORDER BY CASE WHEN c.status = 1 THEN 0 ELSE 1 END, c.cpID";
             }
 
             return dueDate;
+        }
+
+        private static async Task<HostingUpgradeCurrent?> LoadHostingUpgradeCurrentAsync(SqlConnection connection, long customerId, long cpId)
+        {
+            const string sql = @"
+SELECT TOP 1 c.cpID, c.cpLogin, ISNULL(c.WebHostType, ''), ISNULL(c.ServerID, ''),
+       ISNULL(c.client_product_id, 0), ISNULL(cp.product_id, 0),
+       ISNULL(p.name, ''), ISNULL(CAST(p.description AS nvarchar(max)), ''),
+       cp.next_due_date,
+       ISNULL(latestOrder.payment_term, '')
+FROM dbo.cp_config c
+LEFT JOIN oms.dbo.client_product cp ON cp.client_product_id = c.client_product_id
+LEFT JOIN oms.dbo.product p ON p.product_id = cp.product_id
+OUTER APPLY (
+    SELECT TOP 1 o.payment_term
+    FROM oms.dbo.[order] o
+    WHERE o.client_product_id = cp.client_product_id
+      AND o.order_status <> 'refunded'
+    ORDER BY o.create_date DESC, o.order_id DESC
+) latestOrder
+WHERE c.customerID = @customerId
+  AND c.cpID = @cpId
+  AND ISNULL(c.hideit, 0) = 0
+  AND c.status <> 3";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            command.Parameters.AddWithValue("@cpId", cpId);
+
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            var cpLogin = reader.GetString(1).Trim();
+            var clientProductId = Convert.ToInt64(reader.GetValue(4), CultureInfo.InvariantCulture);
+            var dueDate = reader.IsDBNull(8) ? (DateOnly?)null : DateOnly.FromDateTime(reader.GetDateTime(8));
+            dueDate = NormalizeHostingDueDate(cpLogin, clientProductId, dueDate);
+            var paymentTerm = reader.IsDBNull(9) ? "" : reader.GetString(9).Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(paymentTerm))
+            {
+                paymentTerm = "annually";
+            }
+
+            return new HostingUpgradeCurrent(
+                reader.GetInt64(0),
+                cpLogin,
+                reader.GetString(2).Trim(),
+                reader.GetString(3).Trim(),
+                clientProductId,
+                Convert.ToInt32(reader.GetValue(5), CultureInfo.InvariantCulture),
+                reader.GetString(6).Trim(),
+                reader.IsDBNull(7) ? "" : reader.GetString(7).Trim(),
+                dueDate,
+                paymentTerm
+            );
+        }
+
+        private static async Task<List<AddonCatalogProduct>> LoadHostingUpgradeTargetsAsync(SqlConnection connection, HostingUpgradeCurrent current, string customerType)
+        {
+            if (current.ProductId <= 0)
+            {
+                return new List<AddonCatalogProduct>();
+            }
+
+            var webHostType = current.WebHostType ?? "";
+            var normalizedCustomerType = string.IsNullOrWhiteSpace(customerType) ? "individual" : customerType;
+            var isWindowsHosting = webHostType.StartsWith("W", StringComparison.OrdinalIgnoreCase);
+            var location = ExtractHostingUpgradeLocation(webHostType, current.ProductName);
+            var isLinux = webHostType.Contains("LX", StringComparison.OrdinalIgnoreCase) || current.ProductName.Contains("LX", StringComparison.OrdinalIgnoreCase);
+            var planPredicate = isWindowsHosting
+                ? BuildHostingUpgradeWindowsPredicate(location, isLinux)
+                : BuildHostingUpgradeVpsPredicate(location);
+            var w2Filter = webHostType.Contains("W2", StringComparison.OrdinalIgnoreCase)
+                ? " AND p.name LIKE '%W2%'"
+                : "";
+
+            var sql = $@"
+SELECT p.product_id, p.name, CAST(p.description AS nvarchar(max)) AS description, ISNULL(p.product_type, ''),
+       pr.price_id, ISNULL(pr.currency, 'USD'), ISNULL(pr.payment_term, ''), pr.setup_fee, pr.price_amount, pr.original_price_amount
+FROM oms.dbo.product p
+LEFT JOIN oms.dbo.price pr ON pr.product_id = p.product_id
+WHERE p.active = 1
+  AND p.product_id <> @currentProductId
+  AND (p.product_type = @customerType OR p.product_type = 'individual')
+  AND p.name NOT LIKE 'W60%'
+  AND p.name NOT LIKE 'W30%'
+  AND p.name NOT LIKE 'W-HB-FREE%'
+  AND {planPredicate}
+  {w2Filter}
+ORDER BY p.product_id, pr.price_amount";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@currentProductId", current.ProductId);
+            command.Parameters.AddWithValue("@customerType", normalizedCustomerType);
+
+            var products = new Dictionary<int, AddonCatalogProduct>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var productId = reader.GetInt32(0);
+                if (!products.TryGetValue(productId, out var product))
+                {
+                    product = new AddonCatalogProduct(
+                        productId,
+                        reader.GetString(1).Trim(),
+                        reader.IsDBNull(2) ? "" : reader.GetString(2).Trim(),
+                        reader.IsDBNull(3) ? "" : reader.GetString(3).Trim(),
+                        "Hosting Upgrade",
+                        new List<AddonPriceOption>()
+                    );
+                    products.Add(productId, product);
+                }
+
+                if (!reader.IsDBNull(4))
+                {
+                    product.Prices.Add(new AddonPriceOption(
+                        reader.GetInt32(4),
+                        reader.GetString(5),
+                        reader.GetString(6),
+                        reader.GetDecimal(7),
+                        reader.GetDecimal(8),
+                        reader.GetDecimal(9)
+                    ));
+                }
+            }
+
+            return products.Values
+                .Where(product => !product.Name.Equals(current.ProductName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        private static async Task<HostingUpgradePreview?> BuildHostingUpgradePreviewAsync(SqlConnection connection, long customerId, long cpId, int targetProductId)
+        {
+            var current = await LoadHostingUpgradeCurrentAsync(connection, customerId, cpId);
+            if (current == null || current.ProductId <= 0 || current.ClientProductId <= 0)
+            {
+                return null;
+            }
+
+            var target = await LoadHostingUpgradeProductAsync(connection, targetProductId);
+            if (target == null)
+            {
+                return null;
+            }
+
+            var paymentTerm = string.IsNullOrWhiteSpace(current.PaymentTerm) ? "annually" : current.PaymentTerm.ToLowerInvariant();
+            var daysInTerm = HostingUpgradeTermDays(paymentTerm);
+            if (daysInTerm <= 0)
+            {
+                return new HostingUpgradePreview(current, target, paymentTerm, 0m, 0m, 0m, 0, current.DueDate, false, false, $"Invalid billing term ({paymentTerm}).");
+            }
+
+            if (current.DueDate == null)
+            {
+                return new HostingUpgradePreview(current, target, paymentTerm, 0m, 0m, 0m, 0, null, false, false, "No due date was found for this hosting plan.");
+            }
+
+            var currentPrice = await LoadProductPriceAmountAsync(connection, current.ProductId, paymentTerm);
+            var targetPrice = await LoadProductPriceAmountAsync(connection, targetProductId, paymentTerm);
+            if (currentPrice == null || targetPrice == null)
+            {
+                return new HostingUpgradePreview(current, target, paymentTerm, currentPrice ?? 0m, targetPrice ?? 0m, 0m, 0, current.DueDate, false, false, $"No matching {paymentTerm} price was found for this upgrade path.");
+            }
+
+            var daysLeft = current.DueDate.Value.DayNumber - GetLegacyAccountToday().DayNumber;
+            if (daysLeft < 0)
+            {
+                return new HostingUpgradePreview(current, target, paymentTerm, currentPrice.Value, targetPrice.Value, 0m, daysLeft, current.DueDate, false, false, "Error, you cannot downgrade/upgrade your expired plan. Please renew with current plan first.");
+            }
+
+            var dailyDifference = decimal.Round((targetPrice.Value - currentPrice.Value) / daysInTerm, 4, MidpointRounding.AwayFromZero);
+            var totalAmount = decimal.Round((dailyDifference * daysLeft * 100m) + 0.5m, 0, MidpointRounding.AwayFromZero) / 100m;
+            if (totalAmount <= 0m)
+            {
+                var currentWebHostType = current.WebHostType ?? "";
+                if (currentWebHostType.Contains("W2", StringComparison.OrdinalIgnoreCase) ||
+                    currentWebHostType.Contains("V6", StringComparison.OrdinalIgnoreCase) ||
+                    target.Name.Contains("W2", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new HostingUpgradePreview(current, target, paymentTerm, currentPrice.Value, targetPrice.Value, totalAmount, daysLeft, current.DueDate, false, true, "Error, you cannot downgrade your plan. Please contact support.");
+                }
+
+                return new HostingUpgradePreview(current, target, paymentTerm, currentPrice.Value, targetPrice.Value, totalAmount, daysLeft, current.DueDate, true, true, "Downgrade can be applied after quota checks.");
+            }
+
+            return new HostingUpgradePreview(current, target, paymentTerm, currentPrice.Value, targetPrice.Value, totalAmount, daysLeft, current.DueDate, true, false, "Upgrade price calculated using the old prorated price difference formula.");
+        }
+
+        private static async Task<AccountActionResponse> DowngradeHostingPlanAsync(SqlConnection connection, long customerId, HostingUpgradeCurrent current, AddonCatalogProduct target, string customerType)
+        {
+            var owned = await LoadHostingUpgradeCurrentAsync(connection, customerId, current.CpId);
+            if (owned == null || owned.ClientProductId != current.ClientProductId)
+            {
+                return new AccountActionResponse(false, "Hosting plan ownership changed. Please reload and try again.");
+            }
+
+            var targetPlanName = target.Name.Trim();
+            var quotaCheck = await ValidateHostingDowngradeQuotasAsync(connection, current.CpId, targetPlanName, customerType);
+            if (!quotaCheck.Success)
+            {
+                return quotaCheck;
+            }
+
+            await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+            try
+            {
+                await ExecuteNonQueryAsync(connection, @"
+UPDATE oms.dbo.client_product
+SET product_id = @targetProductId, last_update = SYSDATETIME()
+WHERE client_product_id = @clientProductId", command =>
+                {
+                    command.Transaction = transaction;
+                    command.Parameters.AddWithValue("@targetProductId", target.ProductId);
+                    command.Parameters.AddWithValue("@clientProductId", current.ClientProductId);
+                });
+
+                await ExecuteNonQueryAsync(connection, @"
+UPDATE dbo.cp_config
+SET WebHostType = @targetPlanName
+WHERE cpID = @cpId
+  AND customerID = @customerId", command =>
+                {
+                    command.Transaction = transaction;
+                    command.Parameters.AddWithValue("@targetPlanName", targetPlanName);
+                    command.Parameters.AddWithValue("@cpId", current.CpId);
+                    command.Parameters.AddWithValue("@customerId", customerId);
+                });
+
+                await transaction.CommitAsync();
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                return new AccountActionResponse(false, $"Downgrade failed before server sync: {ex.Message}");
+            }
+
+            return new AccountActionResponse(true, $"Downgrade completed. {current.CpLogin} is now on {targetPlanName}. Disk quota/server quota refresh should run through the hosting agent just like resetServerDiskQuota in the old control panel.");
+        }
+
+        private static async Task<AccountActionResponse> ValidateHostingDowngradeQuotasAsync(SqlConnection connection, long cpId, string targetPlanName, string customerType)
+        {
+            var poolQuota = await LoadProductConfigIntAsync(connection, targetPlanName, "PoolQuota", customerType);
+            if (poolQuota <= 0)
+            {
+                poolQuota = 1;
+            }
+
+            var ramQuota = await LoadProductConfigIntAsync(connection, targetPlanName, "ram", customerType);
+            var poolCount = await ExecuteScalarAsync<int>(connection, "SELECT COUNT(*) FROM dbo.cp_config_Pools WHERE cpID = @cpId", command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cpId);
+            });
+            var ramUsed = await ExecuteScalarAsync<int>(connection, "SELECT ISNULL(SUM(privateMemory), 0) FROM dbo.cp_config_Pools WHERE cpID = @cpId", command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cpId);
+            });
+
+            var failures = new List<string>();
+            if (poolCount > poolQuota)
+            {
+                failures.Add("The application pool usages are exceeded.");
+            }
+            if (ramQuota > 0 && ramUsed > ramQuota)
+            {
+                failures.Add("The RAM quota usage is exceeded.");
+            }
+
+            return failures.Count == 0
+                ? new AccountActionResponse(true, "Downgrade quota checks passed.")
+                : new AccountActionResponse(false, string.Join(" ", failures));
+        }
+
+        private static async Task<int> LoadProductConfigIntAsync(SqlConnection connection, string productName, string columnName, string customerType)
+        {
+            var safeColumn = columnName switch
+            {
+                "PoolQuota" => "PoolQuota",
+                "ram" => "ram",
+                _ => ""
+            };
+            if (string.IsNullOrWhiteSpace(safeColumn))
+            {
+                return 0;
+            }
+
+            var sql = $@"
+SELECT TOP 1 ISNULL({safeColumn}, 0)
+FROM ehbconfig.dbo.product_config
+WHERE product_name = @productName
+  AND (product_type = @customerType OR product_type = 'individual')
+ORDER BY CASE WHEN product_type = @customerType THEN 0 ELSE 1 END";
+
+            return await ExecuteScalarAsync<int>(connection, sql, command =>
+            {
+                command.Parameters.AddWithValue("@productName", productName);
+                command.Parameters.AddWithValue("@customerType", string.IsNullOrWhiteSpace(customerType) ? "individual" : customerType);
+            });
+        }
+
+        private static async Task<AddonCatalogProduct?> LoadHostingUpgradeProductAsync(SqlConnection connection, int productId)
+        {
+            const string sql = @"
+SELECT TOP 1 p.product_id, p.name, CAST(p.description AS nvarchar(max)) AS description, ISNULL(p.product_type, '')
+FROM oms.dbo.product p
+WHERE p.product_id = @productId
+  AND p.active = 1";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@productId", productId);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new AddonCatalogProduct(
+                reader.GetInt32(0),
+                reader.GetString(1).Trim(),
+                reader.IsDBNull(2) ? "" : reader.GetString(2).Trim(),
+                reader.IsDBNull(3) ? "" : reader.GetString(3).Trim(),
+                "Hosting Upgrade",
+                new List<AddonPriceOption>()
+            );
+        }
+
+        private static async Task<decimal?> LoadProductPriceAmountAsync(SqlConnection connection, int productId, string paymentTerm)
+        {
+            const string sql = @"
+SELECT TOP 1 price_amount
+FROM oms.dbo.price
+WHERE product_id = @productId
+  AND LOWER(payment_term) = @paymentTerm
+  AND LOWER(currency) = 'usd'
+ORDER BY price_amount DESC";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@productId", productId);
+            command.Parameters.AddWithValue("@paymentTerm", paymentTerm.ToLowerInvariant());
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? null : Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+        }
+
+        private static string ExtractHostingUpgradeLocation(string webHostType, string productName)
+        {
+            var value = $"{webHostType} {productName}";
+            if (value.Contains("EU", StringComparison.OrdinalIgnoreCase)) return "AMS";
+            if (value.Contains("HK", StringComparison.OrdinalIgnoreCase)) return "IFC";
+            return "ALC";
+        }
+
+        private static string BuildHostingUpgradeWindowsPredicate(string location, bool isLinux)
+        {
+            if (isLinux)
+            {
+                return location == "ALC"
+                    ? "(p.name LIKE 'W%LX-US')"
+                    : "(p.name LIKE 'W%HK')";
+            }
+
+            return location == "AMS"
+                ? "(p.name LIKE 'W%EU' AND p.name NOT LIKE 'W%LX-EU')"
+                : "(p.name LIKE 'W%US' AND p.name NOT LIKE 'W%LX-US')";
+        }
+
+        private static string BuildHostingUpgradeVpsPredicate(string location)
+        {
+            return location == "ALC"
+                ? "(p.name LIKE 'V%-US')"
+                : "(p.name LIKE 'V%-HK')";
+        }
+
+        private static int HostingUpgradeTermDays(string paymentTerm) => paymentTerm.ToLowerInvariant() switch
+        {
+            "annually" => 365,
+            "quarterly" => 90,
+            "monthly" => 30,
+            "semi-annually" => 182,
+            "2y" => 730,
+            "biennially" => 730,
+            "3y" => 1095,
+            _ => 0
+        };
+
+        private static DateOnly GetLegacyAccountToday()
+        {
+            try
+            {
+                var timeZone = TimeZoneInfo.FindSystemTimeZoneById(LegacyAccountTimeZone);
+                return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timeZone).DateTime);
+            }
+            catch
+            {
+                return DateOnly.FromDateTime(DateTime.UtcNow);
+            }
         }
 
         private static async Task<List<HostingStatusCount>> LoadHostingStatusSummaryAsync(SqlConnection connection, long customerId)
@@ -7749,7 +9107,9 @@ VALUES
         private static async Task<AccountSettingsDashboard> LoadAccountSettingsAsync(SqlConnection connection, long customerId)
         {
             const string sql = @"
-SELECT TOP 1 customerID, customerLogin, customer_type, status, name_en, company_name_en,
+SELECT TOP 1 customerID, customerLogin, customer_type, status,
+       COALESCE(NULLIF(name_zh_cn, ''), name_en) AS display_name,
+       COALESCE(NULLIF(company_name_zh_cn, ''), company_name_en) AS display_company,
        account_start_date, reVerify, reVerifySkip, securityversion, email, mobile_number,
        browserlang, vat,
        country_zh_cn, province_zh_cn, city_zh_cn, area_zh_cn, address_zh_cn, postcodestr,
@@ -8413,15 +9773,32 @@ ORDER BY dp.domain_name";
                     status = "expired";
                 }
 
+                var registerStatus = reader.IsDBNull(6) ? "" : reader.GetString(6).Trim();
+                var clientProductId = reader.GetInt32(2);
+                var canRenew = clientProductId > 0 && (status.Equals("completed", StringComparison.OrdinalIgnoreCase) || status.Equals("expired", StringComparison.OrdinalIgnoreCase));
+                var canManage = status.Equals("completed", StringComparison.OrdinalIgnoreCase);
+                var transferActionLabel = "";
+                var transferActionUrl = "";
+                if (status.Equals("in-progress", StringComparison.OrdinalIgnoreCase) || registerStatus.Equals("in-progress", StringComparison.OrdinalIgnoreCase))
+                {
+                    transferActionLabel = "Transfer Log";
+                    transferActionUrl = "/account/transfer_domain_step6";
+                }
+                else if (status.Equals("cancelled", StringComparison.OrdinalIgnoreCase) || registerStatus.Equals("cancelled", StringComparison.OrdinalIgnoreCase))
+                {
+                    transferActionLabel = "Resubmit";
+                    transferActionUrl = $"/account/transfer_domain_step3_detail?profileid={reader.GetInt32(7)}";
+                }
+
                 rows.Add(new AccountDomainSummary(
                     reader.GetInt32(0),
                     reader.GetString(1).Trim(),
-                    reader.GetInt32(2),
+                    clientProductId,
                     status,
                     startDate,
                     expirationDate,
                     daysLeft,
-                    reader.IsDBNull(6) ? "" : reader.GetString(6).Trim(),
+                    registerStatus,
                     reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
                     reader.IsDBNull(8) ? null : DateOnly.FromDateTime(reader.GetDateTime(8)),
                     reader.IsDBNull(9) ? null : DateOnly.FromDateTime(reader.GetDateTime(9)),
@@ -8429,7 +9806,14 @@ ORDER BY dp.domain_name";
                     ReadBoolean(reader, 11),
                     ReadBoolean(reader, 12),
                     reader.IsDBNull(13) ? null : DateOnly.FromDateTime(reader.GetDateTime(13)),
-                    ReadInt32(reader, 14)
+                    ReadInt32(reader, 14),
+                    canRenew,
+                    canManage,
+                    canRenew ? $"/account/domain_renew?client_product_id={clientProductId}" : "",
+                    canManage ? $"/account/editdns?profileid={reader.GetInt32(0)}" : "",
+                    canManage ? $"/account/domain_profile?profileid={reader.GetInt32(7)}" : "",
+                    transferActionLabel,
+                    transferActionUrl
                 ));
             }
 
@@ -14660,21 +16044,21 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             return name.Length > 3 ? name[3..] : name;
         }
 
-        private static List<RenewalNoticeSummary> BuildRenewalNotices(List<HostingAccountSummary> hostingAccounts)
+        private static List<RenewalNoticeSummary> BuildRenewalNotices(List<AccountProductSummary> products)
         {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
             var notices = new List<RenewalNoticeSummary>();
 
-            foreach (var account in hostingAccounts)
+            foreach (var product in products)
             {
-                if (account.RenewalDate == null)
+                if (product.NextDueDate == null || product.DaysLeft == null)
                 {
                     continue;
                 }
 
-                var daysLeft = account.RenewalDate.Value.DayNumber - today.DayNumber;
+                var daysLeft = product.DaysLeft.Value;
                 var label = daysLeft < 0 ? "Past due" : daysLeft <= 30 ? "Action needed" : "Upcoming";
-                notices.Add(new RenewalNoticeSummary(account.CpLogin, account.ClientProductId, account.RenewalDate.Value, daysLeft, label));
+                var name = string.IsNullOrWhiteSpace(product.Description) ? product.Name : product.Description;
+                notices.Add(new RenewalNoticeSummary(name, product.ClientProductId, product.NextDueDate.Value, daysLeft, label));
             }
 
             return notices;
@@ -14731,22 +16115,30 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record AccountActionResponse(bool Success, string Message);
         private sealed record RenewalCheckoutResponse(bool Success, string Message, RenewalCheckoutPreview? Renewal);
         private sealed record MultipleRenewalCheckoutRequest(List<int> ClientProductIds);
+        private sealed record HostingUpgradeCatalogResponse(bool Success, string Message, HostingUpgradeCatalog? Catalog);
+        private sealed record HostingUpgradePreviewResponse(bool Success, string Message, HostingUpgradePreview? Preview);
+        private sealed record HostingUpgradeRequest(long CpId, int TargetProductId);
         private sealed record BillingInvoiceResponse(bool Success, string Message, BillingInvoiceDetail? Invoice);
         private sealed record CheckoutPreviewResponse(bool Success, string Message, CheckoutPreview? Preview);
         private sealed record CheckoutCreateResponse(bool Success, string Message, CheckoutOrder? Order);
-        private sealed record CheckoutTempOrderResponse(bool Success, string Message, CheckoutTempOrder? Order, AccountBalanceSummary? Balance = null, bool CanContinueWithBalance = false, decimal Shortfall = 0m);
-        private sealed record RenewTempOrderResponse(bool Success, string Message, RenewTempOrder? Order);
+        private sealed record CheckoutTempOrderResponse(bool Success, string Message, CheckoutTempOrder? Order, AccountBalanceSummary? Balance = null, bool CanContinueWithBalance = false, decimal Shortfall = 0m, string BrandName = "");
+        private sealed record RenewTempOrderResponse(bool Success, string Message, RenewTempOrder? Order, AccountBalanceSummary? Balance = null, bool CanContinueWithBalance = false, decimal Shortfall = 0m, string BrandName = "");
         private sealed record AffiliateWithdrawResponse(bool Success, string Message, AffiliateWithdrawPreview? Preview);
         private sealed record AccountVpnResponse(bool Success, string Message, AccountVpnDashboard? Dashboard);
         private sealed record AccountAddonsResponse(bool Success, string Message, AccountAddonsDashboard? Dashboard);
         private sealed record AccountAffiliateResponse(bool Success, string Message, AccountAffiliateDashboard? Dashboard);
         private sealed record AccountSettingsResponse(bool Success, string Message, AccountSettingsDashboard? Dashboard);
         private sealed record EmailChangeVerifyResponse(bool Success, string Message, bool Completed, string NewEmail, DateTime? CreatedAt);
+        private sealed record PasswordSyncResult(List<string> Synced, List<string> Blocked);
+        private sealed record TwoFactorActionResponse(bool Success, string Message, TwoFactorSetupSummary? Setup);
+        private sealed record TwoFactorSetupSummary(string Secret, string QrCodeUrl);
+        private sealed record TwoFactorSecretResult(bool Success, string Secret, string Message);
+        private sealed record TwoFactorQrResult(bool Success, string QrCodeUrl, string Message);
         private sealed record NewOrderCatalogResponse(bool Success, string Message, NewOrderCatalog? Catalog);
         private sealed record HostingSitesResponse(bool Success, string Message, HostingSitesDashboard? Dashboard);
         private sealed record AccountDashboard(CustomerSummary Customer, List<HostingAccountSummary> HostingAccounts, List<HostingStatusCount> HostingStatusSummary, List<RenewalNoticeSummary> RenewalNotices, List<UrgentLogSummary> UrgentLogs);
         private sealed record CustomerSummary(long CustomerId, string Login, string CustomerType, string Status, string Name, string CompanyName, DateOnly? AccountStartDate);
-        private sealed record HostingAccountSummary(long CpId, string CpLogin, string PrimaryDomain, string WebHostType, string ServerId, string Status, long ClientProductId, int ProductId, DateOnly? RenewalDate, int TotalSites, int AdditionalRam);
+        private sealed record HostingAccountSummary(long CpId, string CpLogin, string PrimaryDomain, string WebHostType, string ServerId, string Status, long ClientProductId, int ProductId, DateOnly? RenewalDate, int TotalSites, int AdditionalRam, List<string> Domains);
         private sealed record HostingStatusCount(string Status, int Count);
         private sealed record RenewalNoticeSummary(string Name, long ClientProductId, DateOnly RenewalDate, int DaysLeft, string Status);
         private sealed record UrgentLogSummary(int Id, long CustomerId, string CustomerLogin, string Message, DateTime CreatedAt);
@@ -14756,6 +16148,9 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record AccountPurchaseSummary(int OrderId, int ClientProductId, string Name, string Description, string PaymentTerm, string PaymentMethod, decimal Amount, string OrderStatus, string PaymentStatus, DateOnly CreateDate);
         private sealed record AccountCreditTransactionSummary(int ProductId, string Name, string Description, string PaymentMethod, decimal LedgerAmount, DateTime? CreatedAt, decimal? RealAmount, string OrderStatus);
         private sealed record RenewalCheckoutPreview(int ClientProductId, int ProductId, string Name, string Description, string PaymentTerm, decimal Amount, string Currency, DateOnly? NextDueDate, string CheckoutUrl, string Note);
+        private sealed record HostingUpgradeCatalog(HostingUpgradeCurrent Current, List<AddonCatalogProduct> Targets, string LegacyTrace, string Note);
+        private sealed record HostingUpgradeCurrent(long CpId, string CpLogin, string WebHostType, string ServerId, long ClientProductId, int ProductId, string ProductName, string ProductDescription, DateOnly? DueDate, string PaymentTerm);
+        private sealed record HostingUpgradePreview(HostingUpgradeCurrent Current, AddonCatalogProduct Target, string PaymentTerm, decimal CurrentPrice, decimal TargetPrice, decimal TotalAmount, int DaysLeft, DateOnly? DueDate, bool CanCheckout, bool IsDowngrade, string Message);
         private sealed record BillingInvoiceDetail(int OrderId, int ClientProductId, int ProductId, string Name, string ProductName, string Description, string PaymentTerm, string PaymentMethod, decimal Amount, decimal PaidAmount, decimal Fees, string OrderStatus, string PaymentStatus, DateOnly CreateDate, DateOnly? PaidDate, string TransactionCode, string AccountName, string ReceiptName, string ReceiptAddress, string ReceiptCity, string ReceiptProvince, string ReceiptPostcode, string ReceiptCountry, string Vat);
         private sealed record CheckoutPreview(string CheckoutId, string Title, int ItemCount, decimal Total, string Currency, string CheckoutUrl, string Note, object Items);
         private sealed record CheckoutOrder(string Guid, string CheckoutUrl, string Title, decimal Amount, string Currency, int PageType, string Note);
@@ -14822,6 +16217,7 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             string BillingAddress,
             string BillingPostcode);
         private sealed record AccountTwoFactorSummary(bool HasSecret, bool IsEnabled, DateOnly? EnterDate);
+        private sealed record TwoFactorConfirmRequest(string OneCode);
         private sealed record AccountPasswordChangeRequest(string CurrentPassword, string NewPassword, string ConfirmPassword);
         private sealed record AccountEmailChangeRequest(string Email);
         private sealed record AccountProfileUpdateRequest(
@@ -14842,7 +16238,7 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             string BillingArea,
             string BillingAddress,
             string BillingPostcode);
-        private sealed record AccountDomainSummary(int Id, string DomainName, int ClientProductId, string Status, DateOnly? StartDate, DateOnly? ExpirationDate, int? DaysLeft, string RegisterStatus, int RegisterInfoId, DateOnly? AddDate, DateOnly? ProductNextDueDate, string ProductStatus, bool WhoisPrivacySupported, bool WhoisPrivacyPurchased, DateOnly? WhoisPrivacyTurnOnDate, int GracePeriodDays);
+        private sealed record AccountDomainSummary(int Id, string DomainName, int ClientProductId, string Status, DateOnly? StartDate, DateOnly? ExpirationDate, int? DaysLeft, string RegisterStatus, int RegisterInfoId, DateOnly? AddDate, DateOnly? ProductNextDueDate, string ProductStatus, bool WhoisPrivacySupported, bool WhoisPrivacyPurchased, DateOnly? WhoisPrivacyTurnOnDate, int GracePeriodDays, bool CanRenew, bool CanManage, string RenewUrl, string DnsUrl, string SettingsUrl, string TransferActionLabel, string TransferActionUrl);
         private sealed record DomainProfileDetail(int Id, string DomainName, int RegisterInfoId, string RegisterStatus, DateOnly? ExpirationDate, int? DaysLeft, bool WhoisPrivacySupported, bool WhoisPrivacyPurchased, DateOnly? WhoisPrivacyTurnOnDate, int GracePeriodDays, DomainContactDetail Registrant, DomainContactDetail Admin, DomainContactDetail Billing, DomainContactDetail Technical);
         private sealed record DomainContactDetail(string FirstName, string LastName, string Organization, string Email, string Phone, string Fax, string Address1, string Address2, string City, string State, string Province, string Country, string PostalCode);
         private sealed record HostingSitesDashboard(long CpId, string CpLogin, List<HostingSiteSummary> Sites);

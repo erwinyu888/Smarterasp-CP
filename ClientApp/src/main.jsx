@@ -111,7 +111,7 @@ const actionIconByLabel = {
   Quota: "server",
   Move: "open",
   Refresh: "refresh",
-  Renew: "renew",
+  Renew: "order",
   Reset: "reset",
   Restore: "retry",
   Retry: "retry",
@@ -531,6 +531,8 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
   const [orderMessage, setOrderMessage] = useState("");
   const [isPayingWithBalance, setIsPayingWithBalance] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isPaymentPopupOpen, setIsPaymentPopupOpen] = useState(false);
+  const paymentPopupTimerRef = useRef(null);
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const guid = query.get("guid") ?? "";
   const amount = query.get("amount") ?? "";
@@ -565,6 +567,12 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
     loadOrder();
   }, [guid, isRenewTemp]);
 
+  useEffect(() => () => {
+    if (paymentPopupTimerRef.current) {
+      window.clearInterval(paymentPopupTimerRef.current);
+    }
+  }, []);
+
   async function continuePurchaseSetup() {
     if (!guid) return;
     setIsPayingWithBalance(true);
@@ -597,11 +605,58 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
   const balance = checkoutState?.balance?.amount;
   const shortfall = checkoutState?.shortfall ?? 0;
   const canContinueWithBalance = !!checkoutState?.canContinueWithBalance && !!order && !orderProcessed && !isDeposit;
-  const legacyCheckoutUrl = guid
-    ? isRenewTemp
-      ? `/legacy-checkout/checkout_overview_renew?guid=${encodeURIComponent(guid)}`
-      : `/legacy-checkout/checkout_overview?guid=${encodeURIComponent(guid)}`
+  const depositAmount = Math.max(Number(shortfall || 0), 0);
+  const depositBrandName = checkoutState?.brandName || window.location.hostname;
+  const paymentDepositUrl = depositAmount > 0
+    ? `https://member5.smarterasp.net/checkout_standalone/deposit?username=${encodeURIComponent(currentUser?.login ?? "")}&amount=${encodeURIComponent(depositAmount.toFixed(2))}&brandname=${encodeURIComponent(depositBrandName)}`
     : "";
+
+  function openPaymentPopup(url) {
+    if (!url) return;
+
+    const w = 600;
+    const h = 700;
+    const dualScreenLeft = window.screenLeft !== undefined ? window.screenLeft : window.screen.left;
+    const dualScreenTop = window.screenTop !== undefined ? window.screenTop : window.screen.top;
+    const width = window.innerWidth || document.documentElement.clientWidth || window.screen.width;
+    const height = window.innerHeight || document.documentElement.clientHeight || window.screen.height;
+    const systemZoom = width / window.screen.availWidth;
+    const left = (width - w) / 2 / systemZoom + dualScreenLeft;
+    const top = (height - h) / 2 / systemZoom + dualScreenTop;
+    const popupFeatures = [
+      "popup=yes",
+      "scrollbars=yes",
+      "resizable=yes",
+      `width=${Math.round(w / systemZoom)}`,
+      `height=${Math.round(h / systemZoom)}`,
+      `top=${Math.round(top)}`,
+      `left=${Math.round(left)}`
+    ].join(",");
+    const popup = window.open(url, "_blank", popupFeatures);
+
+    if (!popup) {
+      setOrderMessage("Your browser blocked the payment popup. Allow popups for this site, then try again.");
+      return;
+    }
+
+    setIsPaymentPopupOpen(true);
+    setOrderMessage("Payment popup opened. This cart will recheck your account balance when it closes.");
+    if (window.focus) popup.focus();
+
+    if (paymentPopupTimerRef.current) {
+      window.clearInterval(paymentPopupTimerRef.current);
+    }
+
+    paymentPopupTimerRef.current = window.setInterval(() => {
+      if (popup.closed) {
+        window.clearInterval(paymentPopupTimerRef.current);
+        paymentPopupTimerRef.current = null;
+        setIsPaymentPopupOpen(false);
+        setOrderMessage("Payment popup closed. Rechecking account balance.");
+        loadOrder({ quiet: true });
+      }
+    }, 1000);
+  }
 
   return (
     <main className="checkout-page">
@@ -618,7 +673,7 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
       <section className="checkout-handoff-card">
         <span className="status-pill blue">Cart + Payment</span>
         <h1>{title}</h1>
-        <p>Complete payment in the secure checkout frame, then refresh this cart to continue purchase setup when the account balance covers the order.</p>
+        <p>This cart checks account balance first. If the balance is short, add funds in the secure payment popup, then this cart will recheck the balance when the popup closes.</p>
         {order && (
           <div className="checkout-status-grid">
             <div>
@@ -656,37 +711,23 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
             : <p className="renewal-action-message">{orderMessage}</p>
         )}
         <div className="checkout-action-row">
-          <button className="secondary-button" type="button" disabled={isRefreshing} onClick={() => loadOrder({ quiet: true })} title="Refresh cart">
+          <button className="secondary-button checkout-dark-button" type="button" onClick={onBackToPanel}>
+            Back
+          </button>
+          <button className="secondary-button checkout-dark-button" type="button" disabled={isRefreshing} onClick={() => loadOrder({ quiet: true })} title="Refresh cart">
             {isRefreshing ? <LoadingIcon label="Refreshing cart" /> : <MenuIcon name="refresh" />}
           </button>
           {canContinueWithBalance && (
             <button className="primary-button" type="button" disabled={isPayingWithBalance} onClick={continuePurchaseSetup}>
-              {isPayingWithBalance ? <LoadingIcon label="Continuing purchase setup" /> : "Continue Purchase Setup"}
+              {isPayingWithBalance ? <LoadingIcon label="Finishing purchase" /> : "Continue & Finish Purchase"}
             </button>
           )}
-          {!canContinueWithBalance && legacyCheckoutUrl && !orderProcessed && (
-            <a className="secondary-button as-link" href={legacyCheckoutUrl} target="legacy-payment-frame">Open Payment in Frame</a>
+          {!canContinueWithBalance && paymentDepositUrl && !orderProcessed && (
+            <button className="primary-button" type="button" disabled={isPaymentPopupOpen} onClick={() => openPaymentPopup(paymentDepositUrl)}>
+              {isPaymentPopupOpen ? <LoadingIcon label="Payment popup open" /> : "Make Payment"}
+            </button>
           )}
         </div>
-        {legacyCheckoutUrl && !orderProcessed && (
-          <section className="legacy-payment-frame-card">
-            <div className="billing-detail-header">
-              <span className="status-pill muted">Secure Payment Page</span>
-              <button className="ghost-button compact" type="button" onClick={() => loadOrder({ quiet: true })} title="Refresh cart">
-                {isRefreshing ? <LoadingIcon label="Refreshing cart" /> : <MenuIcon name="refresh" />}
-              </button>
-            </div>
-            <iframe
-              className="legacy-payment-frame"
-              name="legacy-payment-frame"
-              title="Legacy secure payment"
-              src={legacyCheckoutUrl}
-            />
-          </section>
-        )}
-        <button className="primary-button" type="button" onClick={onBackToPanel}>
-          Back to Account Panel
-        </button>
       </section>
     </main>
   );
@@ -1210,6 +1251,11 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
   }, [activeSection]);
 
   const accountFunds = accountStats.balance === null ? "$179.92" : formatUsdFull(accountStats.balance);
+  const headerAccountLogin = dashboard?.customer?.login ?? currentUser?.login ?? "";
+  const headerCustomerId = dashboard?.customer?.customerId ?? currentUser?.customerId ?? "";
+  const activeHostingPlanLabel = realHostingCount === undefined
+    ? ""
+    : `${realHostingCount} Active ${realHostingCount === 1 ? "Plan" : "Plans"}`;
 
   return (
     <div className={isMobileMenuOpen ? "app-shell mobile-menu-open" : "app-shell"}>
@@ -1287,8 +1333,16 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
           <div>
             <p className="kicker">Your Account Panel</p>
             <h1>{activeTitle}</h1>
+            {activeSection === "hosting" && activeHostingPlanLabel ? (
+              <p className="workspace-title-meta">{activeHostingPlanLabel}</p>
+            ) : null}
           </div>
           <div className="workspace-actions">
+            {headerAccountLogin ? (
+              <span className="workspace-account-label">
+                {headerAccountLogin}{headerCustomerId ? ` (ID: ${headerCustomerId})` : ""}
+              </span>
+            ) : null}
             <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
             <button className="secondary-button compact" type="button" onClick={onLogout}>Logout</button>
           </div>
@@ -7349,6 +7403,20 @@ function MenuIcon({ name }) {
         <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2 2 0 0 1-2.83 2.83l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2 2 0 0 1-4 0v-.08a1.8 1.8 0 0 0-1.1-1.66 1.8 1.8 0 0 0-1.98.36l-.05.05a2 2 0 0 1-2.83-2.83l.05-.05A1.8 1.8 0 0 0 4.6 15a1.8 1.8 0 0 0-1.66-1.1H2.9a2 2 0 0 1 0-4h.08A1.8 1.8 0 0 0 4.6 8.8a1.8 1.8 0 0 0-.36-1.98l-.05-.05a2 2 0 0 1 2.83-2.83l.05.05a1.8 1.8 0 0 0 1.98.36 1.8 1.8 0 0 0 1.1-1.66V2.6a2 2 0 0 1 4 0v.08a1.8 1.8 0 0 0 1.1 1.66 1.8 1.8 0 0 0 1.98-.36l.05-.05a2 2 0 0 1 2.83 2.83l-.05.05a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.66 1.1h.08a2 2 0 0 1 0 4h-.08A1.8 1.8 0 0 0 19.4 15Z" />
       </>
     ),
+    rocket: (
+      <>
+        <path d="M13.5 4.2c2.1-.7 4.2-.7 6.3 0 .7 2.1.7 4.2 0 6.3L14 16.3l-6.3-6.3 5.8-5.8Z" />
+        <path d="M8.8 9.2 5.5 8.8 3.8 10.5l4.1 1.3M14.8 15.2l.4 3.3-1.7 1.7-1.3-4.1" />
+        <circle cx="16.3" cy="7.7" r="1.3" />
+        <path d="M6.8 17.2 4 20" />
+      </>
+    ),
+    "arrow-up": (
+      <>
+        <path d="M12 19V5" />
+        <path d="m6.5 10.5 5.5-5.5 5.5 5.5" />
+      </>
+    ),
     order: (
       <>
         <path d="M6 6h15l-1.6 8.2a2 2 0 0 1-2 1.6H9.1a2 2 0 0 1-2-1.6L5.8 3.8H3" />
@@ -7786,12 +7854,30 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
   const accounts = dashboard?.hostingAccounts?.length ? dashboard.hostingAccounts : [];
   const notices = dashboard?.renewalNotices?.length ? dashboard.renewalNotices : [];
   const urgentLogs = dashboard?.urgentLogs ?? [];
-  const statusSummary = dashboard?.hostingStatusSummary ?? [];
   const [renewalBusyId, setRenewalBusyId] = useState(null);
   const [renewalPreview, setRenewalPreview] = useState(null);
   const [renewalMessage, setRenewalMessage] = useState("");
   const [urgentBusyId, setUrgentBusyId] = useState(null);
   const [urgentMessage, setUrgentMessage] = useState("");
+  const [upgradeCatalog, setUpgradeCatalog] = useState(null);
+  const [upgradeTargetId, setUpgradeTargetId] = useState("");
+  const [upgradePreview, setUpgradePreview] = useState(null);
+  const [upgradeOrder, setUpgradeOrder] = useState(null);
+  const [upgradeBusy, setUpgradeBusy] = useState(false);
+  const [upgradeCalculating, setUpgradeCalculating] = useState(false);
+  const [upgradeMessage, setUpgradeMessage] = useState("");
+  const [viewMode, setViewMode] = useSectionViewMode("account-hosting-plans", accounts.length);
+  const planDomains = (account) => (account.domains ?? []).filter((domain) => !String(domain).toLowerCase().includes("tempurl"));
+  const planDomainList = (account) => {
+    const domains = planDomains(account);
+    return domains.length ? domains.join(", ") : "No Primary domain";
+  };
+  const planCardDomainList = (account) => {
+    const domains = planDomains(account).slice(0, 3);
+    return domains.length ? domains.join(", ") : "No Primary domain";
+  };
+  const planFirstDomain = (account) => planDomains(account)[0] ?? "No Primary domain";
+  const planDomainCount = (account) => planDomains(account).length;
 
   async function loadHostingRenewalPreview(notice) {
     setRenewalBusyId(notice.clientProductId);
@@ -7844,31 +7930,123 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
     }
   }
 
+  async function openHostingUpgrade(account) {
+    setUpgradeBusy(true);
+    setUpgradeMessage("");
+    setUpgradePreview(null);
+    setUpgradeOrder(null);
+    setUpgradeCalculating(false);
+    setUpgradeTargetId("");
+
+    try {
+      const response = await fetch(`/api/account/hosting-upgrade/${account.cpId}`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setUpgradeCatalog(null);
+        setUpgradeMessage(result?.message ?? "Unable to load upgrade options.");
+        return;
+      }
+
+      setUpgradeCatalog(result.catalog);
+      setUpgradeTargetId("");
+      setUpgradeMessage(result.catalog?.targets?.length ? "Please choose a plan." : "No upgrade targets were found for this hosting plan.");
+    } catch {
+      setUpgradeCatalog(null);
+      setUpgradeMessage("Unable to reach hosting upgrade service.");
+    } finally {
+      setUpgradeBusy(false);
+    }
+  }
+
+  async function calculateHostingUpgrade(targetProductId = upgradeTargetId) {
+    if (!upgradeCatalog?.current?.cpId || !targetProductId) return;
+    setUpgradeCalculating(true);
+    setUpgradePreview(null);
+    setUpgradeOrder(null);
+    setUpgradeMessage("");
+
+    try {
+      const response = await fetch("/api/account/hosting-upgrade/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId: upgradeCatalog.current.cpId,
+          targetProductId: Number(targetProductId)
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setUpgradePreview(result?.preview ?? null);
+      setUpgradeMessage(result?.message ?? "Unable to calculate upgrade price.");
+    } catch {
+      setUpgradeMessage("Unable to reach hosting upgrade service.");
+    } finally {
+      setUpgradeCalculating(false);
+    }
+  }
+
+  async function createHostingUpgradeCheckout() {
+    if (!upgradeCatalog?.current?.cpId || !upgradeTargetId) return;
+    setUpgradeBusy(true);
+    setUpgradeMessage("");
+
+    try {
+      const response = await fetch("/api/account/hosting-upgrade/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId: upgradeCatalog.current.cpId,
+          targetProductId: Number(upgradeTargetId)
+        })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setUpgradeMessage(result?.message ?? "Unable to create upgrade checkout.");
+        return;
+      }
+
+      setUpgradeOrder(result.order);
+      setUpgradeMessage("Upgrade checkout order created.");
+      if (result.order?.checkoutUrl) {
+        window.location.href = result.order.checkoutUrl;
+      }
+    } catch {
+      setUpgradeMessage("Unable to reach hosting upgrade checkout.");
+    } finally {
+      setUpgradeBusy(false);
+    }
+  }
+
+  async function applyHostingDowngrade() {
+    if (!upgradeCatalog?.current?.cpId || !upgradeTargetId) return;
+    setUpgradeBusy(true);
+    setUpgradeMessage("");
+
+    try {
+      const response = await fetch("/api/account/hosting-upgrade/downgrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId: upgradeCatalog.current.cpId,
+          targetProductId: Number(upgradeTargetId)
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setUpgradeMessage(result?.message ?? "Unable to apply downgrade.");
+      if (response.ok && result?.success) {
+        setUpgradeCatalog(null);
+        setUpgradePreview(null);
+        setUpgradeOrder(null);
+        onReloadDashboard();
+      }
+    } catch {
+      setUpgradeMessage("Unable to reach hosting downgrade service.");
+    } finally {
+      setUpgradeBusy(false);
+    }
+  }
+
   return (
     <section className="hosting-stack">
-      <article className="panel-card account-summary-panel">
-        <div>
-          <span className="status-pill blue">Live account data</span>
-          <h2>{dashboard?.customer?.login ?? "Account"}</h2>
-          <p>
-            Customer ID {dashboard?.customer?.customerId ?? <LoadingIcon label="Loading customer ID" />} · {dashboard?.customer?.customerType ?? <LoadingIcon label="Loading customer type" />}
-          </p>
-        </div>
-        <div className="account-summary-stats">
-          {statusSummary.length ? statusSummary.map((item) => (
-            <div key={item.status}>
-              <strong>{item.count}</strong>
-              <span>{item.status}</span>
-            </div>
-          )) : (
-            <div>
-              <strong>{isDashboardLoading ? "..." : "0"}</strong>
-              <span>Hosting plans</span>
-            </div>
-          )}
-        </div>
-      </article>
-
       {dashboardError && (
         <article className="panel-card dashboard-error-panel">
           <p>{dashboardError}</p>
@@ -7905,42 +8083,158 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
         </div>
       )}
 
-      <div className="panel-card renewal-panel">
-        <div className="renewal-panel-header">
-          <h2>Renewal Notice</h2>
-          <span>{isDashboardLoading ? <LoadingIcon label="Loading renewal notices" /> : `${notices.length} items`}</span>
-        </div>
-        <div className="renewal-list">
-          {isDashboardLoading && <LoadingState label="Loading renewal notices" />}
-          {!isDashboardLoading && !notices.length && <p className="empty-state">No renewal notices found for this account.</p>}
-          {notices.map((notice) => (
-            <article className="renewal-item" key={notice.name}>
-              <div>
-                <h3>{notice.name}</h3>
-                <p>Renewal {formatDate(notice.renewalDate)}</p>
+      {(upgradeBusy || upgradeCatalog || upgradeMessage) && (
+        <article className="panel-card hosting-upgrade-panel">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">Hosting Upgrade</span>
+              <h2>{upgradeCatalog?.current?.cpLogin ? `Upgrade ${upgradeCatalog.current.cpLogin}` : "Upgrade Hosting Plan"}</h2>
+              <p>{upgradeCatalog?.legacyTrace ?? "Loading upgrade options from the old account-panel flow."}</p>
+            </div>
+            <button className="secondary-button compact" type="button" onClick={() => {
+              setUpgradeCatalog(null);
+              setUpgradePreview(null);
+              setUpgradeOrder(null);
+              setUpgradeCalculating(false);
+              setUpgradeMessage("");
+            }}>
+              <MenuIcon name="x" />
+            </button>
+          </div>
+
+          {upgradeBusy && !upgradeCatalog && <LoadingState label="Loading upgrade options" />}
+
+          {upgradeCatalog && (
+            <div className="hosting-upgrade-grid">
+              <div className="upgrade-summary-box">
+                <span className="status-pill muted">Current Plan</span>
+                <h3>{upgradeCatalog.current.productName || upgradeCatalog.current.webHostType}</h3>
+                <dl className="card-meta">
+                  <div><dt>CP Login</dt><dd>{upgradeCatalog.current.cpLogin}</dd></div>
+                  <div><dt>Due Date</dt><dd>{formatDate(upgradeCatalog.current.dueDate)}</dd></div>
+                  <div><dt>Billing Term</dt><dd>{formatPaymentTerm(upgradeCatalog.current.paymentTerm)}</dd></div>
+                  <div><dt>Server</dt><dd>{upgradeCatalog.current.serverId}</dd></div>
+                </dl>
               </div>
-              <div className="renewal-days">
-                <strong>{notice.daysLeft}</strong>
-                <span>days left</span>
+
+              <div className="upgrade-summary-box">
+                <label className="form-label" htmlFor="hosting-upgrade-target">Upgrade To</label>
+                <div className="upgrade-select-row">
+                  <select
+                    id="hosting-upgrade-target"
+                    value={upgradeTargetId}
+                    disabled={upgradeCalculating}
+                    onChange={(event) => {
+                      const nextTargetId = event.target.value;
+                      setUpgradeTargetId(nextTargetId);
+                      setUpgradePreview(null);
+                      setUpgradeOrder(null);
+                      if (nextTargetId) {
+                        calculateHostingUpgrade(nextTargetId);
+                      } else {
+                        setUpgradeCalculating(false);
+                        setUpgradeMessage("Please choose a plan.");
+                      }
+                    }}
+                  >
+                    <option value="">Please choose a plan</option>
+                    {(upgradeCatalog.targets ?? []).map((target) => (
+                      <option key={target.productId} value={target.productId}>
+                        {target.description || target.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {upgradeCalculating && (
+                  <p className="inline-help-text loading-help-text">
+                    <span>Calculating upgrade price...</span>
+                    <LoadingIcon label="Calculating upgrade price" />
+                  </p>
+                )}
               </div>
-              <div className="renewal-item-actions">
-                <span className="renewal-status">{notice.status}</span>
+            </div>
+          )}
+
+          {upgradeMessage && !upgradeCalculating && <p className="renewal-action-message">{upgradeMessage}</p>}
+
+          {upgradePreview && !upgradeCalculating && (
+            <div className="checkout-preview-card">
+              {upgradePreview.isDowngrade ? (
+                <p className="upgrade-downgrade-tip">Downgrade is non refundable</p>
+              ) : (
+                <dl className="card-meta">
+                  <div><dt>Current Price</dt><dd>{formatMoney(upgradePreview.currentPrice, "USD")}</dd></div>
+                  <div><dt>Target Price</dt><dd>{formatMoney(upgradePreview.targetPrice, "USD")}</dd></div>
+                  <div><dt>Days Left</dt><dd>{upgradePreview.daysLeft}</dd></div>
+                  <div><dt>Total Upgrade</dt><dd>{formatMoney(upgradePreview.totalAmount, "USD")}</dd></div>
+                </dl>
+              )}
+              <div className="upgrade-action-row">
                 <button
-                  className="secondary-button compact"
+                  className="primary-button compact hosting-upgrade-now-button"
                   type="button"
-                  disabled={renewalBusyId !== null}
-                  onClick={() => loadHostingRenewalPreview(notice)}
+                  disabled={!upgradePreview?.canCheckout || upgradeBusy}
+                  onClick={upgradePreview.isDowngrade ? applyHostingDowngrade : createHostingUpgradeCheckout}
                 >
-                  {renewalBusyId === notice.clientProductId ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="renew" />}
+                  {upgradeBusy
+                    ? <LoadingIcon label={upgradePreview.isDowngrade ? "Applying downgrade" : "Creating checkout"} />
+                    : upgradePreview.isDowngrade ? "Downgrade Now" : "Upgrade Now"}
                 </button>
               </div>
-            </article>
-          ))}
+            </div>
+          )}
+
+          {upgradeOrder && (
+            <aside className="checkout-ready-row">
+              <span>{upgradeOrder.guid}</span>
+              <a className="primary-button compact as-link" href={upgradeOrder.checkoutUrl}>Open Checkout</a>
+            </aside>
+          )}
+        </article>
+      )}
+
+      {(isDashboardLoading || notices.length > 0 || renewalMessage || renewalPreview) && (
+        <div className="panel-card renewal-panel">
+          <div className="renewal-panel-header">
+            <h2>Renewal Notice</h2>
+            <span>{isDashboardLoading ? <LoadingIcon label="Loading renewal notices" /> : `${notices.length} items`}</span>
+          </div>
+          <div className="renewal-list">
+            {isDashboardLoading && <LoadingState label="Loading renewal notices" />}
+            {notices.map((notice) => (
+              <article className="renewal-item" key={notice.name}>
+                <div>
+                  <h3>{notice.name}</h3>
+                  <p>Renewal {formatDate(notice.renewalDate)}</p>
+                </div>
+                <div className="renewal-days">
+                  <strong>{notice.daysLeft}</strong>
+                  <span>days left</span>
+                </div>
+                <div className="renewal-item-actions">
+                  <span className="renewal-status">{notice.status}</span>
+                  <button
+                    className="secondary-button compact"
+                    type="button"
+                    disabled={renewalBusyId !== null}
+                    onClick={() => loadHostingRenewalPreview(notice)}
+                  >
+                    {renewalBusyId === notice.clientProductId ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="order" />}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+          {renewalMessage && <p className="renewal-action-message">{renewalMessage}</p>}
+          {renewalPreview && <RenewalCheckoutPreview renewal={renewalPreview} onClose={() => setRenewalPreview(null)} onCheckout={createHostingRenewalCheckout} />}
         </div>
-        {renewalMessage && <p className="renewal-action-message">{renewalMessage}</p>}
-        {renewalPreview && <RenewalCheckoutPreview renewal={renewalPreview} onClose={() => setRenewalPreview(null)} onCheckout={createHostingRenewalCheckout} />}
+      )}
+
+      <div className="hosting-list-toolbar">
+        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Hosting plan view" />
       </div>
 
+      {(viewMode === "cards" || isDashboardLoading || !accounts.length) && (
       <div className="card-grid">
         {isDashboardLoading && (
           <article className="service-card">
@@ -7961,7 +8255,10 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
             <div>
               <span className={account.status === "Active" ? "status-pill" : "status-pill muted"}>{account.status}</span>
               <h2>{account.cpLogin}</h2>
-              <p>{account.primaryDomain}</p>
+              <p className="hosting-card-domains" title={planDomainList(account)}>
+                <span>{planCardDomainList(account)}</span>
+                {planDomainCount(account) > 0 ? <span className="domain-count-badge">{planDomainCount(account)}+</span> : null}
+              </p>
             </div>
             <dl className="card-meta">
               <div><dt>Renewal</dt><dd>{formatDate(account.renewalDate)}</dd></div>
@@ -7970,7 +8267,9 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
               <div><dt>Server</dt><dd>{account.serverId}</dd></div>
             </dl>
             <div className="hosting-card-actions">
-              <button className="secondary-button" type="button" onClick={onManageHosting}>Manage</button>
+              <button className="primary-button hosting-manage-button" type="button" onClick={onManageHosting}>
+                <MenuIcon name="rocket" /> Manage
+              </button>
               <button
                 className="secondary-button"
                 type="button"
@@ -7980,17 +8279,76 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                   name: account.cpLogin
                 })}
               >
-                {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="renew" />}
+                {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <><MenuIcon name="order" /> Renew</>}
               </button>
-              <button className="primary-button" type="button" onClick={onOpenNewOrder}>
-                Upgrade
+              <button className="secondary-button" type="button" onClick={() => openHostingUpgrade(account)}>
+                <MenuIcon name="arrow-up" /> Upgrade
               </button>
             </div>
           </article>
         ))}
       </div>
+      )}
 
-      <KnowledgeBaseCard title="Hosting Guides" articles={hostingKbArticles} />
+      {!!accounts.length && viewMode === "table" && (
+        <div className="table-wrap website-table hosting-plan-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Hosting Plan</th>
+                <th>Domains</th>
+                <th>Status</th>
+                <th>Renewal</th>
+                <th>Plan</th>
+                <th>Total Sites</th>
+                <th>Server</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {accounts.map((account) => (
+                <tr key={account.cpId}>
+                  <td>{account.cpLogin}</td>
+                  <td>
+                    <span className="hosting-domain-cell">
+                      <span>{planFirstDomain(account)}</span>
+                      {planDomainCount(account) > 0 ? <span className="domain-count-badge">{planDomainCount(account)}+</span> : null}
+                    </span>
+                  </td>
+                  <td><span className={account.status === "Active" ? "status-pill" : "status-pill muted"}>{account.status}</span></td>
+                  <td>{formatDate(account.renewalDate)}</td>
+                  <td>{account.webHostType}</td>
+                  <td>{account.totalSites}</td>
+                  <td>{account.serverId}</td>
+                  <td>
+                    <div className="website-action-buttons compact-actions">
+                      <button className="primary-button compact icon-only-button hosting-manage-button" type="button" onClick={onManageHosting} title="Manage" aria-label="Manage">
+                        <MenuIcon name="rocket" />
+                      </button>
+                      <button
+                        className="secondary-button compact icon-only-button"
+                        type="button"
+                        disabled={!account.clientProductId || renewalBusyId !== null}
+                        title="Renew"
+                        aria-label="Renew"
+                        onClick={() => loadHostingRenewalPreview({
+                          clientProductId: account.clientProductId,
+                          name: account.cpLogin
+                        })}
+                      >
+                        {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="order" />}
+                      </button>
+                      <button className="secondary-button compact icon-only-button hosting-upgrade-button" type="button" onClick={() => openHostingUpgrade(account)} title="Upgrade" aria-label="Upgrade">
+                        <MenuIcon name="arrow-up" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <article className="affiliate-promo panel-card">
         <div>
@@ -8120,6 +8478,7 @@ function DomainSection() {
   const [domainActionMessage, setDomainActionMessage] = useState("");
   const [domainDnsPreview, setDomainDnsPreview] = useState([]);
   const [isDomainActionBusy, setIsDomainActionBusy] = useState(false);
+  const [domainPrivacyOverrides, setDomainPrivacyOverrides] = useState({});
   const [domainRegistrarForm, setDomainRegistrarForm] = useState({
     action: "nameservers",
     value: domainRegistrarActionDefaults.nameservers
@@ -8399,7 +8758,7 @@ function DomainSection() {
     if (!domain.whoisPrivacyPurchased && enabled) {
       setSelectedDomain(domain);
       setDomainPanelView("settings");
-      setDomainActionMessage("Whois Privacy is supported for this domain, but the privacy add-on must be purchased before it can be enabled.");
+      setDomainActionMessage(`Whois Privacy is supported for this domain, but the privacy add-on must be purchased before it can be enabled. Legacy path: /account/addon_purchase_domain_privacy?profileid=${domain.registerInfoId}`);
       return;
     }
 
@@ -8415,6 +8774,7 @@ function DomainSection() {
       const result = await response.json().catch(() => null);
       setDomainActionMessage(result?.message ?? "Unable to update Whois Privacy.");
       if (response.ok && result?.success) {
+        setDomainPrivacyOverrides((current) => ({ ...current, [domain.id]: enabled }));
         await loadAccountDomains();
       }
     } catch {
@@ -8807,10 +9167,13 @@ function DomainSection() {
           <DataTable
             columns={["Domain", "Status", "Whois Privacy", "Action"]}
             rows={filteredDomains.map((domain) => {
-              const canRenew = !!domain.clientProductId && (domain.status === "completed" || domain.status === "expired");
+              const canRenew = domain.canRenew ?? (!!domain.clientProductId && (domain.status === "completed" || domain.status === "expired"));
+              const canManage = domain.canManage ?? domain.status === "completed";
+              const privacyEnabled = domainPrivacyOverrides[domain.id] ?? domain.whoisPrivacyPurchased;
+              const privacyDisabled = !domain.whoisPrivacySupported || domain.status !== "completed" || domain.daysLeft < 0 || isDomainActionBusy;
               const privacyLabel = !domain.whoisPrivacySupported
                 ? "Privacy N/A"
-                : domain.whoisPrivacyPurchased
+                : privacyEnabled
                   ? "Privacy On"
                   : "Privacy Off";
               return [
@@ -8822,21 +9185,59 @@ function DomainSection() {
                   {domain.registerStatus && domain.registerStatus !== "verified" ? domain.registerStatus : domain.status}
                 </span>,
                 <button
-                  aria-pressed={domain.whoisPrivacyPurchased}
+                  aria-pressed={privacyEnabled}
                   className={domain.whoisPrivacySupported ? "domain-privacy-toggle" : "domain-privacy-toggle disabled"}
-                  disabled={!domain.whoisPrivacySupported || isDomainActionBusy}
+                  disabled={privacyDisabled}
                   title={privacyLabel}
                   type="button"
-                  onClick={() => toggleDomainPrivacy(domain, !domain.whoisPrivacyPurchased)}
+                  onClick={() => toggleDomainPrivacy(domain, !privacyEnabled)}
                 >
-                  <span>{privacyLabel}</span>
+                  <span className="domain-privacy-knob" aria-hidden="true" />
+                  <span>{privacyEnabled ? "PRIVACY ON" : domain.whoisPrivacySupported ? "PRIVACY OFF" : "PRIVACY N/A"}</span>
                 </button>,
                 <div className="domain-table-actions">
                   {canRenew && (
-                    <IconActionButton label="Renew" disabled={isDomainActionBusy} onClick={() => renewSelectedDomain(domain)} />
+                    <button
+                      aria-label="Renew"
+                      className="secondary-button compact domain-row-action-button"
+                      disabled={isDomainActionBusy}
+                      title="Renew"
+                      type="button"
+                      onClick={() => renewSelectedDomain(domain)}
+                    >
+                      <MenuIcon name="order" />
+                    </button>
                   )}
-                  <IconActionButton label="DNS Manager" onClick={() => openDomainDnsManager(domain)} />
-                  <IconActionButton label="Domain Settings" onClick={() => openDomainSettings(domain)} />
+                  {canManage && (
+                    <button
+                      className="secondary-button compact domain-row-action-button"
+                      title="DNS Manager"
+                      type="button"
+                      onClick={() => openDomainDnsManager(domain)}
+                    >
+                      DNS
+                    </button>
+                  )}
+                  {canManage && (
+                    <button
+                      className="secondary-button compact domain-row-action-button manage"
+                      title="Manage"
+                      type="button"
+                      onClick={() => openDomainSettings(domain)}
+                    >
+                      Manage
+                    </button>
+                  )}
+                  {!canManage && domain.transferActionLabel && (
+                    <button
+                      className="secondary-button compact domain-transfer-action"
+                      type="button"
+                      title={domain.transferActionUrl || domain.transferActionLabel}
+                      onClick={() => setDomainActionMessage(`${domain.transferActionLabel}: ${domain.transferActionUrl || "legacy transfer action"}`)}
+                    >
+                      {domain.transferActionLabel}
+                    </button>
+                  )}
                 </div>
               ];
             })}
@@ -10049,7 +10450,7 @@ function BillingTabPanel({ activeTab, billing, onReloadBilling, purchaseDates, o
                 disabled={renewalBusyId !== null}
                 onClick={() => runRenewalAction(product, "renew")}
               >
-                {renewalBusyId === `renew-${product.clientProductId}` ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="renew" />}
+                {renewalBusyId === `renew-${product.clientProductId}` ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="order" />}
               </button>
               <button
                 className="ghost-button compact"
@@ -10413,6 +10814,8 @@ function SettingsSection() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [twoFactorMessage, setTwoFactorMessage] = useState("");
   const [isUpdatingTwoFactor, setIsUpdatingTwoFactor] = useState(false);
+  const [twoFactorSetup, setTwoFactorSetup] = useState(null);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
 
   async function loadSettings() {
     setIsLoadingSettings(true);
@@ -10546,8 +10949,49 @@ function SettingsSection() {
     }
   }
 
-  function showTwoFactorSetupNotice() {
-    setTwoFactorMessage("Authenticator setup needs the legacy encrypted secret writer before this rebuilt panel can create compatible 2FA secrets.");
+  async function startTwoFactorSetup() {
+    setIsUpdatingTwoFactor(true);
+    setTwoFactorMessage("");
+    setTwoFactorSetup(null);
+    setTwoFactorCode("");
+
+    try {
+      const response = await fetch("/api/account/settings/2fa/start", { method: "POST" });
+      const result = await response.json().catch(() => null);
+      setTwoFactorMessage(result?.message ?? "Unable to start two-factor authentication setup.");
+      if (response.ok && result?.success) {
+        setTwoFactorSetup(result.setup);
+      }
+    } catch {
+      setTwoFactorMessage("Unable to reach two-factor authentication service.");
+    } finally {
+      setIsUpdatingTwoFactor(false);
+    }
+  }
+
+  async function confirmTwoFactorSetup(event) {
+    event.preventDefault();
+    setIsUpdatingTwoFactor(true);
+    setTwoFactorMessage("");
+
+    try {
+      const response = await fetch("/api/account/settings/2fa/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oneCode: twoFactorCode })
+      });
+      const result = await response.json().catch(() => null);
+      setTwoFactorMessage(result?.message ?? "Unable to confirm two-factor authentication setup.");
+      if (response.ok && result?.success) {
+        setSettings(result.dashboard);
+        setTwoFactorSetup(null);
+        setTwoFactorCode("");
+      }
+    } catch {
+      setTwoFactorMessage("Unable to reach two-factor authentication service.");
+    } finally {
+      setIsUpdatingTwoFactor(false);
+    }
   }
 
   const profile = settings?.profile;
@@ -10749,12 +11193,34 @@ function SettingsSection() {
               {isUpdatingTwoFactor ? "Disabling..." : "Disable 2FA"}
             </button>
           ) : (
-            <button className="secondary-button compact" type="button" onClick={showTwoFactorSetupNotice}>
-              Setup 2FA
+            <button className="secondary-button compact" type="button" onClick={startTwoFactorSetup} disabled={isUpdatingTwoFactor}>
+              {isUpdatingTwoFactor ? <LoadingIcon label="Starting 2FA setup" /> : "Setup 2FA"}
             </button>
           )}
           <span>{twoFactor?.hasSecret ? `Created ${formatDate(twoFactor.enterDate)}` : "No authenticator secret on file"}</span>
         </div>
+        {twoFactorSetup && (
+          <form className="settings-form two-factor-setup-form" onSubmit={confirmTwoFactorSetup}>
+            {twoFactorSetup.qrCodeUrl && <img className="two-factor-qr" src={twoFactorSetup.qrCodeUrl} alt="2FA QR code" />}
+            <label>
+              Secret
+              <input value={twoFactorSetup.secret || ""} readOnly />
+            </label>
+            <label>
+              Six-digit code
+              <input
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                value={twoFactorCode}
+                onChange={(event) => setTwoFactorCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+              />
+            </label>
+            <button className="primary-button compact" type="submit" disabled={isUpdatingTwoFactor || twoFactorCode.length !== 6}>
+              {isUpdatingTwoFactor ? <LoadingIcon label="Confirming 2FA" /> : "Finish"}
+            </button>
+          </form>
+        )}
         {twoFactorMessage && <p className="renewal-action-message">{twoFactorMessage}</p>}
       </article>
 

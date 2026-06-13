@@ -201,38 +201,23 @@ p {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  justify-content: flex-end;
 }
 
-.legacy-payment-frame-card {
-  background: var(--field);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: grid;
-  gap: 12px;
-  min-height: 640px;
-  overflow: hidden;
-  padding: 12px;
+.checkout-dark-button {
+  background: #050505;
+  border-color: #050505;
+  color: #ffffff;
 }
 
-.legacy-payment-frame {
-  background: #fff;
-  border: 0;
-  border-radius: 6px;
-  min-height: 600px;
-  width: 100%;
+.checkout-dark-button:hover {
+  background: #111111;
+  border-color: #111111;
 }
 
 @media (max-width: 760px) {
   .checkout-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .legacy-payment-frame-card {
-    min-height: 560px;
-  }
-
-  .legacy-payment-frame {
-    min-height: 520px;
   }
 }
 
@@ -390,13 +375,18 @@ label {
 
 input,
 select {
+  align-self: start;
   background: var(--field);
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--ink);
-  min-height: 44px;
+  height: 44px;
   padding: 0 13px;
   width: 100%;
+}
+
+textarea {
+  align-self: start;
 }
 
 input::placeholder {
@@ -439,6 +429,7 @@ a:focus {
 }
 
 .primary-button.as-link {
+  cursor: pointer;
   text-decoration: none;
 }
 
@@ -1057,6 +1048,12 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
   gap: 10px;
 }
 
+.workspace-account-label {
+  color: var(--muted);
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
 .account-chip {
   background: var(--field);
   border: 1px solid var(--line);
@@ -1111,6 +1108,12 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
   font-size: 1.85rem;
   letter-spacing: 0;
   margin-bottom: 0;
+}
+
+.workspace-title-meta {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin: 6px 0 0;
 }
 
 .status-pill {
@@ -1393,12 +1396,13 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
 
 .new-order-product-actions select,
 .new-order-transfer-row input {
+  align-self: start;
   background: var(--field);
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--ink);
   font: inherit;
-  min-height: 34px;
+  height: 34px;
   padding: 0 10px;
 }
 
@@ -1685,6 +1689,21 @@ html[data-theme="light"] .affiliate-promo {
   margin-bottom: 0;
 }
 
+.hosting-card-domains {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.hosting-card-domains > span:first-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .service-card .secondary-button,
 .service-card .primary-button {
   font-weight: 400;
@@ -1700,6 +1719,142 @@ html[data-theme="light"] .affiliate-promo {
 .hosting-card-actions .secondary-button,
 .hosting-card-actions .primary-button {
   flex: 1 1 110px;
+}
+
+.hosting-list-toolbar {
+  align-items: center;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hosting-plan-table .compact-actions {
+  min-width: 128px;
+}
+
+.hosting-domain-cell {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.domain-count-badge {
+  background: rgba(50, 145, 255, 0.16);
+  border: 1px solid rgba(50, 145, 255, 0.48);
+  border-radius: 999px;
+  color: #78b7ff;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+.hosting-manage-button {
+  background: #0070f3;
+  border-color: #0070f3;
+  color: #ffffff;
+}
+
+.hosting-upgrade-button {
+  background: #050505;
+  border-color: #050505;
+  color: #ffffff;
+}
+
+html[data-theme="light"] .hosting-upgrade-button {
+  background: #111111;
+  border-color: #111111;
+  color: #ffffff;
+}
+
+.hosting-upgrade-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.hosting-upgrade-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.upgrade-summary-box,
+.checkout-preview-card {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.upgrade-summary-box h3 {
+  font-size: 1rem;
+  font-weight: 400;
+  margin: 0;
+}
+
+.panel-card select,
+.panel-card input,
+.new-order-detail select,
+.website-function-form select,
+.website-function-form input,
+.function-field-form input,
+.function-field-form select {
+  align-self: start;
+}
+
+.form-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.upgrade-select-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.upgrade-select-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.inline-help-text {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.loading-help-text {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.upgrade-action-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.hosting-upgrade-now-button {
+  background: #0070f3;
+  border-color: #0070f3;
+  color: #ffffff;
+  width: 100%;
+}
+
+.upgrade-downgrade-tip {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.34);
+  border-radius: 8px;
+  color: var(--ink);
+  margin: 0;
+  padding: 12px 14px;
 }
 
 .purchase-card {
@@ -2522,12 +2677,13 @@ html[data-theme="light"] .ram-meter {
 
 .advance-inline-form input,
 .advance-inline-form select {
+  align-self: start;
   background: var(--field);
   border: 1px solid var(--line);
   border-radius: 7px;
   color: var(--ink);
   font: inherit;
-  min-height: 34px;
+  height: 34px;
   padding: 0 10px;
 }
 
@@ -2815,18 +2971,34 @@ html[data-theme="light"] .ram-meter {
   justify-content: flex-end;
 }
 
+.domain-row-action-button {
+  align-items: center;
+  display: inline-flex;
+  font-size: 0.72rem;
+  height: 32px;
+  justify-content: center;
+  min-width: 42px;
+  padding: 0 10px;
+}
+
+.domain-row-action-button.manage {
+  min-width: 72px;
+}
+
 .domain-privacy-toggle {
   align-items: center;
-  background: color-mix(in srgb, var(--success) 14%, var(--field));
+  background: color-mix(in srgb, var(--success) 22%, var(--field));
   border: 1px solid color-mix(in srgb, var(--success) 35%, var(--line));
   border-radius: 999px;
   color: var(--ink);
   cursor: pointer;
   display: inline-flex;
+  gap: 7px;
   font-size: 0.72rem;
-  height: 28px;
+  height: 30px;
   justify-content: center;
-  padding: 0 10px;
+  min-width: 112px;
+  padding: 0 10px 0 6px;
   white-space: nowrap;
 }
 
@@ -2840,6 +3012,20 @@ html[data-theme="light"] .ram-meter {
 .domain-privacy-toggle:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.domain-privacy-knob {
+  background: var(--success);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 45%, transparent);
+  display: inline-block;
+  height: 14px;
+  width: 14px;
+}
+
+.domain-privacy-toggle[aria-pressed="false"] .domain-privacy-knob {
+  background: var(--muted);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--muted) 35%, transparent);
 }
 
 .domain-settings-page {
@@ -3688,6 +3874,19 @@ button:disabled {
   opacity: 0.75;
 }
 
+.two-factor-setup-form {
+  margin-top: 14px;
+}
+
+.two-factor-qr {
+  background: #fff;
+  border-radius: 6px;
+  height: 160px;
+  object-fit: contain;
+  padding: 8px;
+  width: 160px;
+}
+
 .empty-panel {
   padding: 18px;
 }
@@ -3722,12 +3921,13 @@ button:disabled {
 
 .inline-select,
 .qty-input {
+  align-self: start;
   background: var(--field);
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--ink);
   font: inherit;
-  min-height: 32px;
+  height: 32px;
 }
 
 .inline-select {
@@ -4195,12 +4395,13 @@ html[data-theme="light"] .ssl-domain-badge {
 .website-more-header select,
 .website-function-form input,
 .website-function-form select {
+  align-self: start;
   background: var(--field);
   border: 1px solid var(--line);
   border-radius: 7px;
   color: var(--ink);
   font: inherit;
-  min-height: 34px;
+  height: 34px;
   padding: 0 10px;
 }
 
