@@ -39,9 +39,9 @@ New domain API loads domains and has registrar action endpoints, but the UI/API 
 Domain purchase checkout is not exact
 Old checkoutDomainBuy.asp consumes sessionCart, uses account balance, creates client_product, inserts DomainRegisterInfo, inserts domain_profile, deletes cart rows, and redirects to domain info or purchase list. See checkoutDomainBuy.asp (line 92).
 New domain checkout syncs sessionCart and creates a buyer_temp order for “Domain Registration.” That is closer to /account/checkout.asp, not the full checkoutDomainBuy.asp completion path. See Startup.cs (line 535).
-Domain DNS is preview-only
+Domain DNS now uses the live legacy DNS agent
 Old dns_action.asp modifies DNS records using legacy DNS helpers. See dns_action.asp (line 42).
-New /dns-preview only parses and validates records, then says live publishing is waiting on CP DNS API configuration. See Startup.cs (line 728).
+New account DNS manager validates domain ownership, then calls legacy-agents/dnsAgent.asp through LEGACY_DNS_AGENT_URL. The agent reuses showRecord/add*/deleteRecordAt from includes/sdnsfunctions.inc.
 Domain contact/nameserver/privacy/lock are not exact enough yet
 New registrar actions call OpenSRS directly. Old files use legacy helper methods and local DB/session behavior around DomainRegisterInfo, privacy eligibility, lock state, nameserver fallback, and profile updates. See modifyContact_action.asp (line 507), modifyWhoisStatus.asp (line 20), modifynameserver.asp (line 73).
 

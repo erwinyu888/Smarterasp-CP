@@ -6611,7 +6611,7 @@ function DomainServicesSection({ mode, cpId }) {
     dns: {
       title: "DNS",
       label: "Live DNS",
-      description: "DNS record add/edit/delete flow from cp/dns/editdns.asp. Publishing waits for the exact DNS gateway functions.",
+      description: "DNS record add flow from cp/dns/editdns.asp using the same legacy DNS server helpers.",
       actions: ["Add Record"],
       statOne: "Domains",
       statTwo: "Default Domains",
@@ -6759,7 +6759,7 @@ function DomainServicesSection({ mode, cpId }) {
             <div>
               <span className="status-pill blue">DNS Draft</span>
               <h3>Record Editor</h3>
-              <p>Needs the DNS provider gateway before publishing record changes.</p>
+              <p>Add A, AAAA, CNAME, MX, SPF/TXT, and SRV records through the live DNS agent.</p>
             </div>
             <MenuIcon name="dns" />
           </div>
@@ -6811,7 +6811,7 @@ function DomainServicesSection({ mode, cpId }) {
                 </label>
               </>
             )}
-            <button className="primary-button compact" type="submit">Preview DNS</button>
+            <button className="primary-button compact" type="submit">Add Record</button>
           </form>
           <div className="dns-example-panel">
             <span className="status-pill muted">Example</span>
@@ -8260,16 +8260,10 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
               <div>
                 <span className={account.status === "Active" ? "status-pill" : "status-pill muted"}>{account.status}</span>
                 <h2>{account.cpLogin}</h2>
-                <p className="hosting-card-domains" title={planDomainList(account)}>
-                  <span>{planCardDomainList(account)}</span>
-                  {planDomainCount(account) > 0 ? <span className="domain-count-badge">{planDomainCount(account)}+</span> : null}
-                </p>
               </div>
               <dl className="card-meta">
                 <div><dt>Renewal</dt><dd>{formatDate(account.renewalDate)}</dd></div>
                 <div><dt>Plan</dt><dd>{account.webHostType}</dd></div>
-                <div><dt>Total Sites</dt><dd>{account.totalSites}</dd></div>
-                <div><dt>Server</dt><dd>{account.serverId}</dd></div>
               </dl>
               <div className="hosting-card-actions">
                 <button className="primary-button hosting-manage-button" type="button" onClick={onManageHosting}>
@@ -8299,32 +8293,21 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
         <div className="table-wrap website-table hosting-plan-table">
           <table>
             <thead>
-              <tr>
-                <th>Hosting Plan</th>
-                <th>Domains</th>
-                <th>Status</th>
-                <th>Renewal</th>
-                <th>Plan</th>
-                <th>Total Sites</th>
-                <th>Server</th>
-                <th>Actions</th>
-              </tr>
+                <tr>
+                  <th>Hosting Plan</th>
+                  <th>Status</th>
+                  <th>Renewal</th>
+                  <th>Plan</th>
+                  <th>Actions</th>
+                </tr>
             </thead>
             <tbody>
               {accounts.map((account) => (
                 <tr key={account.cpId}>
                   <td>{account.cpLogin}</td>
-                  <td>
-                    <span className="hosting-domain-cell">
-                      <span>{planFirstDomain(account)}</span>
-                      {planDomainCount(account) > 0 ? <span className="domain-count-badge">{planDomainCount(account)}+</span> : null}
-                    </span>
-                  </td>
                   <td><span className={account.status === "Active" ? "status-pill" : "status-pill muted"}>{account.status}</span></td>
                   <td>{formatDate(account.renewalDate)}</td>
                   <td>{account.webHostType}</td>
-                  <td>{account.totalSites}</td>
-                  <td>{account.serverId}</td>
                   <td>
                     <div className="website-action-buttons compact-actions">
                       <button className="primary-button compact icon-only-button hosting-manage-button" type="button" onClick={onManageHosting} title="Manage" aria-label="Manage">
@@ -8343,7 +8326,13 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                       >
                         {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="order" />}
                       </button>
-                      <button className="secondary-button compact icon-only-button hosting-upgrade-button" type="button" onClick={() => openHostingUpgrade(account)} title="Upgrade" aria-label="Upgrade">
+                      <button
+                        className="secondary-button compact icon-only-button"
+                        type="button"
+                        onClick={() => openHostingUpgrade(account)}
+                        title="Upgrade"
+                        aria-label="Upgrade"
+                      >
                         <MenuIcon name="arrow-up" />
                       </button>
                     </div>
@@ -8459,8 +8448,7 @@ const domainRegistrarActionDefaults = {
   "auth-code": "",
   "auto-renew-on": "",
   "auto-renew-off": "",
-  forwarding: "support@example.com",
-  dns: "A @ 208.98.35.146\nCNAME www sample.com\nMX @ mail.sample.com 10\nTXT @ v=spf1 a mx include:_spf.site4now.net -all"
+  forwarding: "support@example.com"
 };
 
 function DnsManagementPage({ domain, manager, isLoading, message, recordsPreview, busy, draft, onDraftChange, onBack, onReload, onSubmitAction }) {
@@ -9147,18 +9135,14 @@ function DomainSection() {
     setDomainDnsPreview([]);
 
     try {
-      const isDnsAction = domainRegistrarForm.action === "dns";
-      const response = await fetch(`/api/account/domains/${selectedDomain.id}/${isDnsAction ? "dns-preview" : "registrar-action"}`, {
+      const response = await fetch(`/api/account/domains/${selectedDomain.id}/registrar-action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(isDnsAction ? { records: domainRegistrarForm.value } : domainRegistrarForm)
+        body: JSON.stringify(domainRegistrarForm)
       });
       const result = await response.json().catch(() => null);
       setDomainActionMessage(result?.message ?? "Unable to prepare registrar action.");
       setDomainActionUrl(result?.actionUrl ?? "");
-      if (isDnsAction && result?.success) {
-        setDomainDnsPreview(result.records ?? []);
-      }
     } catch {
       setDomainActionMessage("Unable to reach registrar action service.");
     } finally {
@@ -9167,14 +9151,6 @@ function DomainSection() {
   }
 
   function selectDomainRegistrarAction(action) {
-    const dnsDefault = selectedDomain?.domainName
-      ? [
-        "A @ 208.98.35.146",
-        `CNAME www ${selectedDomain.domainName}`,
-        `MX @ mail.${selectedDomain.domainName} 10`,
-        "TXT @ v=spf1 a mx include:_spf.site4now.net -all"
-      ].join("\n")
-      : domainRegistrarActionDefaults.dns;
     const contact = selectedDomainProfile?.registrant;
     const contactDefault = contact
       ? [
@@ -9196,9 +9172,7 @@ function DomainSection() {
       : domainRegistrarActionDefaults.contact;
     setDomainRegistrarForm({
       action,
-      value: action === "dns"
-        ? dnsDefault
-        : action === "contact"
+      value: action === "contact"
           ? contactDefault
           : domainRegistrarActionDefaults[action] ?? ""
     });
@@ -9677,22 +9651,6 @@ function DomainSection() {
       {domainRenewalCheckoutPreview && (
         <CheckoutPreviewCard preview={domainRenewalCheckoutPreview} onClose={() => setDomainRenewalCheckoutPreview(null)} />
       )}
-      {domainDnsPreview.length > 0 && (
-        <div className="domain-dns-preview">
-          <span>DNS Preview</span>
-          <div className="domain-dns-preview-grid">
-            {domainDnsPreview.map((record, index) => (
-              <div className="domain-dns-preview-row" key={`${record.type}-${record.name}-${index}`}>
-                <span className="domain-dns-type">{record.type}</span>
-                <span>{record.name}</span>
-                <span>{record.value}</span>
-                <span>{record.priority ?? "-"}</span>
-                <span>{record.ttl}s</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
       {domainRenewalPreview && (
         <RenewalCheckoutPreview
           renewal={domainRenewalPreview}
@@ -10169,22 +10127,6 @@ function DomainSection() {
             )}
             {domainRenewalCheckoutPreview && (
               <CheckoutPreviewCard preview={domainRenewalCheckoutPreview} onClose={() => setDomainRenewalCheckoutPreview(null)} />
-            )}
-            {domainDnsPreview.length > 0 && (
-              <div className="domain-dns-preview">
-                <span>DNS Preview</span>
-                <div className="domain-dns-preview-grid">
-                  {domainDnsPreview.map((record, index) => (
-                    <div className="domain-dns-preview-row" key={`${record.type}-${record.name}-${index}`}>
-                      <span className="domain-dns-type">{record.type}</span>
-                      <span>{record.name}</span>
-                      <span>{record.value}</span>
-                      <span>{record.priority ?? "-"}</span>
-                      <span>{record.ttl}s</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
             )}
             {domainRenewalPreview && (
               <RenewalCheckoutPreview

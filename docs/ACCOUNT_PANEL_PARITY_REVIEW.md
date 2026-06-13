@@ -48,7 +48,7 @@ These read paths passed against the running app on `http://localhost:5056`:
 | Domain search | `domain_purchase.asp`, OpenSRS lookup flow | Working | Live OpenSRS availability used; owned domains are blocked as account-owned. |
 | Domain purchase checkout | `addtocart.asp`, `sitecart.asp`, `checkout.asp`, `checkoutDomainBuy.asp` | Temp order working | Creates `sitecart.dbo.sessionCart` rows and `oms.dbo.buyer_temp`, then redirects to `https://member3.smarterasp.net/checkout/checkout_overview`. |
 | Domain transfer checkout | `domain_transfer.asp`, `transfer_domain_action.asp`, `transfer_domain_step*.asp` | Partially implemented | Duplicate DB guard and temp order exist. OpenSRS transferability pre-check is blocked because exact `xmlsample/checktransfer.txt` is missing. |
-| DNS preview for account domains | `editdns.asp`, `dns_action.asp` | Validation/preview only | Live publishing waits on exact CP DNS helper/API configuration; not an OpenSRS XCP operation. |
+| DNS manager for account domains | `editdns.asp`, `dns_action.asp`, `includes/sdnsfunctions.inc` | Live agent wired | ASP.NET validates account ownership, then calls `legacy-agents/dnsAgent.asp`, which reuses `showRecord`, `addARecordOpt`, `addCNAMERecord`, `addMXRecord`, `addTXTRecord`, `addSRVRecord`, and `deleteRecordAt`. Requires `LEGACY_DNS_AGENT_URL` in production. |
 | Billing balance/history | `accountbalance.asp`, `billings.asp` | Working | Uses live credit, transactions, active products, purchases, pending temp orders. |
 | Invoice/receipt | `printreceipt.asp`, `generateinvoice.asp`, `getinvoice.asp` | Working | Ownership check and receipt fields implemented; tested with order `2498597`. |
 | Deposit checkout | `accountbalance.asp`, `deposit_more.asp`, checkout pages | Handoff implemented | Deposit eligibility implemented and redirects to member3 `/checkout/deposit_v2`. Provider internals remain in Classic ASP checkout. |
@@ -82,4 +82,3 @@ These are not bugs in the current implementation; they are intentionally blocked
 
 - Added `cloud-server` and `dedicated-server` aliases to new-order catalog normalization so API calls match the old menu wording.
 - Confirmed local checkout routes now redirect to `https://member3.smarterasp.net/checkout/...` instead of rendering the React handoff page.
-

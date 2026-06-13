@@ -12,6 +12,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Mail;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -121,7 +122,6 @@ namespace controlpanel
                 endpoints.MapPost("/api/account/domains/{domainId:int}/privacy-checkout", HandleDomainPrivacyCheckoutAsync);
                 endpoints.MapGet("/api/account/domains/{domainId:int}/dns", HandleDomainDnsManagerAsync);
                 endpoints.MapPost("/api/account/domains/{domainId:int}/dns/action", HandleDomainDnsActionAsync);
-                endpoints.MapPost("/api/account/domains/{domainId:int}/dns-preview", HandleDomainDnsPreviewAsync);
                 endpoints.MapPost("/api/account/domains/{domainId:int}/registrar-action", HandleDomainRegistrarActionAsync);
                 endpoints.MapGet("/api/account/billing", HandleAccountBillingAsync);
                 endpoints.MapPost("/api/account/billing/deposit", HandleBillingDepositAsync);
@@ -244,6 +244,7 @@ namespace controlpanel
             }
 
             var openSrs = GetOpenSrsSettings();
+            var simpleDns = GetSimpleDnsSettings();
             var services = new AccountServiceStatus(
                 new ExternalServiceStatus(
                     "OpenSRS registrar",
@@ -254,10 +255,12 @@ namespace controlpanel
                     openSrs.IsConfigured ? "Live" : "Needs config"
                 ),
                 new ExternalServiceStatus(
-                    "CP DNS",
-                    false,
-                    "DNS record publishing uses the legacy CP DNS server helpers. Those helper/API settings are still needed before live DNS updates can be enabled.",
-                    "Pending"
+                    "SimpleDNS",
+                    simpleDns.IsConfigured,
+                    simpleDns.IsConfigured
+                        ? "Configured for live DNS record list/add/edit/delete."
+                        : "SimpleDNS is not configured. Set SIMPLEDNS_API_URL, SIMPLEDNS_API_USERNAME, and SIMPLEDNS_API_PASSWORD.",
+                    simpleDns.IsConfigured ? "Live" : "Needs config"
                 )
             );
 
@@ -769,7 +772,7 @@ WHERE customer_urgent_log_id = @logId
 
             await Results.BadRequest(new AccountActionResponse(
                 false,
-                $"Use the DNS preview endpoint for DNS records on {domain.DomainName}."
+                $"Use the DNS Manager for live DNS records on {domain.DomainName}."
             )).ExecuteAsync(context);
         }
 
@@ -935,62 +938,6 @@ WHERE customer_urgent_log_id = @logId
             await Results.Ok(new CheckoutCreateResponse(true, "Domain renewal checkout order created.", order)).ExecuteAsync(context);
         }
 
-        private async Task HandleDomainDnsPreviewAsync(HttpContext context)
-        {
-            var sessionUser = GetSessionUser(context);
-            if (sessionUser == null)
-            {
-                await Results.Json(
-                    new DomainDnsPreviewResponse(false, "Not signed in.", new List<DomainDnsRecordPreview>()),
-                    statusCode: StatusCodes.Status401Unauthorized
-                ).ExecuteAsync(context);
-                return;
-            }
-
-            if (!TryReadRouteInt(context, "domainId", out var domainId))
-            {
-                await Results.BadRequest(new DomainDnsPreviewResponse(false, "Invalid domain id.", new List<DomainDnsRecordPreview>())).ExecuteAsync(context);
-                return;
-            }
-
-            var request = await context.Request.ReadFromJsonAsync<DomainDnsPreviewRequest>();
-            var recordsText = request?.Records ?? "";
-
-            var connectionString = GetEhbConfigConnectionString();
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
-                return;
-            }
-
-            await using var connection = new SqlConnection(connectionString);
-            await connection.OpenAsync();
-
-            var domains = await LoadAccountDomainsAsync(connection, sessionUser.CustomerId);
-            var domain = domains.Find(item => item.Id == domainId);
-            if (domain == null)
-            {
-                await Results.Json(
-                    new DomainDnsPreviewResponse(false, "Domain was not found on this account.", new List<DomainDnsRecordPreview>()),
-                    statusCode: StatusCodes.Status404NotFound
-                ).ExecuteAsync(context);
-                return;
-            }
-
-            var parseResult = ParseDnsRecords(recordsText, domain.DomainName);
-            if (!parseResult.Success)
-            {
-                await Results.BadRequest(new DomainDnsPreviewResponse(false, parseResult.Message, parseResult.Records)).ExecuteAsync(context);
-                return;
-            }
-
-            await Results.Ok(new DomainDnsPreviewResponse(
-                true,
-                $"DNS records for {domain.DomainName} are valid. Live DNS zone publishing uses the legacy CP DNS server helpers, not OpenSRS XCP, so it is waiting on the CP DNS API configuration.",
-                parseResult.Records
-            )).ExecuteAsync(context);
-        }
-
         private async Task HandleDomainDnsManagerAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -1042,23 +989,29 @@ WHERE customer_urgent_log_id = @logId
             }
 
             var dnsServers = HostingDefaultDnsServers();
-            var dnsCall = await PostLegacyDnsAgentAsync("list", domain.DomainName, new Dictionary<string, string>());
+            var dnsCall = await ListSimpleDnsRecordsAsync(domain.DomainName, includeSoa: false);
+            if (dnsCall == null)
+            {
+                await Results.BadRequest(new DomainDnsManagerResponse(false, "DNS service is not configured yet. Set SIMPLEDNS_API_* and retry.", null)).ExecuteAsync(context);
+                return;
+            }
+
             if (!dnsCall.Success)
             {
                 await Results.BadRequest(new DomainDnsManagerResponse(false, dnsCall.Message, null)).ExecuteAsync(context);
                 return;
             }
 
-            var manager = new DomainDnsManager(
+            var managerFromSimpleDns = new DomainDnsManager(
                 domain.Id,
                 domain.DomainName,
                 dnsServers,
                 dnsCall.Records,
-                "/account/editdns.asp -> /account/dns_action.asp",
-                "DNS actions are live and are validated against the logged-in account before the legacy DNS agent is called."
+                "SimpleDNS Plus v2 API (/zones/{zonename}/records)",
+                "DNS actions are live and are validated against the logged-in account before each SimpleDNS operation."
             );
 
-            await Results.Ok(new DomainDnsManagerResponse(true, "DNS manager loaded.", manager)).ExecuteAsync(context);
+            await Results.Ok(new DomainDnsManagerResponse(true, "DNS manager loaded.", managerFromSimpleDns)).ExecuteAsync(context);
         }
 
         private async Task HandleDomainDnsActionAsync(HttpContext context)
@@ -1128,53 +1081,37 @@ WHERE customer_urgent_log_id = @logId
                     return;
                 }
 
-                var deleteCall = await PostLegacyDnsAgentAsync("delete", domain.DomainName, new Dictionary<string, string>
+                var simpleDeleteCall = await DeleteSimpleDnsRecordByIndexAsync(domain.DomainName, recordIndex);
+                if (simpleDeleteCall == null)
                 {
-                    ["recindex"] = recordIndex.ToString(CultureInfo.InvariantCulture)
-                });
-
-                if (!deleteCall.Success)
-                {
-                    await Results.BadRequest(new DomainDnsActionResponse(false, deleteCall.Message, deleteCall.Records)).ExecuteAsync(context);
+                    await Results.BadRequest(new DomainDnsActionResponse(false, "DNS service is not configured yet. Set SIMPLEDNS_API_* and retry.", new List<DomainDnsRecordPreview>())).ExecuteAsync(context);
                     return;
                 }
 
-                await Results.Ok(new DomainDnsActionResponse(true, deleteCall.Message, deleteCall.Records)).ExecuteAsync(context);
+                if (!simpleDeleteCall.Success)
+                {
+                    await Results.BadRequest(new DomainDnsActionResponse(false, simpleDeleteCall.Message, simpleDeleteCall.Records)).ExecuteAsync(context);
+                    return;
+                }
+
+                await Results.Ok(new DomainDnsActionResponse(true, simpleDeleteCall.Message, simpleDeleteCall.Records)).ExecuteAsync(context);
                 return;
             }
 
-            var recordLine = BuildDnsRecordLine(request, domain.DomainName);
-            var parseResult = ParseDnsRecords(recordLine, domain.DomainName);
-            if (!parseResult.Success)
+            var simpleCall = await UpsertSimpleDnsRecordAsync(action, domain.DomainName, request);
+            if (simpleCall == null)
             {
-                await Results.BadRequest(new DomainDnsActionResponse(false, parseResult.Message, parseResult.Records)).ExecuteAsync(context);
+                await Results.BadRequest(new DomainDnsActionResponse(false, "DNS service is not configured yet. Set SIMPLEDNS_API_* and retry.", new List<DomainDnsRecordPreview>())).ExecuteAsync(context);
                 return;
             }
 
-            var record = parseResult.Records[0];
-            var form = new Dictionary<string, string>
+            if (!simpleCall.Success)
             {
-                ["rectype"] = record.Type,
-                ["recordname"] = record.Name == "@" ? "" : record.Name,
-                ["webip"] = record.Value,
-                ["ttl"] = record.Ttl.ToString(CultureInfo.InvariantCulture),
-                ["priority"] = (record.Priority ?? request?.Priority ?? 10).ToString(CultureInfo.InvariantCulture),
-                ["weight"] = Math.Max(0, Math.Min(100, request?.Weight ?? 1)).ToString(CultureInfo.InvariantCulture),
-                ["port"] = Math.Max(1, Math.Min(65535, request?.Port ?? 443)).ToString(CultureInfo.InvariantCulture)
-            };
-            if ((request?.RecordIndex ?? -1) >= 0)
-            {
-                form["recindex"] = request!.RecordIndex!.Value.ToString(CultureInfo.InvariantCulture);
-            }
-
-            var dnsCall = await PostLegacyDnsAgentAsync(action, domain.DomainName, form);
-            if (!dnsCall.Success)
-            {
-                await Results.BadRequest(new DomainDnsActionResponse(false, dnsCall.Message, dnsCall.Records)).ExecuteAsync(context);
+                await Results.BadRequest(new DomainDnsActionResponse(false, simpleCall.Message, simpleCall.Records)).ExecuteAsync(context);
                 return;
             }
 
-            await Results.Ok(new DomainDnsActionResponse(true, dnsCall.Message, dnsCall.Records)).ExecuteAsync(context);
+            await Results.Ok(new DomainDnsActionResponse(true, simpleCall.Message, simpleCall.Records)).ExecuteAsync(context);
         }
 
         private async Task HandleAccountBillingAsync(HttpContext context)
@@ -3817,15 +3754,38 @@ VALUES (@customerId, @secret, GETDATE(), 1);", command =>
                     ? legacyNewTicketPriority
                     : category.IsDefaultPriority ? category.DefaultPriority : Math.Clamp(request.Priority <= 0 ? 3 : request.Priority, 1, 5);
                 var queueLevel = category.IsDefaultQueueLevel ? category.DefaultQueueLevel : priority < 3 ? 2 : 1;
-                var callId = await CreateHelpdeskTicketAsync(connection, user.UserId, email, context.Connection.RemoteIpAddress?.ToString() ?? "", url, subject, descriptionHtml, subcategoryId, priority, queueLevel, webServerIp, serverType);
+                long callId;
+                try
+                {
+                    callId = await CreateHelpdeskTicketAsync(connection, user.UserId, email, context.Connection.RemoteIpAddress?.ToString() ?? "", url, subject, descriptionHtml, subcategoryId, priority, queueLevel, webServerIp, serverType);
+                }
+                catch (SqlException ex) when (IsMissingCpLoginColumn(ex))
+                {
+                    callId = await CreateHelpdeskTicketCompatAsync(connection, user.UserId, email, context.Connection.RemoteIpAddress?.ToString() ?? "", url, subject, descriptionHtml, subcategoryId, priority, queueLevel, webServerIp, serverType);
+                }
                 if (callId <= 0)
                 {
                     await Results.Problem("Helpdesk ticket creation failed.").ExecuteAsync(context);
                     return;
                 }
 
-                await WriteHelpdeskUserLogAsync(connection, callId, user.UserId, 1);
-                await AutoAssignHelpdeskTicketAsync(connection, callId, queueLevel);
+                try
+                {
+                    await WriteHelpdeskUserLogAsync(connection, callId, user.UserId, 1);
+                }
+                catch (SqlException ex) when (IsTicketQueueCompatibilityIssue(ex))
+                {
+                    await WriteHelpdeskCompatLogAsync(connection, callId, $"Audit log skipped due schema mismatch: {ex.Message}");
+                }
+                try
+                {
+                    await AutoAssignHelpdeskTicketAsync(connection, callId, queueLevel);
+                }
+                catch (SqlException ex) when (IsTicketQueueCompatibilityIssue(ex))
+                {
+                    // Queueing logic is non-blocking if legacy/proxy schemas differ.
+                    await WriteHelpdeskCompatLogAsync(connection, callId, $"Auto-assign skipped due schema mismatch: {ex.Message}");
+                }
 
                 var ticket = new HelpdeskTicketSummary(callId, subject, "Q", priority, 0, DateTime.Now, null, category.Description, "", false);
                 await Results.Ok(new AccountHelpdeskTicketCreateResponse(true, $"Ticket #{callId} submitted.", ticket)).ExecuteAsync(context);
@@ -4657,16 +4617,31 @@ VALUES ({values})";
             var ttl = ClampInt(GetField(request.Fields, "ttl", "3600"), 300, 86400, 3600);
             var priority = type is "MX" or "SRV" ? ClampInt(GetField(request.Fields, "priority", "10"), 0, 100, 10) : (int?)null;
 
-            var dnsServers = GetDefaultDnsServers();
-            var preview = new List<DomainDnsRecordPreview>
+            var dnsCall = await PostLegacyDnsAgentAsync("add", domain.Domain, new Dictionary<string, string>
             {
-                new(type, NormalizeDnsHost(host, domain.Domain), value, priority, ttl)
-            };
-            preview.InsertRange(0, dnsServers.Select(server => new DomainDnsRecordPreview("NS", domain.Domain, server, null, 3600)));
+                ["rectype"] = type,
+                ["recordname"] = NormalizeDnsHost(host, domain.Domain) == "@" ? "" : NormalizeDnsHost(host, domain.Domain),
+                ["webip"] = value,
+                ["ttl"] = ttl.ToString(CultureInfo.InvariantCulture),
+                ["priority"] = (priority ?? 10).ToString(CultureInfo.InvariantCulture),
+                ["weight"] = ClampInt(GetField(request.Fields, "weight", "1"), 0, 100, 1).ToString(CultureInfo.InvariantCulture),
+                ["port"] = ClampInt(GetField(request.Fields, "port", "443"), 1, 65535, 443).ToString(CultureInfo.InvariantCulture)
+            });
+            if (!dnsCall.Success)
+            {
+                await Results.Json(new HostingServiceActionResponse(false, dnsCall.Message, "dns", new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/dns/dns_action.asp and /Users/erwinyu/Downloads/hosting/includes/sdnsfunctions.inc",
+                    domain.DomainUid,
+                    domain.Domain,
+                    records = dnsCall.Records
+                }), statusCode: StatusCodes.Status400BadRequest).ExecuteAsync(context);
+                return;
+            }
 
             await Results.Ok(new HostingServiceActionResponse(
                 true,
-                "DNS preview generated from the selected mapped domain. Publishing still needs the exact DNS gateway functions from includes/sdnsfunctions*.inc.",
+                "DNS record saved.",
                 "dns",
                 new
                 {
@@ -4675,7 +4650,7 @@ VALUES ({values})";
                     domain.Domain,
                     domain.SiteUid,
                     domain.SiteName,
-                    records = preview
+                    records = dnsCall.Records
                 })).ExecuteAsync(context);
         }
 
@@ -7142,6 +7117,138 @@ ORDER BY I.[Order]", connection);
             command.Parameters.Add("@ServerType", SqlDbType.Int).Value = serverType;
             var result = await command.ExecuteScalarAsync();
             return result == null || result == DBNull.Value ? 0 : Convert.ToInt64(result, CultureInfo.InvariantCulture);
+        }
+
+        private static bool IsMissingCpLoginColumn(SqlException ex)
+        {
+            if (ex == null)
+            {
+                return false;
+            }
+
+            return ex.Number == 207
+                && (ex.Message.Contains("Invalid column name 'cp_login'", StringComparison.OrdinalIgnoreCase)
+                    || ex.Message.Contains("The multi-part identifier 'cp_login'", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsTicketQueueCompatibilityIssue(SqlException ex)
+        {
+            if (ex == null)
+            {
+                return false;
+            }
+
+            return ex.Number == 207
+                || ex.Number == 2812
+                || ex.Message.Contains("sp_AssignTicket", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("invalid column name", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static async Task<long> CreateHelpdeskTicketCompatAsync(
+            SqlConnection connection,
+            long userId,
+            string email,
+            string remoteIp,
+            string url,
+            string subject,
+            string description,
+            int subcategoryId,
+            int priority,
+            int queueLevel,
+            string webServerIp,
+            int serverType)
+        {
+            var candidateTables = new[] { "tblCall", "Call", "Calls", "tickets", "tblTickets" };
+            var tableName = "";
+            foreach (var candidate in candidateTables)
+            {
+                if (await TableExistsAsync(connection, candidate))
+                {
+                    tableName = candidate;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(tableName))
+            {
+                throw new InvalidOperationException("Helpdesk compatibility fallback: no call table was found.");
+            }
+
+            var columns = new List<string>();
+            var parameters = new List<string>();
+            await using var command = new SqlCommand
+            {
+                Connection = connection,
+                CommandText = string.Empty
+            };
+
+            async Task AddIfExistsAsync(string column, string parameterName, object value, SqlDbType dbType, int size = 0)
+            {
+                if (await TableColumnExistsAsync(connection, tableName, column))
+                {
+                    columns.Add(column);
+                    parameters.Add($"@{parameterName}");
+                    var p = size > 0
+                        ? command.Parameters.Add(parameterName, dbType, size)
+                        : command.Parameters.Add(parameterName, dbType);
+                    p.Value = value ?? DBNull.Value;
+                }
+            }
+
+            await AddIfExistsAsync("userid", "userId", userId, SqlDbType.Decimal);
+            await AddIfExistsAsync("useremail", "userEmail", email, SqlDbType.NVarChar, 100);
+            await AddIfExistsAsync("myIP", "myIp", remoteIp, SqlDbType.NVarChar, 100);
+            await AddIfExistsAsync("URL", "url", url, SqlDbType.NVarChar, 50);
+            await AddIfExistsAsync("subject", "subject", subject, SqlDbType.NVarChar, 300);
+            await AddIfExistsAsync("description", "description", description, SqlDbType.NVarChar);
+            await AddIfExistsAsync("subcategoryID", "subcategoryId", subcategoryId, SqlDbType.Int);
+            await AddIfExistsAsync("customerSubcategoryID", "customerSubcategoryId", subcategoryId, SqlDbType.Int);
+            await AddIfExistsAsync("priority", "priority", priority, SqlDbType.Int);
+            await AddIfExistsAsync("customerPriority", "customerPriority", priority, SqlDbType.Int);
+            await AddIfExistsAsync("stateID", "stateId", 20, SqlDbType.Int);
+            await AddIfExistsAsync("QueueLevel", "queueLevel", queueLevel, SqlDbType.Int);
+            await AddIfExistsAsync("StaffID", "staffId", DBNull.Value, SqlDbType.Int);
+            await AddIfExistsAsync("EnterDate", "enterDate", DateTime.Now, SqlDbType.DateTime);
+            await AddIfExistsAsync("UserLastAccess", "userLastAccess", DateTime.Now, SqlDbType.DateTime);
+            await AddIfExistsAsync("UserActionID", "userActionId", 1, SqlDbType.Int);
+            await AddIfExistsAsync("StaffLastAccess", "staffLastAccess", DateTime.Now, SqlDbType.DateTime);
+            await AddIfExistsAsync("StaffActionID", "staffActionId", DBNull.Value, SqlDbType.Int);
+            await AddIfExistsAsync("IsLocked", "isLocked", false, SqlDbType.Bit);
+            await AddIfExistsAsync("IsWaiting", "isWaiting", false, SqlDbType.Bit);
+            await AddIfExistsAsync("webServerIP", "webServerIp", webServerIp, SqlDbType.NVarChar, 50);
+            await AddIfExistsAsync("ServerType", "serverType", serverType, SqlDbType.Int);
+
+            if (columns.Count == 0)
+            {
+                throw new InvalidOperationException($"Helpdesk compatibility fallback found no writable columns on {tableName}.");
+            }
+
+            command.CommandText = $@"
+INSERT INTO dbo.{tableName} ({string.Join(", ", columns)})
+VALUES ({string.Join(", ", parameters)});
+SELECT CAST(SCOPE_IDENTITY() AS BIGINT);";
+
+            var raw = await command.ExecuteScalarAsync();
+            return raw == null || raw == DBNull.Value ? 0 : Convert.ToInt64(raw, CultureInfo.InvariantCulture);
+        }
+
+        private static async Task WriteHelpdeskCompatLogAsync(SqlConnection connection, long callId, string message)
+        {
+            if (connection == null || callId <= 0)
+            {
+                return;
+            }
+
+            try
+            {
+                await using var command = new SqlCommand("INSERT INTO dbo.tblLogAction (CallID, ActionID, AccessBy, EnterDate) VALUES (@callId, 6, 0, GETDATE())", connection);
+                command.Parameters.Add("@callId", SqlDbType.BigInt).Value = callId;
+                await command.ExecuteNonQueryAsync();
+            }
+            catch
+            {
+                // Compatibility logger is optional in fallback mode; ignore failures.
+            }
         }
 
         private static async Task WriteHelpdeskUserLogAsync(SqlConnection connection, long callId, long userId, int actionId)
@@ -11412,6 +11519,393 @@ ORDER BY dp.domain_name";
             return ConfigOrEnv("HostingDefaults:DnsServers", "HOSTING_DEFAULT_DNS_SERVERS", "NS1.SITE4NOW.NET,NS2.SITE4NOW.NET,NS3.SITE4NOW.NET")
                 .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList();
+        }
+
+        private sealed record SimpleDnsSettings(string ApiUrl, string Username, string Password)
+        {
+            public bool IsConfigured =>
+                !string.IsNullOrWhiteSpace(ApiUrl)
+                && !string.IsNullOrWhiteSpace(Username)
+                && !string.IsNullOrWhiteSpace(Password);
+        }
+
+        private SimpleDnsSettings GetSimpleDnsSettings()
+        {
+            return new SimpleDnsSettings(
+                ConfigOrEnv("SimpleDns:ApiUrl", "SIMPLEDNS_API_URL").Trim().TrimEnd('/'),
+                ConfigOrEnv("SimpleDns:Username", "SIMPLEDNS_API_USERNAME").Trim(),
+                ConfigOrEnv("SimpleDns:Password", "SIMPLEDNS_API_PASSWORD").Trim()
+            );
+        }
+
+        private async Task<DomainDnsParseResult?> ListSimpleDnsRecordsAsync(string zoneName, bool includeSoa = false)
+        {
+            var settings = GetSimpleDnsSettings();
+            if (!settings.IsConfigured)
+            {
+                return null;
+            }
+
+            zoneName = NormalizeZoneName(zoneName);
+            if (string.IsNullOrWhiteSpace(zoneName))
+            {
+                return new DomainDnsParseResult(false, "Invalid zone name.", new List<DomainDnsRecordPreview>());
+            }
+
+            try
+            {
+                using var httpClient = CreateSimpleDnsClient(settings);
+                using var response = await httpClient.GetAsync($"zones/{Uri.EscapeDataString(zoneName)}/records");
+                var responseText = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new DomainDnsParseResult(false, $"SimpleDNS list failed: {(int)response.StatusCode} {response.ReasonPhrase}.", new List<DomainDnsRecordPreview>());
+                }
+
+                using var document = JsonDocument.Parse(responseText);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Array)
+                {
+                    return new DomainDnsParseResult(false, "SimpleDNS returned an unexpected payload.", new List<DomainDnsRecordPreview>());
+                }
+
+                var records = new List<DomainDnsRecordPreview>();
+                var index = 0;
+                foreach (var record in root.EnumerateArray())
+                {
+                    var parsed = ParseSimpleDnsRecord(record, includeSoa, index);
+                    if (parsed == null)
+                    {
+                        continue;
+                    }
+
+                    records.Add(parsed);
+                    index++;
+                }
+
+                return new DomainDnsParseResult(true, "DNS records loaded.", records);
+            }
+            catch (Exception ex)
+            {
+                return new DomainDnsParseResult(false, $"Unable to load DNS records: {ex.Message}", new List<DomainDnsRecordPreview>());
+            }
+        }
+
+        private async Task<DomainDnsParseResult?> DeleteSimpleDnsRecordByIndexAsync(string zoneName, int recordIndex)
+        {
+            var listResult = await ListSimpleDnsRecordsAsync(zoneName, includeSoa: false);
+            if (listResult == null || !listResult.Success)
+            {
+                return listResult ?? new DomainDnsParseResult(false, "SimpleDNS is not configured. Set SIMPLEDNS_API_* and retry.", new List<DomainDnsRecordPreview>());
+            }
+
+            if (recordIndex < 0 || recordIndex >= listResult.Records.Count)
+            {
+                return new DomainDnsParseResult(false, "Choose a valid DNS record.", listResult.Records);
+            }
+
+            var target = listResult.Records[recordIndex];
+            var patchPayload = new List<Dictionary<string, object?>>();
+
+            var removeItem = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Remove"] = true,
+                ["Name"] = target.Name,
+                ["Type"] = target.Type
+            };
+
+            if (!string.IsNullOrWhiteSpace(target.Value))
+            {
+                removeItem["Data"] = target.Value;
+            }
+
+            patchPayload.Add(removeItem);
+
+            var patchResult = await PatchSimpleDnsRecordsAsync(zoneName, patchPayload);
+            if (!patchResult.Success)
+            {
+                return patchResult;
+            }
+
+            var refreshed = await ListSimpleDnsRecordsAsync(zoneName, includeSoa: false);
+            return refreshed?.Success == true
+                ? new DomainDnsParseResult(true, "DNS record deleted.", refreshed!.Records)
+                : patchResult;
+        }
+
+        private async Task<DomainDnsParseResult?> UpsertSimpleDnsRecordAsync(string action, string zoneName, DomainDnsActionRequest? request)
+        {
+            action = (action ?? "").Trim().ToLowerInvariant();
+            if (action is not ("add" or "edit"))
+            {
+                return new DomainDnsParseResult(false, "Select Add or Edit.", new List<DomainDnsRecordPreview>());
+            }
+
+            var current = await ListSimpleDnsRecordsAsync(zoneName, includeSoa: false);
+            if (current == null)
+            {
+                return new DomainDnsParseResult(false, "SimpleDNS is not configured. Set SIMPLEDNS_API_* and retry.", new List<DomainDnsRecordPreview>());
+            }
+
+            if (!current.Success)
+            {
+                return current;
+            }
+
+            var settingsResult = ValidateSimpleDnsRequest(request, action);
+            if (settingsResult != null)
+            {
+                return settingsResult;
+            }
+
+            zoneName = NormalizeZoneName(zoneName);
+            if (string.IsNullOrWhiteSpace(zoneName))
+            {
+                return new DomainDnsParseResult(false, "Invalid zone name.", new List<DomainDnsRecordPreview>());
+            }
+
+            var patchPayload = new List<Dictionary<string, object?>>();
+            var name = NormalizeSimpleDnsRecordName(request!.Name, zoneName);
+            var type = (request.RecordType ?? "A").Trim().ToUpperInvariant();
+            var value = (request.Value ?? "").Trim();
+            var ttl = Math.Max(60, Math.Min(86400, request.Ttl <= 0 ? 300 : request.Ttl));
+
+            if (action == "edit")
+            {
+                var recordIndex = request.RecordIndex ?? -1;
+                if (recordIndex < 0 || recordIndex >= current.Records.Count)
+                {
+                    return new DomainDnsParseResult(false, "Select a valid DNS record to edit.", current.Records);
+                }
+
+                var oldRecord = current.Records[recordIndex];
+                var removeOld = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Remove"] = true,
+                    ["Name"] = oldRecord.Name,
+                    ["Type"] = oldRecord.Type
+                };
+
+                if (!string.IsNullOrWhiteSpace(oldRecord.Value))
+                {
+                    removeOld["Data"] = oldRecord.Value;
+                }
+
+                patchPayload.Add(removeOld);
+            }
+
+            var addItem = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Name"] = name,
+                ["Type"] = type,
+                ["TTL"] = ttl
+            };
+
+            var dataValue = BuildSimpleDnsRecordData(type, request);
+            if (string.IsNullOrWhiteSpace(dataValue))
+            {
+                return new DomainDnsParseResult(false, "DNS record value is required.", current.Records);
+            }
+            addItem["Data"] = dataValue;
+
+            if (request.Priority.HasValue)
+            {
+                addItem["Priority"] = Math.Max(0, Math.Min(65535, request.Priority.Value));
+            }
+            if (request.Weight.HasValue)
+            {
+                addItem["Weight"] = Math.Max(0, Math.Min(65535, request.Weight.Value));
+            }
+            if (request.Port.HasValue)
+            {
+                addItem["Port"] = Math.Max(1, Math.Min(65535, request.Port.Value));
+            }
+
+            patchPayload.Add(addItem);
+
+            var patchResult = await PatchSimpleDnsRecordsAsync(zoneName, patchPayload);
+            if (!patchResult.Success)
+            {
+                return patchResult;
+            }
+
+            var refreshed = await ListSimpleDnsRecordsAsync(zoneName, includeSoa: false);
+            return refreshed?.Success == true
+                ? new DomainDnsParseResult(true, action == "add" ? "DNS record added." : "DNS record updated.", refreshed!.Records)
+                : patchResult;
+        }
+
+        private static DomainDnsParseResult? ValidateSimpleDnsRequest(DomainDnsActionRequest? request, string action)
+        {
+            if (request == null)
+            {
+                return new DomainDnsParseResult(false, "Request body is required.", new List<DomainDnsRecordPreview>());
+            }
+
+            if (string.IsNullOrWhiteSpace(request.RecordType))
+            {
+                return new DomainDnsParseResult(false, "Record type is required.", new List<DomainDnsRecordPreview>());
+            }
+
+            if (action == "edit" && request.RecordIndex == null)
+            {
+                return new DomainDnsParseResult(false, "Record index is required for edit.", new List<DomainDnsRecordPreview>());
+            }
+
+            return null;
+        }
+
+        private static string NormalizeSimpleDnsRecordName(string name, string zoneName)
+        {
+            var trimmed = NormalizeSimpleInput(name);
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                return "@";
+            }
+
+            if (trimmed.Contains("@", StringComparison.Ordinal))
+            {
+                return zoneName;
+            }
+
+            if (trimmed == "*")
+            {
+                return $"*.{zoneName}";
+            }
+
+            if (trimmed.Equals("www", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"www.{zoneName}";
+            }
+
+            if (trimmed.EndsWith($".{zoneName}", StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed;
+            }
+
+            if (trimmed.Contains('.', StringComparison.Ordinal) && !trimmed.EndsWith(".", StringComparison.Ordinal))
+            {
+                return trimmed;
+            }
+
+            return $"{trimmed}.{zoneName}";
+        }
+
+        private static string NormalizeSimpleInput(string value)
+            => value.Trim().TrimStart('.', '\\', '/');
+
+        private static string NormalizeZoneName(string? zoneName)
+            => (zoneName ?? "").Trim().Trim('.').ToLowerInvariant();
+
+        private static string? BuildSimpleDnsRecordData(string type, DomainDnsActionRequest request)
+        {
+            var value = NormalizeSimpleInput(request.Value ?? "");
+            var name = NormalizeSimpleInput(request.Name ?? "");
+            var typeUpper = type.ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            return typeUpper switch
+            {
+                "MX" => $"{value} {(request.Priority ?? 10)}",
+                "SRV" => $"{name} {request.Priority ?? 10} {(request.Weight ?? 0)} {(request.Port ?? 443)} {value}",
+                _ => value
+            };
+        }
+
+        private static DomainDnsRecordPreview? ParseSimpleDnsRecord(JsonElement record, bool includeSoa, int index)
+        {
+            var type = JsonStringProperty(record, "Type");
+            if (string.IsNullOrWhiteSpace(type))
+            {
+                return null;
+            }
+
+            if (!includeSoa && type.Equals("SOA", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var name = JsonStringProperty(record, "Name");
+            var data = JsonStringProperty(record, "Data");
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return null;
+            }
+
+            var ttl = JsonIntProperty(record, "TTL", 300);
+            int? priority = JsonNullableIntProperty(record, "Priority");
+
+            if (string.IsNullOrWhiteSpace(data))
+            {
+                data = JsonStringProperty(record, "Value");
+            }
+
+            return new DomainDnsRecordPreview(
+                type.Trim().ToUpperInvariant(),
+                name.Trim(),
+                data ?? "",
+                priority,
+                ttl,
+                index
+            );
+        }
+
+        private async Task<DomainDnsParseResult> PatchSimpleDnsRecordsAsync(string zoneName, List<Dictionary<string, object?>> payload)
+        {
+            var settings = GetSimpleDnsSettings();
+            if (!settings.IsConfigured)
+            {
+                return new DomainDnsParseResult(false, "SimpleDNS is not configured. Set SIMPLEDNS_API_URL, SIMPLEDNS_API_USERNAME, and SIMPLEDNS_API_PASSWORD.", new List<DomainDnsRecordPreview>());
+            }
+
+            zoneName = NormalizeZoneName(zoneName);
+            if (string.IsNullOrWhiteSpace(zoneName))
+            {
+                return new DomainDnsParseResult(false, "Invalid zone name.", new List<DomainDnsRecordPreview>());
+            }
+
+            try
+            {
+                var requestBody = JsonSerializer.Serialize(payload);
+                using var httpClient = CreateSimpleDnsClient(settings);
+                using var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+                using var response = await httpClient.PatchAsync($"zones/{Uri.EscapeDataString(zoneName)}/records", content);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var responseText = await response.Content.ReadAsStringAsync();
+                    return new DomainDnsParseResult(false, $"SimpleDNS update failed: {(int)response.StatusCode} {response.ReasonPhrase}. {responseText}".Trim(), new List<DomainDnsRecordPreview>());
+                }
+
+                return new DomainDnsParseResult(true, "DNS record update sent.", new List<DomainDnsRecordPreview>());
+            }
+            catch (Exception ex)
+            {
+                return new DomainDnsParseResult(false, $"Unable to update DNS records: {ex.Message}", new List<DomainDnsRecordPreview>());
+            }
+        }
+
+        private static HttpClient CreateSimpleDnsClient(SimpleDnsSettings settings)
+        {
+            var authBytes = Encoding.UTF8.GetBytes($"{settings.Username}:{settings.Password}");
+            var handler = new HttpClientHandler
+            {
+                PreAuthenticate = true
+            };
+            var httpClient = new HttpClient(handler)
+            {
+                BaseAddress = new Uri(settings.ApiUrl.TrimEnd('/') + "/"),
+                Timeout = TimeSpan.FromSeconds(30)
+            };
+            httpClient.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue(
+                    "Basic",
+                    Convert.ToBase64String(authBytes)
+                );
+            return httpClient;
         }
 
         private LegacyDnsAgentSettings GetLegacyDnsAgentSettings()

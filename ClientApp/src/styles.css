@@ -967,6 +967,10 @@ html[data-theme="light"] .nav-stat.warning {
   padding: 2px 8px;
 }
 
+html[data-theme="light"] .nav-stat.order {
+  color: #000000;
+}
+
 html[data-theme="light"] .nav-item.new-order-item {
   background:
     linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(50, 145, 255, 0.08)),
@@ -1902,6 +1906,52 @@ html[data-theme="light"] .affiliate-promo {
   font-size: 0.72rem;
   line-height: 1;
   padding: 4px 8px;
+  position: relative;
+  cursor: default;
+}
+
+.domain-count-badge[data-tooltip]::after {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  bottom: calc(100% + 6px);
+  color: var(--text);
+  content: attr(data-tooltip);
+  display: block;
+  left: 50%;
+  max-width: 280px;
+  opacity: 0;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  transition: opacity 120ms ease, visibility 120ms ease;
+  visibility: hidden;
+  white-space: normal;
+  width: max-content;
+  z-index: 50;
+}
+
+.domain-count-badge[data-tooltip]::before {
+  border: 6px solid transparent;
+  border-top-color: var(--line);
+  content: "";
+  left: 50%;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 100%;
+  transform: translateX(-50%);
+  transition: opacity 120ms ease, visibility 120ms ease;
+  visibility: hidden;
+  z-index: 50;
+}
+
+.domain-count-badge[data-tooltip]:hover::after,
+.domain-count-badge[data-tooltip]:hover::before {
+  opacity: 1;
+  visibility: visible;
 }
 
 .hosting-manage-button {
