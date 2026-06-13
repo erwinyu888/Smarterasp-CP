@@ -25,6 +25,8 @@ namespace controlpanel
 {
     public class Startup
     {
+        private static readonly object LoginFailureLock = new();
+        private static readonly Dictionary<string, LoginFailureWindow> LoginFailures = new(StringComparer.OrdinalIgnoreCase);
         private const int ConstPageTypeNewCp = 1;
         private const int ConstPageTypeNewSite = 2;
         private const int ConstPageTypeBuyDomain = 3;
@@ -40,6 +42,7 @@ namespace controlpanel
         private const int ConstPageTypeFullRestore = 14;
         private const int ConstPageTypeEmailQuota = 17;
         private const int ConstPageTypeWhoisPrivacy = 19;
+        private const int ConstPageTypeReseller = 20;
         private const int ConstPageTypeGeneral = 22;
         private const int ConstPageTypeWebUser = 23;
         private const int ConstPageTypeDailySentLimit = 24;
@@ -94,6 +97,7 @@ namespace controlpanel
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapPost("/api/auth/login", HandleLoginAsync);
+                endpoints.MapGet("/api/auth/login-config", HandleLoginConfigAsync);
                 endpoints.MapGet("/api/auth/me", HandleCurrentUserAsync);
                 endpoints.MapPost("/api/auth/logout", HandleLogoutAsync);
                 endpoints.MapPost("/api/auth/password-reset/request", HandlePasswordResetRequestAsync);
@@ -130,20 +134,25 @@ namespace controlpanel
                 endpoints.MapGet("/api/account/new-orders/catalog", HandleNewOrderCatalogAsync);
                 endpoints.MapPost("/api/account/new-orders/checkout", HandleNewOrderCheckoutAsync);
                 endpoints.MapPost("/api/account/new-orders/domain-transfer/checkout", HandleDomainTransferCheckoutAsync);
+                endpoints.MapGet("/api/account/new-purchase/catalog", HandleNewPurchaseCatalogAsync);
+                endpoints.MapPost("/api/account/new-purchase/start", HandleNewPurchaseStartAsync);
+                endpoints.MapPost("/api/account/new-purchase/complete", HandleNewPurchaseCompleteAsync);
                 endpoints.MapGet("/api/account/settings", HandleAccountSettingsAsync);
                 endpoints.MapPost("/api/account/settings/profile", HandleAccountProfileUpdateAsync);
                 endpoints.MapPost("/api/account/settings/password", HandleAccountPasswordChangeAsync);
                 endpoints.MapPost("/api/account/settings/email-change", HandleAccountEmailChangeRequestAsync);
                 endpoints.MapGet("/api/account/settings/email-change/verify", HandleAccountEmailChangeVerifyAsync);
+                endpoints.MapPost("/api/account/activation/resend", HandleAccountActivationResendAsync);
+                endpoints.MapPost("/api/account/reverify/send", HandleAccountReverifySendAsync);
+                endpoints.MapPost("/api/account/password-expiring/skip", HandlePasswordExpiringSkipAsync);
+                endpoints.MapPost("/api/account/password-change/code", HandlePasswordChangeCodeAsync);
                 endpoints.MapPost("/api/account/settings/2fa/disable", HandleAccountTwoFactorDisableAsync);
                 endpoints.MapGet("/api/account/checkout-temp/{guid}", HandleCheckoutTempOrderAsync);
                 endpoints.MapPost("/api/account/checkout-temp/{guid}/pay-with-balance", HandleCheckoutPayWithBalanceAsync);
                 endpoints.MapGet("/api/account/renew-temp/{guid}", HandleRenewTempOrderAsync);
                 endpoints.MapPost("/api/account/renew-temp/{guid}/pay-with-balance", HandleRenewTempPayWithBalanceAsync);
-                endpoints.MapGet("/checkout", HandleLegacyCheckoutRedirectAsync);
-                endpoints.MapGet("/checkout/{**path}", HandleLegacyCheckoutRedirectAsync);
-                endpoints.MapMethods("/checkout", new[] { "HEAD" }, HandleLegacyCheckoutRedirectAsync);
-                endpoints.MapMethods("/checkout/{**path}", new[] { "HEAD" }, HandleLegacyCheckoutRedirectAsync);
+                endpoints.MapGet("/legacy-checkout/{**path}", HandleLegacyCheckoutBridgeRedirectAsync);
+                endpoints.MapMethods("/legacy-checkout/{**path}", new[] { "HEAD" }, HandleLegacyCheckoutBridgeRedirectAsync);
                 endpoints.MapGet("/api/hosting/dashboard", HandleHostingDashboardAsync);
                 endpoints.MapGet("/api/hosting/sites", HandleHostingSitesAsync);
                 endpoints.MapGet("/api/hosting/sites/{siteUid:int}/functions/{functionKey}", HandleHostingSiteFunctionGetAsync);
@@ -1945,6 +1954,198 @@ WHERE client_product_id = @clientProductId
             await Results.Ok(new CheckoutCreateResponse(true, "New order checkout created.", order)).ExecuteAsync(context);
         }
 
+        private async Task HandleNewPurchaseCatalogAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new NewPurchaseCatalogResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var type = NormalizeNewOrderType(context.Request.Query["type"].ToString());
+            if (string.IsNullOrWhiteSpace(type) || !IsCatalogNewOrderType(type))
+            {
+                await Results.BadRequest(new NewPurchaseCatalogResponse(false, "Select a valid new purchase type.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var catalog = await LoadNewOrderCatalogAsync(connection, sessionUser.CustomerType, type);
+            var response = new NewPurchaseCatalog(
+                type,
+                NewOrderTitle(type),
+                NewOrderLegacyPath(type),
+                NewOrderDescription(type),
+                catalog,
+                NewPurchaseTracePath(type)
+            );
+
+            await Results.Ok(new NewPurchaseCatalogResponse(true, "New purchase catalog loaded.", response)).ExecuteAsync(context);
+        }
+
+        private async Task HandleNewPurchaseStartAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new NewPurchaseStartResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<NewPurchaseStartRequest>();
+            var type = NormalizeNewOrderType(request?.Type ?? "");
+            if (request == null || string.IsNullOrWhiteSpace(type) || !IsCatalogNewOrderType(type) || request.ProductId <= 0)
+            {
+                await Results.BadRequest(new NewPurchaseStartResponse(false, "Select a valid product to order.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var catalog = await LoadNewOrderCatalogAsync(connection, sessionUser.CustomerType, type);
+            var product = catalog.Find(item => item.ProductId == request.ProductId);
+            if (product == null)
+            {
+                await Results.BadRequest(new NewPurchaseStartResponse(false, "Selected product is not available in this purchase catalog.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var selectedPrice = product.Prices.Find(price => price.PriceId == request.PriceId) ?? product.Prices.FirstOrDefault();
+            if (selectedPrice == null)
+            {
+                await Results.BadRequest(new NewPurchaseStartResponse(false, $"{product.Name} has no available billing terms.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var isResellerPurchase = type == "reseller";
+            var orderGuid = await CreateBuyerTempOrderAsync(
+                connection,
+                sessionUser.CustomerId,
+                product.ProductId,
+                product.Name,
+                selectedPrice.Amount,
+                selectedPrice.PaymentTerm,
+                selectedPrice.Currency,
+                "",
+                "",
+                "",
+                isResellerPurchase ? ConstPageTypeReseller : ConstPageTypeNewCp
+            );
+
+            var branch = isResellerPurchase ? "none" : NewPurchaseRecommendedBranch(product.Name);
+            var recommended = isResellerPurchase ? new List<AddonCatalogProduct>() : await LoadNewPurchaseRecommendedAsync(connection, branch);
+            var payload = new NewPurchaseStarted(
+                orderGuid,
+                NewOrderLegacyPath(type),
+                NewPurchaseRecommendedLegacyPath(branch),
+                branch,
+                product,
+                selectedPrice,
+                recommended,
+                isResellerPurchase
+                    ? "Created oms.dbo.buyer_temp like cp_purchase_list_reseller.asp through addon_purchase_action.asp."
+                    : $"Created oms.dbo.buyer_temp like cp_purchase_list_action.asp, then moved to {NewPurchaseRecommendedLegacyPath(branch)}."
+            );
+
+            await Results.Ok(new NewPurchaseStartResponse(true, "New purchase temp order created.", payload)).ExecuteAsync(context);
+        }
+
+        private async Task HandleNewPurchaseCompleteAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new CheckoutCreateResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<NewPurchaseCompleteRequest>();
+            if (request == null || string.IsNullOrWhiteSpace(request.OrderGuid))
+            {
+                await Results.BadRequest(new CheckoutCreateResponse(false, "Missing purchase order guid.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var mainOrder = await LoadCheckoutTempOrderAsync(connection, sessionUser.CustomerId, request.OrderGuid);
+            if (mainOrder == null)
+            {
+                await Results.NotFound(new CheckoutCreateResponse(false, "New purchase temp order was not found.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            decimal total = mainOrder.Amount;
+            string additionalProduct = "";
+            if (request.IncludeRecommended && request.RecommendedProductId > 0)
+            {
+                var branch = NormalizeRecommendedBranch(request.Branch);
+                var recommended = await LoadNewPurchaseRecommendedAsync(connection, branch);
+                var product = recommended.Find(item => item.ProductId == request.RecommendedProductId);
+                var selectedPrice = product?.Prices.Find(price => price.PriceId == request.RecommendedPriceId) ?? product?.Prices.FirstOrDefault();
+                if (product == null || selectedPrice == null)
+                {
+                    await Results.BadRequest(new CheckoutCreateResponse(false, "Selected recommended add-on is not available.", null)).ExecuteAsync(context);
+                    return;
+                }
+
+                total += selectedPrice.Amount;
+                additionalProduct = product.Name;
+                await CreateBuyerTempOrderAsync(
+                    connection,
+                    sessionUser.CustomerId,
+                    product.ProductId,
+                    product.Name,
+                    total,
+                    selectedPrice.PaymentTerm,
+                    selectedPrice.Currency,
+                    "",
+                    "",
+                    "",
+                    RecommendedBranchPageType(branch),
+                    trackable: true
+                );
+            }
+
+            var order = new CheckoutOrder(
+                mainOrder.Id,
+                BuildLegacyAccountScreenCheckoutUrl(mainOrder.Id),
+                string.IsNullOrWhiteSpace(additionalProduct) ? mainOrder.ProductName : $"{mainOrder.ProductName} + {additionalProduct}",
+                total,
+                mainOrder.Info2,
+                mainOrder.PageType,
+                "Continues to /checkout/account_screen?guid=... like goto_temp_checkout(order_guid)."
+            );
+
+            await Results.Ok(new CheckoutCreateResponse(true, "New purchase is ready for checkout.", order)).ExecuteAsync(context);
+        }
+
         private async Task HandleDomainTransferCheckoutAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -2270,7 +2471,33 @@ VALUES (@resetStr, @customerId, @email, GETDATE())", connection))
             }
 
             var verifyUrl = $"/account/emailchangeverify?ac={Uri.EscapeDataString(verifyHash)}&customerlogin={Uri.EscapeDataString(sessionUser.Login)}";
-            await Results.Ok(new AccountActionResponse(true, $"Email change verification request created for {email}. Verification URL: {verifyUrl}")).ExecuteAsync(context);
+            var absoluteVerifyUrl = BuildAbsoluteUrl(context, verifyUrl);
+            var mailResult = await SendAccountEmailAsync(
+                email,
+                "Verify your SmarterASP.NET account email",
+                $@"
+<p>Hello {WebUtility.HtmlEncode(sessionUser.Login)},</p>
+<p>Use the link below to verify this email address for your SmarterASP.NET account.</p>
+<p><a href=""{WebUtility.HtmlEncode(absoluteVerifyUrl)}"">Verify email address</a></p>
+<p>If you did not request this change, you can ignore this email.</p>",
+                $@"Hello {sessionUser.Login},
+
+Use this link to verify this email address for your SmarterASP.NET account.
+
+{absoluteVerifyUrl}
+
+If you did not request this change, you can ignore this email."
+            );
+            if (!mailResult.Success)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, $"Email change verification request was created, but SMTP delivery failed: {mailResult.Message}"),
+                    statusCode: StatusCodes.Status502BadGateway
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            await Results.Ok(new AccountActionResponse(true, $"Email change verification email sent to {email}.")).ExecuteAsync(context);
         }
 
         private async Task HandleAccountEmailChangeVerifyAsync(HttpContext context)
@@ -2334,6 +2561,150 @@ ORDER BY rv.create_date DESC";
 
             var message = $"Verified pending email change for customer {customerId}. The final customer_profile.email update still needs the legacy encryptpwd-compatible writer before this app can safely complete the change.";
             await Results.Ok(new EmailChangeVerifyResponse(true, message, false, newEmail, createdAt)).ExecuteAsync(context);
+        }
+
+        private async Task HandleAccountActivationResendAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Not signed in."), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var result = await SendAccountActivationEmailAsync(context, sessionUser.CustomerId, sessionUser.Login);
+            await WriteAccountMailResultAsync(context, result, "Activation email sent.");
+        }
+
+        private async Task HandleAccountReverifySendAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Not signed in."), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var email = await LoadReadableCustomerEmailAsync(sessionUser.CustomerId);
+            if (!email.Success)
+            {
+                await Results.Json(new AccountActionResponse(false, email.Message), statusCode: StatusCodes.Status500InternalServerError).ExecuteAsync(context);
+                return;
+            }
+
+            var brandDomain = GetBrandDomainForCustomer(sessionUser.CustomerId);
+            var guid = GenerateResetToken();
+            var reverifyUrl = BuildAbsoluteUrl(context, $"/account/re-verify_password_reset?guid={Uri.EscapeDataString(guid)}");
+            var mailResult = await SendAccountEmailAsync(
+                email.Email,
+                "Verify Account",
+                $@"
+<p>Hello {WebUtility.HtmlEncode(sessionUser.Login)},</p>
+<p>Please verify your {WebUtility.HtmlEncode(brandDomain)} account by opening the link below.</p>
+<p><a href=""{WebUtility.HtmlEncode(reverifyUrl)}"">Verify account</a></p>",
+                $@"Hello {sessionUser.Login},
+
+Please verify your {brandDomain} account:
+
+{reverifyUrl}",
+                fromEmail: $"noreply@{brandDomain}"
+            );
+
+            await WriteAccountMailResultAsync(context, mailResult, "Account re-verification email sent.");
+        }
+
+        private async Task HandlePasswordExpiringSkipAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Not signed in."), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                await using var command = new SqlCommand(@"
+UPDATE dbo.customer_profile
+SET reVerifySkip = 1,
+    reVerify = 1
+WHERE customerID = @customerId", connection);
+                command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var email = await LoadReadableCustomerEmailAsync(sessionUser.CustomerId);
+            if (!email.Success)
+            {
+                await Results.Json(new AccountActionResponse(false, email.Message), statusCode: StatusCodes.Status500InternalServerError).ExecuteAsync(context);
+                return;
+            }
+
+            var mailResult = await SendAccountEmailAsync(
+                email.Email,
+                "Password Expiring Soon!",
+                "Dear customer, you've skipped the password reset. Your current password will expire in 7 days. Please use the Forget Password link to reset your password once it's expired. Thank you.",
+                "Dear customer, you've skipped the password reset. Your current password will expire in 7 days. Please use the Forget Password link to reset your password once it's expired. Thank you.",
+                fromEmail: "noreply@smarterasp.net"
+            );
+
+            await WriteAccountMailResultAsync(context, mailResult, "Password-expiring skip notice sent.");
+        }
+
+        private async Task HandlePasswordChangeCodeAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Not signed in."), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            var code = RandomNumberGenerator.GetInt32(100000, 1000000);
+            await using (var connection = new SqlConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                await using var selectCommand = new SqlCommand("SELECT TOP 1 code FROM dbo.verify_code WHERE customerid = @customerId", connection);
+                selectCommand.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+                var existing = await selectCommand.ExecuteScalarAsync();
+                if (existing == null || existing == DBNull.Value)
+                {
+                    await using var insertCommand = new SqlCommand("INSERT INTO dbo.verify_code (customerid, code) VALUES (@customerId, @code)", connection);
+                    insertCommand.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+                    insertCommand.Parameters.AddWithValue("@code", code);
+                    await insertCommand.ExecuteNonQueryAsync();
+                }
+                else
+                {
+                    code = Convert.ToInt32(existing, CultureInfo.InvariantCulture);
+                }
+            }
+
+            var brandDomain = GetBrandDomainForCustomer(sessionUser.CustomerId);
+            var mailResult = await SendCustomerNotificationEmailAsync(
+                sessionUser.CustomerId,
+                $"postmaster@{brandDomain}",
+                $"Urgent Message from {brandDomain}",
+                $"To verify your account is safe, please use the following code to enable your access — it will expire in 30 minutes:<br>{code}",
+                $"To verify your account is safe, please use the following code to enable your access. It will expire in 30 minutes: {code}"
+            );
+
+            await WriteAccountMailResultAsync(context, mailResult, "Sent! Please check your email.");
         }
 
         private async Task HandleAccountTwoFactorDisableAsync(HttpContext context)
@@ -4112,7 +4483,8 @@ WHERE id = @jobId
                 return;
             }
 
-            await Results.Ok(new CheckoutTempOrderResponse(true, "Checkout temp order loaded.", order)).ExecuteAsync(context);
+            var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+            await Results.Ok(BuildCheckoutTempOrderResponse("Checkout temp order loaded.", order, balance)).ExecuteAsync(context);
         }
 
         private async Task HandleCheckoutPayWithBalanceAsync(HttpContext context)
@@ -4154,22 +4526,23 @@ WHERE id = @jobId
                 return;
             }
 
+            var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+
             if (order.Processed)
             {
-                await Results.BadRequest(new CheckoutTempOrderResponse(false, "This checkout order has already been processed.", order)).ExecuteAsync(context);
+                await Results.BadRequest(BuildCheckoutTempOrderResponse("This checkout order has already been processed.", order, balance, success: false)).ExecuteAsync(context);
                 return;
             }
 
             if (order.IsPaid)
             {
-                await Results.Ok(new CheckoutTempOrderResponse(true, "Checkout order is already marked paid.", order)).ExecuteAsync(context);
+                await Results.Ok(BuildCheckoutTempOrderResponse("Checkout order is already marked paid.", order, balance)).ExecuteAsync(context);
                 return;
             }
 
-            var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
             if (balance < order.Amount)
             {
-                await Results.BadRequest(new CheckoutTempOrderResponse(false, $"Account balance is {balance.ToString("C", CultureInfo.GetCultureInfo("en-US"))}; this checkout needs {order.Amount.ToString("C", CultureInfo.GetCultureInfo("en-US"))}.", order)).ExecuteAsync(context);
+                await Results.BadRequest(BuildCheckoutTempOrderResponse($"Account balance is {balance.ToString("C", CultureInfo.GetCultureInfo("en-US"))}; this checkout needs {order.Amount.ToString("C", CultureInfo.GetCultureInfo("en-US"))}.", order, balance, success: false)).ExecuteAsync(context);
                 return;
             }
 
@@ -4186,7 +4559,7 @@ WHERE id = @id
             await command.ExecuteNonQueryAsync();
 
             var updated = await LoadCheckoutTempOrderAsync(connection, sessionUser.CustomerId, guid);
-            await Results.Ok(new CheckoutTempOrderResponse(true, "Account balance covers this checkout. The temp order is marked paid; continue to the matching account fulfillment page.", updated)).ExecuteAsync(context);
+            await Results.Ok(BuildCheckoutTempOrderResponse("Account balance covers this checkout. Continue purchase setup to finish provisioning.", updated, balance)).ExecuteAsync(context);
         }
 
         private async Task HandleRenewTempOrderAsync(HttpContext context)
@@ -4309,11 +4682,33 @@ WHERE id = @id
         {
             var loginRequest = await context.Request.ReadFromJsonAsync<LoginRequest>();
             var login = loginRequest?.Login?.Trim() ?? "";
+            var turnstileSecret = ConfigOrEnv("CloudflareTurnstile:SecretKey", "CLOUDFLARE_TURNSTILE_SECRET_KEY").Trim();
 
             if (string.IsNullOrWhiteSpace(login))
             {
                 await Results.BadRequest(new LoginResponse(false, "Enter your username.", null)).ExecuteAsync(context);
                 return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(turnstileSecret))
+            {
+                var turnstileToken = loginRequest?.TurnstileToken?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(turnstileToken))
+                {
+                    await Results.BadRequest(new LoginResponse(false, "Complete the bot check before logging in.", null)).ExecuteAsync(context);
+                    return;
+                }
+
+                var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "";
+                var turnstile = await VerifyTurnstileAsync(turnstileSecret, turnstileToken, remoteIp);
+                if (!turnstile.Success)
+                {
+                    await Results.Json(
+                        new LoginResponse(false, turnstile.Message, null),
+                        statusCode: StatusCodes.Status403Forbidden
+                    ).ExecuteAsync(context);
+                    return;
+                }
             }
 
             var connectionString = GetEhbConfigConnectionString();
@@ -4338,6 +4733,7 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
             await using var reader = await command.ExecuteReaderAsync();
             if (!await reader.ReadAsync())
             {
+                await TrackFailedLoginAsync(context, login);
                 await Results.Json(
                     new LoginResponse(false, "Login failed. Please check your username and password.", null),
                     statusCode: StatusCodes.Status401Unauthorized
@@ -4352,6 +4748,7 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
 
             if (status != 1)
             {
+                await TrackFailedLoginAsync(context, login);
                 var message = status switch
                 {
                     0 => "This account is pending activation.",
@@ -4366,13 +4763,129 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
             context.Session.SetString("customerID", customerId.ToString());
             context.Session.SetString("customerLogin", customerLogin);
             context.Session.SetString("customerType", customerType);
+            ClearFailedLogin(context, login);
 
             await Results.Ok(new LoginResponse(true, "Login successful.", new LoginUser(customerId, customerLogin, customerType))).ExecuteAsync(context);
+        }
+
+        private async Task HandleLoginConfigAsync(HttpContext context)
+        {
+            var siteKey = ConfigOrEnv("CloudflareTurnstile:SiteKey", "CLOUDFLARE_TURNSTILE_SITE_KEY").Trim();
+            var secretKey = ConfigOrEnv("CloudflareTurnstile:SecretKey", "CLOUDFLARE_TURNSTILE_SECRET_KEY").Trim();
+            await Results.Ok(new LoginConfigResponse(
+                !string.IsNullOrWhiteSpace(siteKey) && !string.IsNullOrWhiteSpace(secretKey),
+                siteKey
+            )).ExecuteAsync(context);
+        }
+
+        private static async Task<TurnstileVerifyResult> VerifyTurnstileAsync(string secretKey, string token, string remoteIp)
+        {
+            try
+            {
+                using var httpClient = new HttpClient
+                {
+                    Timeout = TimeSpan.FromSeconds(8)
+                };
+
+                var fields = new List<KeyValuePair<string, string>>
+                {
+                    new("secret", secretKey),
+                    new("response", token)
+                };
+                if (!string.IsNullOrWhiteSpace(remoteIp))
+                {
+                    fields.Add(new KeyValuePair<string, string>("remoteip", remoteIp));
+                }
+
+                using var response = await httpClient.PostAsync(
+                    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                    new FormUrlEncodedContent(fields)
+                );
+                var json = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new TurnstileVerifyResult(false, "Bot check could not be verified. Please try again.");
+                }
+
+                using var document = JsonDocument.Parse(json);
+                var success = document.RootElement.TryGetProperty("success", out var successElement) && successElement.GetBoolean();
+                if (success)
+                {
+                    return new TurnstileVerifyResult(true, "Bot check verified.");
+                }
+
+                return new TurnstileVerifyResult(false, "Bot check failed. Please try again.");
+            }
+            catch
+            {
+                return new TurnstileVerifyResult(false, "Bot check service is unavailable. Please try again.");
+            }
+        }
+
+        private async Task TrackFailedLoginAsync(HttpContext context, string login)
+        {
+            var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var key = $"{remoteIp}|{login}";
+            var now = DateTime.UtcNow;
+            var shouldAlert = false;
+
+            lock (LoginFailureLock)
+            {
+                if (!LoginFailures.TryGetValue(key, out var window) || now - window.FirstFailureUtc > TimeSpan.FromMinutes(30))
+                {
+                    window = new LoginFailureWindow(0, now, DateTime.MinValue);
+                }
+
+                var count = window.Count + 1;
+                shouldAlert = count > 3 && now - window.LastAlertUtc > TimeSpan.FromMinutes(30);
+                LoginFailures[key] = window with
+                {
+                    Count = count,
+                    LastAlertUtc = shouldAlert ? now : window.LastAlertUtc
+                };
+            }
+
+            if (!shouldAlert)
+            {
+                return;
+            }
+
+            var adminRecipients = ConfigOrEnv(
+                "Smtp:AdminAlertRecipients",
+                "SMTP_ADMIN_ALERT_RECIPIENTS",
+                "erwinyu888@gmail.com,307329698@qq.com");
+            var subject = $"More than 3 Fail Login from 1 IP {login}";
+            var htmlBody = $@"{DateTime.Now:O}<br>IP:<br>{WebUtility.HtmlEncode(remoteIp)}<br>Login:<br>{WebUtility.HtmlEncode(login)}";
+            var textBody = htmlBody.Replace("<br>", Environment.NewLine, StringComparison.OrdinalIgnoreCase);
+
+            foreach (var recipient in adminRecipients.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (IsValidEmail(recipient))
+                {
+                    await SendAccountEmailAsync(recipient, subject, htmlBody, textBody, fromEmail: "noreply@smarterasp.net");
+                }
+            }
+        }
+
+        private static void ClearFailedLogin(HttpContext context, string login)
+        {
+            var remoteIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            lock (LoginFailureLock)
+            {
+                LoginFailures.Remove($"{remoteIp}|{login}");
+            }
         }
 
         private async Task HandleLegacyCheckoutRedirectAsync(HttpContext context)
         {
             var target = $"{GetLegacyCheckoutBaseUrl()}{context.Request.Path}{context.Request.QueryString}";
+            await Results.Redirect(target, permanent: false).ExecuteAsync(context);
+        }
+
+        private async Task HandleLegacyCheckoutBridgeRedirectAsync(HttpContext context)
+        {
+            var path = context.Request.RouteValues["path"]?.ToString() ?? "";
+            var target = $"{GetLegacyCheckoutBaseUrl()}/checkout/{path.TrimStart('/')}{context.Request.QueryString}";
             await Results.Redirect(target, permanent: false).ExecuteAsync(context);
         }
 
@@ -4397,12 +4910,13 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
             await connection.OpenAsync();
 
             const string customerSql = @"
-SELECT TOP 1 customerID, status
+SELECT TOP 1 customerID, status, CAST(email AS nvarchar(max)) AS email
 FROM dbo.customer_profile
 WHERE LOWER(customerLogin) = LOWER(@login)";
 
             long customerId;
             int status;
+            string accountEmail;
             await using (var customerCommand = new SqlCommand(customerSql, connection))
             {
                 customerCommand.Parameters.AddWithValue("@login", login);
@@ -4418,6 +4932,7 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
 
                 customerId = Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture);
                 status = reader.IsDBNull(1) ? -1 : reader.GetInt32(1);
+                accountEmail = reader.IsDBNull(2) ? "" : reader.GetString(2).Trim();
             }
 
             if (status == 3)
@@ -4449,7 +4964,42 @@ VALUES (@resetStr, @customerId, GETDATE())", connection))
             }
 
             var resetUrl = $"/account/retrieve_password_reset?guid={Uri.EscapeDataString(token)}";
-            await Results.Ok(new PasswordResetResponse(true, "Password reset link created.", resetUrl)).ExecuteAsync(context);
+            var absoluteResetUrl = BuildAbsoluteUrl(context, resetUrl);
+            if (!IsValidEmail(accountEmail))
+            {
+                await Results.Json(
+                    new PasswordResetResponse(false, "Password reset link was created, but this account email is not readable by the new panel yet. The stored email may still be legacy-encrypted.", resetUrl),
+                    statusCode: StatusCodes.Status500InternalServerError
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var mailResult = await SendAccountEmailAsync(
+                accountEmail,
+                "SmarterASP.NET password reset",
+                $@"
+<p>Hello {WebUtility.HtmlEncode(login)},</p>
+<p>Use the link below to reset your SmarterASP.NET account password. This link expires in 30 minutes.</p>
+<p><a href=""{WebUtility.HtmlEncode(absoluteResetUrl)}"">Reset your password</a></p>
+<p>If you did not request this, you can ignore this email.</p>",
+                $@"Hello {login},
+
+Use this link to reset your SmarterASP.NET account password. This link expires in 30 minutes.
+
+{absoluteResetUrl}
+
+If you did not request this, you can ignore this email."
+            );
+            if (!mailResult.Success)
+            {
+                await Results.Json(
+                    new PasswordResetResponse(false, $"Password reset link was created, but SMTP delivery failed: {mailResult.Message}", resetUrl),
+                    statusCode: StatusCodes.Status502BadGateway
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            await Results.Ok(new PasswordResetResponse(true, $"Password reset email sent to {MaskStoredSecret(accountEmail)}.", resetUrl)).ExecuteAsync(context);
         }
 
         private async Task HandlePasswordResetConfirmAsync(HttpContext context)
@@ -4641,6 +5191,167 @@ WHERE customerID = @customerId", connection))
             return fallback;
         }
 
+        private int ConfigOrEnvInt(string configKey, string envKey, int fallback)
+        {
+            var value = ConfigOrEnv(configKey, envKey);
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : fallback;
+        }
+
+        private string BuildAbsoluteUrl(HttpContext context, string relativeUrl)
+        {
+            var configuredBaseUrl = ConfigOrEnv("PublicApp:BaseUrl", "PUBLIC_APP_BASE_URL").Trim().TrimEnd('/');
+            var baseUrl = string.IsNullOrWhiteSpace(configuredBaseUrl)
+                ? $"{context.Request.Scheme}://{context.Request.Host}"
+                : configuredBaseUrl;
+
+            return $"{baseUrl}{(relativeUrl.StartsWith("/", StringComparison.Ordinal) ? "" : "/")}{relativeUrl}";
+        }
+
+        private async Task<EmailSendResult> SendAccountEmailAsync(string to, string subject, string htmlBody, string textBody, string? fromEmail = null, string? fromName = null)
+        {
+            var senderEmail = string.IsNullOrWhiteSpace(fromEmail)
+                ? ConfigOrEnv("Smtp:FromEmail", "SMTP_FROM_EMAIL", "noreply@smarterasp.net").Trim()
+                : fromEmail.Trim();
+            var senderName = string.IsNullOrWhiteSpace(fromName)
+                ? ConfigOrEnv("Smtp:FromName", "SMTP_FROM_NAME", "SmarterASP.NET").Trim()
+                : fromName.Trim();
+            var endpoints = new[]
+            {
+                new SmtpEndpoint(
+                    ConfigOrEnv("Smtp:PrimaryHost", "SMTP_PRIMARY_HOST", "mail.smarterasp.net").Trim(),
+                    ConfigOrEnvInt("Smtp:PrimaryPort", "SMTP_PRIMARY_PORT", 8889)),
+                new SmtpEndpoint(
+                    ConfigOrEnv("Smtp:FallbackHost", "SMTP_FALLBACK_HOST", "gw5000").Trim(),
+                    ConfigOrEnvInt("Smtp:FallbackPort", "SMTP_FALLBACK_PORT", 8889))
+            };
+
+            var errors = new List<string>();
+            foreach (var endpoint in endpoints)
+            {
+                if (string.IsNullOrWhiteSpace(endpoint.Host) || endpoint.Port <= 0)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    using var message = new MailMessage
+                    {
+                        From = new MailAddress(senderEmail, senderName),
+                        Subject = subject,
+                        Body = htmlBody,
+                        IsBodyHtml = true,
+                        BodyEncoding = Encoding.UTF8,
+                        SubjectEncoding = Encoding.UTF8
+                    };
+                    message.To.Add(to);
+                    message.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(textBody, Encoding.UTF8, "text/plain"));
+
+                    using var smtp = new SmtpClient(endpoint.Host, endpoint.Port)
+                    {
+                        DeliveryMethod = SmtpDeliveryMethod.Network,
+                        EnableSsl = false,
+                        UseDefaultCredentials = false,
+                        Credentials = null,
+                        Timeout = ConfigOrEnvInt("Smtp:TimeoutMs", "SMTP_TIMEOUT_MS", 12000)
+                    };
+
+                    await smtp.SendMailAsync(message);
+                    return new EmailSendResult(true, $"Sent through {endpoint.Host}:{endpoint.Port}.");
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{endpoint.Host}:{endpoint.Port} {ex.Message}");
+                }
+            }
+
+            var messageText = errors.Count == 0
+                ? "No SMTP endpoints are configured."
+                : string.Join("; ", errors);
+            return new EmailSendResult(false, messageText);
+        }
+
+        private async Task<ReadableCustomerEmailResult> LoadReadableCustomerEmailAsync(long customerId)
+        {
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                return new ReadableCustomerEmailResult(false, "", "Missing EhbConfig connection string.");
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("SELECT TOP 1 CAST(email AS nvarchar(max)) FROM dbo.customer_profile WHERE customerID = @customerId", connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            var value = await command.ExecuteScalarAsync();
+            var email = value == null || value == DBNull.Value ? "" : Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim() ?? "";
+            if (!IsValidEmail(email))
+            {
+                return new ReadableCustomerEmailResult(false, "", "Customer email is not readable by the new panel yet. The stored value may still be legacy-encrypted.");
+            }
+
+            return new ReadableCustomerEmailResult(true, email, "Customer email loaded.");
+        }
+
+        private string GetBrandDomainForCustomer(long customerId)
+        {
+            return ConfigOrEnv("Legacy:PublicDomain", "LEGACY_PUBLIC_DOMAIN", "smarterasp.net").Trim();
+        }
+
+        private async Task<EmailSendResult> SendCustomerNotificationEmailAsync(long customerId, string fromEmail, string subject, string htmlBody, string textBody)
+        {
+            var email = await LoadReadableCustomerEmailAsync(customerId);
+            if (!email.Success)
+            {
+                return new EmailSendResult(false, email.Message);
+            }
+
+            return await SendAccountEmailAsync(email.Email, subject, htmlBody, textBody, fromEmail: fromEmail);
+        }
+
+        private async Task<EmailSendResult> SendAccountActivationEmailAsync(HttpContext context, long customerId, string customerLogin)
+        {
+            var email = await LoadReadableCustomerEmailAsync(customerId);
+            if (!email.Success)
+            {
+                return new EmailSendResult(false, email.Message);
+            }
+
+            var brandDomain = GetBrandDomainForCustomer(customerId);
+            var verifyHash = HashHex(MD5.HashData(Encoding.UTF8.GetBytes($"{customerLogin.ToLowerInvariant()}{email.Email.ToLowerInvariant()}")));
+            var verifyUrl = BuildAbsoluteUrl(context, $"/account/activate_account?emailverify={Uri.EscapeDataString(verifyHash)}");
+            return await SendAccountEmailAsync(
+                email.Email,
+                $"[{brandDomain}]Pending Account Confirmation",
+                $@"
+<p>Hello {WebUtility.HtmlEncode(customerLogin)},</p>
+<p>Please confirm your {WebUtility.HtmlEncode(brandDomain)} account by opening the link below.</p>
+<p><a href=""{WebUtility.HtmlEncode(verifyUrl)}"">Confirm account</a></p>",
+                $@"Hello {customerLogin},
+
+Please confirm your {brandDomain} account:
+
+{verifyUrl}",
+                fromEmail: $"noreply@{brandDomain}"
+            );
+        }
+
+        private static async Task WriteAccountMailResultAsync(HttpContext context, EmailSendResult result, string successMessage)
+        {
+            if (result.Success)
+            {
+                await Results.Ok(new AccountActionResponse(true, successMessage)).ExecuteAsync(context);
+                return;
+            }
+
+            await Results.Json(
+                new AccountActionResponse(false, $"SMTP delivery failed: {result.Message}"),
+                statusCode: StatusCodes.Status502BadGateway
+            ).ExecuteAsync(context);
+        }
+
         private List<string> GetDefaultDnsServers()
         {
             var value = ConfigOrEnv("HostingDefaults:DnsServers", "HOSTING_DEFAULT_DNS_SERVERS", "NS1.SITE4NOW.NET,NS2.SITE4NOW.NET,NS3.SITE4NOW.NET");
@@ -4780,6 +5491,23 @@ WHERE id = @id
                 !reader.IsDBNull(13) && reader.GetBoolean(13),
                 !reader.IsDBNull(14) && reader.GetBoolean(14),
                 CheckoutFulfillmentPath(pageType, guid)
+            );
+        }
+
+        private static CheckoutTempOrderResponse BuildCheckoutTempOrderResponse(string message, CheckoutTempOrder? order, decimal balance, bool success = true)
+        {
+            var shortfall = order == null ? 0m : Math.Max(0m, order.Amount - balance);
+            var canContinue = order != null
+                && !order.Processed
+                && (order.IsPaid || balance >= order.Amount);
+
+            return new CheckoutTempOrderResponse(
+                success,
+                message,
+                order,
+                new AccountBalanceSummary(balance, "USD", "Account credit ledger"),
+                canContinue,
+                shortfall
             );
         }
 
@@ -5990,7 +6718,9 @@ WHERE id = @registerInfoId
             return "";
         }
 
-        private string BuildLegacyCheckoutUrl(string guid) => $"{GetLegacyCheckoutBaseUrl()}/checkout/checkout_overview?guid={Uri.EscapeDataString(guid)}";
+        private static string BuildLegacyCheckoutUrl(string guid) => $"/checkout?guid={Uri.EscapeDataString(guid)}";
+
+        private static string BuildLegacyAccountScreenCheckoutUrl(string guid) => $"/checkout?guid={Uri.EscapeDataString(guid)}";
 
         private string GetLegacyCheckoutBaseUrl()
         {
@@ -7393,6 +8123,147 @@ ORDER BY
             return new List<AddonCatalogProduct>(products.Values);
         }
 
+        private static async Task<List<AddonCatalogProduct>> LoadNewPurchaseRecommendedAsync(SqlConnection connection, string branch)
+        {
+            var productType = NormalizeRecommendedBranch(branch) switch
+            {
+                "data-backup" => "DataBackup",
+                "server-backup" => "ServerBackup",
+                "site-backup" => "SiteBackup",
+                _ => "SiteBackup"
+            };
+
+            const string sql = @"
+SELECT p.product_id, p.name, CAST(p.description AS nvarchar(max)) AS description, p.product_type,
+       pr.price_id, pr.currency, pr.payment_term, pr.setup_fee, pr.price_amount, pr.original_price_amount
+FROM oms.dbo.product p
+LEFT JOIN oms.dbo.price pr ON pr.product_id = p.product_id
+WHERE p.active = 1
+  AND p.product_type = @productType
+ORDER BY
+  CASE WHEN pr.price_amount IS NULL THEN 1 ELSE 0 END,
+  p.name,
+  CASE
+    WHEN @productType = 'ServerBackup' AND pr.payment_term = 'quarterly' THEN 0
+    WHEN @productType <> 'ServerBackup' AND pr.payment_term = 'annually' THEN 0
+    ELSE 1
+  END,
+  pr.price_amount";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@productType", productType);
+
+            var products = new Dictionary<int, AddonCatalogProduct>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var productId = reader.GetInt32(0);
+                if (!products.TryGetValue(productId, out var product))
+                {
+                    product = new AddonCatalogProduct(
+                        productId,
+                        reader.GetString(1).Trim(),
+                        RecommendedDescription(productType, reader.IsDBNull(2) ? "" : reader.GetString(2).Trim()),
+                        reader.IsDBNull(3) ? "" : reader.GetString(3).Trim(),
+                        productType,
+                        new List<AddonPriceOption>()
+                    );
+                    products.Add(productId, product);
+                }
+
+                if (!reader.IsDBNull(4))
+                {
+                    product.Prices.Add(new AddonPriceOption(
+                        reader.GetInt32(4),
+                        reader.GetString(5),
+                        reader.GetString(6),
+                        reader.GetDecimal(7),
+                        reader.GetDecimal(8),
+                        reader.GetDecimal(9)
+                    ));
+                }
+            }
+
+            return new List<AddonCatalogProduct>(products.Values);
+        }
+
+        private static string RecommendedDescription(string productType, string fallback)
+        {
+            return productType switch
+            {
+                "DataBackup" => "Automatically backup your essential data (website files, databases, and emails) to protect against accidental deletions, overwrites, or potential hacking attacks. Enjoy unlimited backup storage and free restoration.",
+                "ServerBackup" => "Automatically daily backup your server data and store them off-server for up to 10 days. Protect your data easily and affordably.",
+                "SiteBackup" => "Automatically backup your website files. Includes 50GB of remote backup space.",
+                _ => fallback
+            };
+        }
+
+        private static string NewPurchaseRecommendedBranch(string productName)
+        {
+            var name = productName ?? "";
+            if (name.Contains("W", StringComparison.OrdinalIgnoreCase) || name.Contains("V68", StringComparison.OrdinalIgnoreCase))
+            {
+                return "data-backup";
+            }
+
+            if (name.Contains("V6", StringComparison.OrdinalIgnoreCase) && !name.Contains("V69", StringComparison.OrdinalIgnoreCase))
+            {
+                return "server-backup";
+            }
+
+            return "site-backup";
+        }
+
+        private static string NormalizeRecommendedBranch(string branch)
+        {
+            var value = (branch ?? "").Trim().ToLowerInvariant().Replace("_", "-", StringComparison.Ordinal);
+            return value switch
+            {
+                "databackup" => "data-backup",
+                "serverbackup" => "server-backup",
+                "sitebackup" => "site-backup",
+                "cloudbackup" => "site-backup",
+                "data-backup" or "server-backup" or "site-backup" or "none" => value,
+                _ => "site-backup"
+            };
+        }
+
+        private static string NewPurchaseRecommendedLegacyPath(string branch)
+        {
+            return NormalizeRecommendedBranch(branch) switch
+            {
+                "data-backup" => "/account/addon_purchase_recommended",
+                "server-backup" => "/account/addon_purchase_recommended_serverbackup",
+                "none" => "",
+                _ => "/account/addon_purchase_recommended_sitebackup"
+            };
+        }
+
+        private static int RecommendedBranchPageType(string branch)
+        {
+            return NormalizeRecommendedBranch(branch) switch
+            {
+                "data-backup" => ConstPageTypeDataBackup,
+                "server-backup" => ConstPageTypeServerBackup,
+                _ => ConstPageTypeCloudBackup
+            };
+        }
+
+        private static string NewPurchaseTracePath(string type)
+        {
+            return NormalizeNewOrderType(type) switch
+            {
+                "hosting" => "/account/cp_purchase_list.asp -> cp_purchase_list_action.asp -> addon_purchase_recommended*.asp -> /checkout/account_screen",
+                "managed-hosting" => "/account/cp_purchase_list_managed_hosting.asp -> cp_purchase_list_action.asp -> addon_purchase_recommended*.asp -> /checkout/account_screen",
+                "windows-vps" => "/account/cp_purchase_list_vps.asp -> cp_purchase_list_action.asp -> addon_purchase_recommended_serverbackup.asp -> /checkout/account_screen",
+                "linux-vps" => "/account/cp_purchase_list_vps_linux.asp -> cp_purchase_list_action.asp -> addon_purchase_recommended_serverbackup.asp -> /checkout/account_screen",
+                "cloud" => "/account/cp_purchase_list_cloud.asp -> cp_purchase_list_action.asp -> addon_purchase_recommended*.asp -> /checkout/account_screen",
+                "dedicated" => "/account/cp_purchase_list_dedi.asp -> cp_purchase_list_action.asp -> addon_purchase_recommended_sitebackup.asp -> /checkout/account_screen",
+                "reseller" => "/account/cp_purchase_list_reseller.asp -> addon_purchase_action.asp -> /checkout/account_screen",
+                _ => ""
+            };
+        }
+
         private static string NormalizeNewOrderType(string type)
         {
             var normalized = (type ?? "").Trim().ToLowerInvariant().Replace("_", "-", StringComparison.Ordinal);
@@ -7423,13 +8294,13 @@ ORDER BY
         {
             return NormalizeNewOrderType(type) switch
             {
-                "hosting" => "(p.product_type = @customerType OR p.product_type = 'individual') AND p.name LIKE 'W%US' AND p.name NOT LIKE 'W%LX-US' AND CAST(p.description AS nvarchar(max)) NOT LIKE '%Fully-Managed%'",
-                "managed-hosting" => "(p.product_type = @customerType OR p.product_type = 'individual') AND p.name LIKE 'W%US' AND p.name NOT LIKE 'W%LX-US' AND CAST(p.description AS nvarchar(max)) LIKE '%Fully-Managed%'",
-                "windows-vps" => "(p.product_type = @customerType OR p.product_type = 'individual') AND p.name LIKE 'V%US' AND CAST(p.description AS nvarchar(max)) LIKE '%VPS%' AND CAST(p.description AS nvarchar(max)) NOT LIKE '%Linux%'",
-                "linux-vps" => "(p.product_type = @customerType OR p.product_type = 'individual') AND (p.name LIKE 'V%US' OR p.name LIKE 'LinuxVPS%') AND CAST(p.description AS nvarchar(max)) LIKE '%Linux%'",
-                "cloud" => "(p.product_type = @customerType OR p.product_type = 'individual') AND (p.name LIKE 'LinuxCloud%US' OR CAST(p.description AS nvarchar(max)) LIKE '%Cloud%')",
-                "dedicated" => "(p.product_type = @customerType OR p.product_type = 'individual') AND CAST(p.description AS nvarchar(max)) LIKE '%Xeon%'",
-                "reseller" => "p.product_type = 'reseller' AND p.name LIKE 'Reseller%'",
+                "hosting" => "(p.product_type = @customerType OR p.product_type = 'individual') AND p.name LIKE 'W%' AND CAST(p.description AS nvarchar(max)) NOT LIKE '%reseller%'",
+                "managed-hosting" => "p.product_type = 'individual' AND CAST(p.description AS nvarchar(max)) LIKE '%Fully-Managed%'",
+                "windows-vps" => "p.product_type = 'individual' AND CAST(p.description AS nvarchar(max)) LIKE '%VPS%'",
+                "linux-vps" => "p.product_type = 'individual' AND CAST(p.description AS nvarchar(max)) LIKE '%Linux%'",
+                "cloud" => "p.product_type = 'individual' AND CAST(p.description AS nvarchar(max)) LIKE '%Cloud%'",
+                "dedicated" => "p.product_type = 'individual' AND CAST(p.description AS nvarchar(max)) LIKE '%Xeon%'",
+                "reseller" => "p.product_type = 'reseller'",
                 _ => ""
             };
         }
@@ -13819,7 +14690,13 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             _ => "Unknown"
         };
 
-        private sealed record LoginRequest(string Login, string Password);
+        private sealed record LoginRequest(string Login, string Password, string? TurnstileToken);
+        private sealed record LoginConfigResponse(bool TurnstileEnabled, string SiteKey);
+        private sealed record TurnstileVerifyResult(bool Success, string Message);
+        private sealed record LoginFailureWindow(int Count, DateTime FirstFailureUtc, DateTime LastAlertUtc);
+        private sealed record SmtpEndpoint(string Host, int Port);
+        private sealed record EmailSendResult(bool Success, string Message);
+        private sealed record ReadableCustomerEmailResult(bool Success, string Email, string Message);
         private sealed record PasswordResetRequest(string Login);
         private sealed record PasswordResetConfirmRequest(string Token, string NewPassword, string ConfirmPassword);
         private sealed record PasswordResetResponse(bool Success, string Message, string? ResetUrl);
@@ -13857,7 +14734,7 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record BillingInvoiceResponse(bool Success, string Message, BillingInvoiceDetail? Invoice);
         private sealed record CheckoutPreviewResponse(bool Success, string Message, CheckoutPreview? Preview);
         private sealed record CheckoutCreateResponse(bool Success, string Message, CheckoutOrder? Order);
-        private sealed record CheckoutTempOrderResponse(bool Success, string Message, CheckoutTempOrder? Order);
+        private sealed record CheckoutTempOrderResponse(bool Success, string Message, CheckoutTempOrder? Order, AccountBalanceSummary? Balance = null, bool CanContinueWithBalance = false, decimal Shortfall = 0m);
         private sealed record RenewTempOrderResponse(bool Success, string Message, RenewTempOrder? Order);
         private sealed record AffiliateWithdrawResponse(bool Success, string Message, AffiliateWithdrawPreview? Preview);
         private sealed record AccountVpnResponse(bool Success, string Message, AccountVpnDashboard? Dashboard);
@@ -13904,6 +14781,12 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record AddonCatalogProduct(int ProductId, string Name, string Description, string ProductType, string Category, List<AddonPriceOption> Prices);
         private sealed record AddonPriceOption(int PriceId, string Currency, string PaymentTerm, decimal SetupFee, decimal Amount, decimal OriginalAmount);
         private sealed record NewOrderCatalog(string Type, string Title, string LegacyPath, string Description, List<AddonCatalogProduct> Products);
+        private sealed record NewPurchaseCatalogResponse(bool Success, string Message, NewPurchaseCatalog? Catalog);
+        private sealed record NewPurchaseCatalog(string Type, string Title, string LegacyPath, string Description, List<AddonCatalogProduct> Products, string TracePath);
+        private sealed record NewPurchaseStartRequest(string Type, int ProductId, int PriceId);
+        private sealed record NewPurchaseStartResponse(bool Success, string Message, NewPurchaseStarted? Purchase);
+        private sealed record NewPurchaseStarted(string OrderGuid, string SourceLegacyPath, string RecommendedLegacyPath, string RecommendedBranch, AddonCatalogProduct Product, AddonPriceOption Price, List<AddonCatalogProduct> RecommendedProducts, string Note);
+        private sealed record NewPurchaseCompleteRequest(string OrderGuid, string Branch, bool IncludeRecommended, int RecommendedProductId, int RecommendedPriceId);
         private sealed record DomainTransferQuote(int ProductId, string ProductName, string Currency, string PaymentTerm, decimal Amount);
         private sealed record AccountAffiliateDashboard(long CustomerId, string Login, AffiliateSummary Summary, List<AffiliateReferralSummary> Referrals, List<AffiliateCommissionSummary> Commissions, List<AffiliatePayoutSummary> Payouts);
         private sealed record AffiliateSummary(int TotalReferrals, int PaidReferrals, int QualifiedFreeTrials, decimal PendingCommission, decimal CurrentCommission, decimal PaidOut, decimal AvailableCommission);

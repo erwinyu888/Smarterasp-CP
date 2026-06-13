@@ -5,6 +5,7 @@ import "./styles.css";
 const nativeFetch = window.fetch.bind(window);
 const authRedirectExemptPaths = [
   "/api/auth/login",
+  "/api/auth/login-config",
   "/api/auth/me",
   "/api/auth/logout",
   "/api/auth/password-reset/request",
@@ -526,44 +527,45 @@ function isPublicRoute(route) {
 
 function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
   const [order, setOrder] = useState(null);
+  const [checkoutState, setCheckoutState] = useState(null);
   const [orderMessage, setOrderMessage] = useState("");
   const [isPayingWithBalance, setIsPayingWithBalance] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const guid = query.get("guid") ?? "";
   const amount = query.get("amount") ?? "";
   const isDeposit = window.location.pathname.includes("deposit");
   const isRenewTemp = window.location.pathname.includes("/checkout/renew") || query.get("kind") === "renew";
 
-  useEffect(() => {
-    let isMounted = true;
-    async function loadOrder() {
-      if (!guid) return;
-      setOrderMessage("Loading checkout order...");
-      try {
-        const response = await fetch(isRenewTemp
-          ? `/api/account/renew-temp/${encodeURIComponent(guid)}`
-          : `/api/account/checkout-temp/${encodeURIComponent(guid)}`);
-        const result = await response.json().catch(() => null);
-        if (!isMounted) return;
-        if (!response.ok || !result?.success) {
-          setOrderMessage(result?.message ?? "Unable to load checkout order.");
-          return;
-        }
-
-        setOrder(result.order);
-        setOrderMessage(result.message);
-      } catch {
-        if (isMounted) setOrderMessage("Unable to reach checkout order service.");
+  async function loadOrder({ quiet = false } = {}) {
+    if (!guid) return;
+    if (!quiet) setOrderMessage("Loading checkout order...");
+    setIsRefreshing(true);
+    try {
+      const response = await fetch(isRenewTemp
+        ? `/api/account/renew-temp/${encodeURIComponent(guid)}`
+        : `/api/account/checkout-temp/${encodeURIComponent(guid)}`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setOrderMessage(result?.message ?? "Unable to load checkout order.");
+        return;
       }
-    }
 
+      setOrder(result.order);
+      setCheckoutState(result);
+      setOrderMessage(result.message);
+    } catch {
+      setOrderMessage("Unable to reach checkout order service.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
     loadOrder();
-    return () => {
-      isMounted = false;
-    };
   }, [guid, isRenewTemp]);
 
-  async function payWithBalance() {
+  async function continuePurchaseSetup() {
     if (!guid) return;
     setIsPayingWithBalance(true);
     setOrderMessage("");
@@ -576,6 +578,10 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
       setOrderMessage(result?.message ?? "Unable to mark checkout paid.");
       if (response.ok && result?.success) {
         setOrder(result.order);
+        setCheckoutState(result);
+        if (result.order?.fulfillmentPath) {
+          window.location.href = result.order.fulfillmentPath;
+        }
       }
     } catch {
       setOrderMessage("Unable to reach checkout balance service.");
@@ -588,7 +594,14 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
   const total = isDeposit ? Number(amount || 0) : order?.amount;
   const orderPaid = !!order?.isPaid;
   const orderProcessed = !!(order?.processed ?? order?.isProcessed);
-  const canUseBalance = !!order && !orderPaid && !orderProcessed && !isDeposit;
+  const balance = checkoutState?.balance?.amount;
+  const shortfall = checkoutState?.shortfall ?? 0;
+  const canContinueWithBalance = !!checkoutState?.canContinueWithBalance && !!order && !orderProcessed && !isDeposit;
+  const legacyCheckoutUrl = guid
+    ? isRenewTemp
+      ? `/legacy-checkout/checkout_overview_renew?guid=${encodeURIComponent(guid)}`
+      : `/legacy-checkout/checkout_overview?guid=${encodeURIComponent(guid)}`
+    : "";
 
   return (
     <main className="checkout-page">
@@ -603,9 +616,9 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
         </nav>
       </header>
       <section className="checkout-handoff-card">
-        <span className="status-pill blue">Checkout Handoff</span>
+        <span className="status-pill blue">Cart + Payment</span>
         <h1>{title}</h1>
-        <p>This page confirms the checkout temp-order state used by the account panel.</p>
+        <p>Complete payment in the secure checkout frame, then refresh this cart to continue purchase setup when the account balance covers the order.</p>
         {order && (
           <div className="checkout-status-grid">
             <div>
@@ -620,6 +633,10 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
               <span>Trackable</span>
               <strong>{order.trackable ? "Yes" : isRenewTemp ? "Renewal" : "No"}</strong>
             </div>
+            <div>
+              <span>Balance</span>
+              <strong>{balance !== undefined ? formatMoney(balance) : "Checking"}</strong>
+            </div>
           </div>
         )}
         <dl className="card-meta single">
@@ -631,6 +648,7 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
           {order?.info2 && <div><dt>Info 2</dt><dd>{order.info2}</dd></div>}
           {order?.renewInfo && <div><dt>Renew Info</dt><dd>{order.renewInfo}</dd></div>}
           {order?.fulfillmentPath && <div><dt>Next Step</dt><dd>{order.fulfillmentPath}</dd></div>}
+          {!!shortfall && <div><dt>Remaining</dt><dd>{formatMoney(shortfall)}</dd></div>}
         </dl>
         {orderMessage && (
           orderMessage.startsWith("Loading")
@@ -638,15 +656,34 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
             : <p className="renewal-action-message">{orderMessage}</p>
         )}
         <div className="checkout-action-row">
-          {canUseBalance && (
-            <button className="primary-button" type="button" disabled={isPayingWithBalance} onClick={payWithBalance}>
-              {isPayingWithBalance ? <LoadingIcon label="Checking account balance" /> : "Pay with Account Balance"}
+          <button className="secondary-button" type="button" disabled={isRefreshing} onClick={() => loadOrder({ quiet: true })} title="Refresh cart">
+            {isRefreshing ? <LoadingIcon label="Refreshing cart" /> : <MenuIcon name="refresh" />}
+          </button>
+          {canContinueWithBalance && (
+            <button className="primary-button" type="button" disabled={isPayingWithBalance} onClick={continuePurchaseSetup}>
+              {isPayingWithBalance ? <LoadingIcon label="Continuing purchase setup" /> : "Continue Purchase Setup"}
             </button>
           )}
-          {orderPaid && !orderProcessed && order.fulfillmentPath && (
-            <a className="secondary-button as-link" href={order.fulfillmentPath}>Continue Account Setup</a>
+          {!canContinueWithBalance && legacyCheckoutUrl && !orderProcessed && (
+            <a className="secondary-button as-link" href={legacyCheckoutUrl} target="legacy-payment-frame">Open Payment in Frame</a>
           )}
         </div>
+        {legacyCheckoutUrl && !orderProcessed && (
+          <section className="legacy-payment-frame-card">
+            <div className="billing-detail-header">
+              <span className="status-pill muted">Secure Payment Page</span>
+              <button className="ghost-button compact" type="button" onClick={() => loadOrder({ quiet: true })} title="Refresh cart">
+                {isRefreshing ? <LoadingIcon label="Refreshing cart" /> : <MenuIcon name="refresh" />}
+              </button>
+            </div>
+            <iframe
+              className="legacy-payment-frame"
+              name="legacy-payment-frame"
+              title="Legacy secure payment"
+              src={legacyCheckoutUrl}
+            />
+          </section>
+        )}
         <button className="primary-button" type="button" onClick={onBackToPanel}>
           Back to Account Panel
         </button>
@@ -911,10 +948,91 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [turnstileConfig, setTurnstileConfig] = useState({ turnstileEnabled: false, siteKey: "" });
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const turnstileRef = useRef(null);
+  const turnstileWidgetId = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLoginConfig() {
+      try {
+        const response = await fetch("/api/auth/login-config");
+        const result = await response.json().catch(() => null);
+        if (!cancelled && response.ok && result) {
+          setTurnstileConfig({
+            turnstileEnabled: !!result.turnstileEnabled,
+            siteKey: result.siteKey ?? ""
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setTurnstileConfig({ turnstileEnabled: false, siteKey: "" });
+        }
+      }
+    }
+
+    loadLoginConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!turnstileConfig.turnstileEnabled || !turnstileConfig.siteKey || !turnstileRef.current) return;
+
+    function renderTurnstile() {
+      if (!window.turnstile || !turnstileRef.current || turnstileWidgetId.current !== null) return;
+      turnstileWidgetId.current = window.turnstile.render(turnstileRef.current, {
+        sitekey: turnstileConfig.siteKey,
+        theme: theme === "light" ? "light" : "dark",
+        size: "flexible",
+        callback: (token) => {
+          setTurnstileToken(token);
+          setLoginError("");
+        },
+        "expired-callback": () => setTurnstileToken(""),
+        "error-callback": () => setTurnstileToken("")
+      });
+    }
+
+    if (window.turnstile) {
+      renderTurnstile();
+      return;
+    }
+
+    const existingScript = document.querySelector("script[data-turnstile-script='true']");
+    if (existingScript) {
+      existingScript.addEventListener("load", renderTurnstile, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    script.async = true;
+    script.defer = true;
+    script.dataset.turnstileScript = "true";
+    script.addEventListener("load", renderTurnstile, { once: true });
+    document.head.appendChild(script);
+  }, [turnstileConfig, theme]);
+
+  function resetTurnstile() {
+    setTurnstileToken("");
+    if (window.turnstile && turnstileWidgetId.current !== null) {
+      window.turnstile.reset(turnstileWidgetId.current);
+    }
+  }
 
   async function handleLoginSubmit(event) {
     event.preventDefault();
     setLoginError("");
+
+    if (turnstileConfig.turnstileEnabled && !turnstileToken) {
+      setLoginError("Complete the bot check before logging in.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -923,19 +1041,21 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ login, password })
+        body: JSON.stringify({ login, password, turnstileToken })
       });
 
       const result = await response.json().catch(() => null);
 
       if (!response.ok || !result?.success) {
         setLoginError(result?.message ?? "Login failed. Please check your username and password.");
+        if (turnstileConfig.turnstileEnabled) resetTurnstile();
         return;
       }
 
       onLogin(result.user, event);
     } catch {
       setLoginError("Unable to reach the login service. Please try again.");
+      if (turnstileConfig.turnstileEnabled) resetTurnstile();
     } finally {
       setIsSubmitting(false);
     }
@@ -983,6 +1103,9 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
               onChange={(event) => setPassword(event.target.value)}
             />
           </label>
+          {turnstileConfig.turnstileEnabled && (
+            <div className="turnstile-check" ref={turnstileRef} aria-label="Cloudflare bot check" />
+          )}
           {loginError && <p className="login-error">{loginError}</p>}
           <button className="primary-button full" type="submit" disabled={isSubmitting}>
             {isSubmitting ? <LoadingIcon label="Logging in" /> : "Login"}
@@ -7293,6 +7416,9 @@ function NewOrderSection({ onChangeSection }) {
   const [activeType, setActiveType] = useState("hosting");
   const [catalog, setCatalog] = useState(null);
   const [selectedPrices, setSelectedPrices] = useState({});
+  const [startedPurchase, setStartedPurchase] = useState(null);
+  const [recommendedSelections, setRecommendedSelections] = useState({});
+  const [includeRecommended, setIncludeRecommended] = useState(true);
   const [checkoutOrder, setCheckoutOrder] = useState(null);
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -7307,6 +7433,7 @@ function NewOrderSection({ onChangeSection }) {
     let ignore = false;
     const option = orderOptions.find((item) => item.type === activeType);
     setCatalog(null);
+    setStartedPurchase(null);
     setCheckoutOrder(null);
     setMessage("");
 
@@ -7319,7 +7446,7 @@ function NewOrderSection({ onChangeSection }) {
     async function loadCatalog() {
       setIsLoading(true);
       try {
-        const response = await fetch(`/api/account/new-orders/catalog?type=${encodeURIComponent(activeType)}`);
+        const response = await fetch(`/api/account/new-purchase/catalog?type=${encodeURIComponent(activeType)}`);
         const result = await response.json().catch(() => null);
         if (ignore) return;
 
@@ -7366,7 +7493,7 @@ function NewOrderSection({ onChangeSection }) {
     setCheckoutOrder(null);
 
     try {
-      const response = await fetch("/api/account/new-orders/checkout", {
+      const response = await fetch("/api/account/new-purchase/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -7382,10 +7509,54 @@ function NewOrderSection({ onChangeSection }) {
         return;
       }
 
-      setCheckoutOrder(result.order);
-      setMessage("Checkout order created.");
+      setStartedPurchase(result.purchase);
+      setIncludeRecommended((result.purchase?.recommendedProducts ?? []).length > 0);
+      setMessage(result.purchase?.recommendedProducts?.length ? "Recommended features loaded." : "Purchase is ready for checkout.");
     } catch {
       setMessage("Unable to reach checkout service.");
+    } finally {
+      setBusyProductId(null);
+    }
+  }
+
+  function selectedRecommendedPrice(product) {
+    const selectedPriceId = recommendedSelections[product.productId];
+    return product.prices?.find((price) => price.priceId === selectedPriceId) ?? product.prices?.[0] ?? null;
+  }
+
+  async function completeNewPurchase() {
+    if (!startedPurchase?.orderGuid) {
+      setMessage("Start a purchase first.");
+      return;
+    }
+
+    const recommendedProduct = startedPurchase.recommendedProducts?.[0] ?? null;
+    const recommendedPrice = recommendedProduct ? selectedRecommendedPrice(recommendedProduct) : null;
+
+    setBusyProductId(startedPurchase.product?.productId ?? "checkout");
+    setMessage("");
+    try {
+      const response = await fetch("/api/account/new-purchase/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderGuid: startedPurchase.orderGuid,
+          branch: startedPurchase.recommendedBranch,
+          includeRecommended: includeRecommended && !!recommendedProduct,
+          recommendedProductId: recommendedProduct?.productId ?? 0,
+          recommendedPriceId: recommendedPrice?.priceId ?? 0
+        })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setMessage(result?.message ?? "Unable to complete new purchase.");
+        return;
+      }
+
+      setCheckoutOrder(result.order);
+      setMessage("New purchase is ready for checkout.");
+    } catch {
+      setMessage("Unable to reach new purchase checkout service.");
     } finally {
       setBusyProductId(null);
     }
@@ -7453,9 +7624,10 @@ function NewOrderSection({ onChangeSection }) {
         <article className="panel-card new-order-detail">
           <div className="section-heading">
             <div>
-              <span className="eyebrow">New Order</span>
+              <span className="eyebrow">New Purchase</span>
               <h2>{activeOption.title}</h2>
               <p>{catalog?.description ?? activeOption.description ?? "Modern account panel order flow."}</p>
+              {catalog?.tracePath && <p className="legacy-trace-note">{catalog.tracePath}</p>}
             </div>
           </div>
 
@@ -7495,7 +7667,7 @@ function NewOrderSection({ onChangeSection }) {
               {!isLoading && !message && catalog?.products?.length === 0 && (
                 <p className="inline-status">No active products were found for this legacy catalog.</p>
               )}
-              <div className="new-order-products">
+              {!startedPurchase && <div className="new-order-products">
                 {(catalog?.products ?? []).map((product) => {
                   const selectedPrice = selectedPriceFor(product);
                   return (
@@ -7526,13 +7698,74 @@ function NewOrderSection({ onChangeSection }) {
                           disabled={!selectedPrice || busyProductId === product.productId}
                           onClick={() => createNewOrder(product)}
                         >
-                          {busyProductId === product.productId ? <LoadingIcon label="Creating checkout" /> : "Create Checkout"}
+                          {busyProductId === product.productId ? <LoadingIcon label="Creating purchase" /> : "Start Purchase"}
                         </button>
                       </div>
                     </article>
                   );
                 })}
-              </div>
+              </div>}
+
+              {startedPurchase && (
+                <div className="new-purchase-recommended">
+                  <article className="new-order-product selected">
+                    <div>
+                      <span className="status-pill blue">Step 1 complete</span>
+                      <h3>{startedPurchase.product.name}</h3>
+                      <p>{formatPaymentTerm(startedPurchase.price.paymentTerm)} - {formatMoney(startedPurchase.price.amount, startedPurchase.price.currency)}</p>
+                    </div>
+                    <span className="status-pill muted">{startedPurchase.sourceLegacyPath}</span>
+                  </article>
+
+                  {!!startedPurchase.recommendedProducts?.length && (
+                    <article className="new-order-product recommended">
+                      <div>
+                        <span className="status-pill order-pill">Recommended Features</span>
+                        <h3>{startedPurchase.recommendedProducts[0].name}</h3>
+                        <p>{startedPurchase.recommendedProducts[0].description}</p>
+                        <small>{startedPurchase.recommendedLegacyPath}</small>
+                      </div>
+                      <div className="new-order-product-actions">
+                        <label className="new-order-checkbox">
+                          <input type="checkbox" checked={includeRecommended} onChange={(event) => setIncludeRecommended(event.target.checked)} />
+                          <span>Add to this order</span>
+                        </label>
+                        <select
+                          aria-label={`${startedPurchase.recommendedProducts[0].name} billing term`}
+                          value={selectedRecommendedPrice(startedPurchase.recommendedProducts[0])?.priceId ?? ""}
+                          disabled={!includeRecommended}
+                          onChange={(event) => setRecommendedSelections((current) => ({
+                            ...current,
+                            [startedPurchase.recommendedProducts[0].productId]: Number(event.target.value)
+                          }))}
+                        >
+                          {(startedPurchase.recommendedProducts[0].prices ?? []).map((price) => (
+                            <option key={price.priceId} value={price.priceId}>
+                              {formatPaymentTerm(price.paymentTerm)} - {formatMoney(price.amount, price.currency)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </article>
+                  )}
+
+                  {!startedPurchase.recommendedProducts?.length && (
+                    <p className="inline-status">This purchase type does not use the recommended backup step in the old flow.</p>
+                  )}
+
+                  <div className="checkout-ready-row new-order-checkout">
+                    <span>{startedPurchase.orderGuid}</span>
+                    <button className="primary-button compact" type="button" disabled={busyProductId !== null} onClick={completeNewPurchase}>
+                      {busyProductId !== null ? <LoadingIcon label="Preparing checkout" /> : "Continue to Checkout"}
+                    </button>
+                    <button className="secondary-button compact" type="button" onClick={() => {
+                      setStartedPurchase(null);
+                      setCheckoutOrder(null);
+                      setMessage("");
+                    }}>Choose Different Product</button>
+                  </div>
+                </div>
+              )}
 
             </>
           )}
