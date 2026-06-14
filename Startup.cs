@@ -4645,10 +4645,19 @@ VALUES (@customerId, @secret, GETDATE(), 1);", command =>
             var code = context.Request.Query["code"].ToString();
             var state = context.Request.Query["state"].ToString();
             var installationId = context.Request.Query["installation_id"].ToString();
+            var returnUrl = NormalizeLocalReturnUrl(context.Request.Query["returnUrl"].ToString());
+            if (!string.IsNullOrWhiteSpace(returnUrl))
+            {
+                context.Session.SetString("github_return_url", returnUrl);
+            }
             var cpId = GetRequestedCpId(context);
             if (cpId <= 0)
             {
                 cpId = sessionUser.CpId;
+            }
+            if (cpId <= 0 && long.TryParse(context.Session.GetString("github_oauth_cp_id"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var oauthCpId))
+            {
+                cpId = oauthCpId;
             }
 
             var connectionString = GetEhbConfigConnectionString();
@@ -4703,11 +4712,8 @@ VALUES (@customerId, @secret, GETDATE(), 1);", command =>
                 context.Session.SetString("github_oauth_state", stateValue);
                 context.Session.SetString("github_oauth_cp_id", cp.CpId.ToString(CultureInfo.InvariantCulture));
 
-                var redirectUri = string.IsNullOrWhiteSpace(settings.RedirectUri)
-                    ? $"{context.Request.Scheme}://{context.Request.Host}/github/callback"
-                    : settings.RedirectUri;
                 var authUrl = action == "auth"
-                    ? $"https://github.com/login/oauth/authorize?client_id={Uri.EscapeDataString(settings.ClientId)}&state={Uri.EscapeDataString(stateValue)}&redirect_uri={Uri.EscapeDataString(redirectUri)}"
+                    ? $"https://github.com/login/oauth/authorize?client_id={Uri.EscapeDataString(settings.ClientId)}&state={Uri.EscapeDataString(stateValue)}"
                     : $"{settings.InstallUrl}?state={Uri.EscapeDataString(stateValue)}";
 
                 context.Response.Redirect(authUrl);
@@ -8223,6 +8229,124 @@ ORDER BY username", command =>
             }
 
             return await TryLegacyEncryptApiAsync(apiUrl, plainText, "encryptimportkey2");
+        }
+
+        private async Task<string> TryLegacyDecryptImportKey2Async(string encryptedValue)
+        {
+            var apiUrl = ConfigOrEnv("LegacyCrypto:ImportKey2ApiUrl", "LEGACY_IMPORTKEY2_API_URL").Trim();
+            if (string.IsNullOrWhiteSpace(apiUrl))
+            {
+                apiUrl = ConfigOrEnv("LegacyCrypto:DecryptPwdApiUrl", "LEGACY_DECRYPTPWD_API_URL").Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(encryptedValue))
+            {
+                return "";
+            }
+
+            return await TryLegacyDecryptApiAsync(apiUrl, encryptedValue, "decryptimportkey2");
+        }
+
+        private GithubOAuthSettings GetGithubSettings(HttpContext context)
+        {
+            var clientId = ConfigOrEnv("Github:ClientId", "GITHUB_CLIENT_ID").Trim();
+            var clientSecret = ConfigOrEnv("Github:ClientSecret", "GITHUB_CLIENT_SECRET").Trim();
+            var appSlug = ConfigOrEnv("Github:AppSlug", "GITHUB_APP_SLUG", "businessics-deploy-app").Trim().Trim('/');
+            var installUrl = ConfigOrEnv("Github:InstallUrl", "GITHUB_INSTALL_URL").Trim();
+            if (string.IsNullOrWhiteSpace(installUrl) && !string.IsNullOrWhiteSpace(appSlug))
+            {
+                installUrl = $"https://github.com/apps/{appSlug}/installations/new";
+            }
+
+            var redirectUri = ConfigOrEnv("Github:RedirectUri", "GITHUB_REDIRECT_URI").Trim();
+            return new GithubOAuthSettings(clientId, clientSecret, installUrl, redirectUri);
+        }
+
+        private async Task<GithubTokenExchangeResult> ExchangeGithubCodeForTokensAsync(HttpContext context, string code)
+        {
+            var settings = GetGithubSettings(context);
+            if (!settings.IsConfigured)
+            {
+                return new GithubTokenExchangeResult(false, settings.MissingMessage, "", "", null);
+            }
+
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                var tokenFields = new Dictionary<string, string>
+                {
+                    ["client_id"] = settings.ClientId,
+                    ["client_secret"] = settings.ClientSecret,
+                    ["code"] = code
+                };
+                if (!string.IsNullOrWhiteSpace(settings.RedirectUri))
+                {
+                    tokenFields["redirect_uri"] = settings.RedirectUri;
+                }
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://github.com/login/oauth/access_token")
+                {
+                    Content = new FormUrlEncodedContent(tokenFields)
+                };
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.UserAgent.ParseAdd("SmarterASP-ControlPanel/1.0");
+
+                var response = await httpClient.SendAsync(request);
+                var json = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new GithubTokenExchangeResult(false, $"GitHub token exchange failed: {Preview(json)}", "", "", null);
+                }
+
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+                var accessToken = root.TryGetProperty("access_token", out var accessTokenElement) ? accessTokenElement.GetString() ?? "" : "";
+                var refreshToken = root.TryGetProperty("refresh_token", out var refreshTokenElement) ? refreshTokenElement.GetString() ?? "" : "";
+                var expiresIn = root.TryGetProperty("expires_in", out var expiresInElement) && expiresInElement.TryGetInt32(out var seconds)
+                    ? seconds
+                    : 0;
+
+                if (string.IsNullOrWhiteSpace(accessToken))
+                {
+                    var error = root.TryGetProperty("error_description", out var errorElement) ? errorElement.GetString() : "GitHub did not return an access token.";
+                    return new GithubTokenExchangeResult(false, error ?? "GitHub did not return an access token.", "", "", null);
+                }
+
+                var expiresAt = expiresIn > 0 ? DateTime.UtcNow.AddSeconds(expiresIn) : (DateTime?)null;
+                return new GithubTokenExchangeResult(true, "GitHub token exchange completed.", accessToken, refreshToken, expiresAt);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                return new GithubTokenExchangeResult(false, $"GitHub token exchange failed: {ex.Message}", "", "", null);
+            }
+        }
+
+        private async Task<string> RevokeGithubGrantAsync(string accessToken)
+        {
+            var clientId = ConfigOrEnv("Github:ClientId", "GITHUB_CLIENT_ID").Trim();
+            var clientSecret = ConfigOrEnv("Github:ClientSecret", "GITHUB_CLIENT_SECRET").Trim();
+            if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret) || string.IsNullOrWhiteSpace(accessToken))
+            {
+                return " GitHub remote grant revoke was skipped because OAuth credentials or token are missing.";
+            }
+
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+                using var request = new HttpRequestMessage(HttpMethod.Delete, $"https://api.github.com/applications/{Uri.EscapeDataString(clientId)}/grant")
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(new { access_token = accessToken }), Encoding.UTF8, "application/json")
+                };
+                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
+                request.Headers.UserAgent.ParseAdd("SmarterASP-ControlPanel/1.0");
+                var response = await httpClient.SendAsync(request);
+                return response.IsSuccessStatusCode ? " GitHub remote grant revoked." : $" GitHub remote grant revoke returned {(int)response.StatusCode}.";
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return $" GitHub remote grant revoke failed: {ex.Message}";
+            }
         }
 
         private async Task<string> LoadReverifyEmailTemplateAsync()
@@ -15087,6 +15211,280 @@ WHERE dp.id = @domainId
             );
         }
 
+        private async Task<GithubDeployStatus> LoadGithubDeployStatusAsync(SqlConnection connection, OwnedHostingSite site)
+        {
+            var token = await LoadGithubTokenRowAsync(connection, site.CpId);
+            var hook = await LoadGithubDeployHookAsync(connection, site.SiteUid);
+            var hookUrl = "";
+            if (hook.WorkqueueId > 0)
+            {
+                var encryptedJobId = await TryLegacyImportKey2EncryptAsync(hook.WorkqueueId.ToString(CultureInfo.InvariantCulture));
+                if (!string.IsNullOrWhiteSpace(encryptedJobId))
+                {
+                    hookUrl = $"{GetGithubDeployHookBaseUrl()}/github/deployhook?jobid={Uri.EscapeDataString(encryptedJobId)}";
+                }
+            }
+
+            return new GithubDeployStatus(
+                site.CpId,
+                site.SiteUid,
+                !string.IsNullOrWhiteSpace(token.AccessToken),
+                !string.IsNullOrWhiteSpace(token.InstallationId),
+                token.ExpiresAt,
+                token.InstallationId,
+                hook.WorkqueueId > 0,
+                hook.WorkqueueId,
+                hookUrl,
+                hook.LastUpdate);
+        }
+
+        private async Task<GithubTokenRow> LoadGithubTokenRowAsync(SqlConnection connection, long cpId)
+        {
+            const string sql = @"
+SELECT TOP 1 access_token, refresh_token, expires_at, installation_id
+FROM dbo.UserGitHubTokens
+WHERE cpID = @cpId";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return GithubTokenRow.Empty;
+            }
+
+            return new GithubTokenRow(
+                reader.IsDBNull(0) ? "" : reader.GetString(0).Trim(),
+                reader.IsDBNull(1) ? "" : reader.GetString(1).Trim(),
+                reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                reader.IsDBNull(3) ? "" : Convert.ToString(reader.GetValue(3), CultureInfo.InvariantCulture) ?? "");
+        }
+
+        private static async Task<GithubDeployHookRow> LoadGithubDeployHookAsync(SqlConnection connection, int siteUid)
+        {
+            const string sql = @"
+SELECT TOP 1 workqueue_id, last_update
+FROM dbo.UserGitHubDeployhook
+WHERE site_uid = @siteUid
+ORDER BY id DESC";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@siteUid", siteUid);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return GithubDeployHookRow.Empty;
+            }
+
+            return new GithubDeployHookRow(
+                reader.IsDBNull(0) ? 0 : Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture),
+                reader.IsDBNull(1) ? null : reader.GetDateTime(1));
+        }
+
+        private async Task SaveGithubTokensAsync(SqlConnection connection, long cpId, string accessToken, string refreshToken, DateTime? expiresAt)
+        {
+            var encryptedAccessToken = await TryLegacyImportKey2EncryptAsync(accessToken);
+            var encryptedRefreshToken = string.IsNullOrWhiteSpace(refreshToken) ? "" : await TryLegacyImportKey2EncryptAsync(refreshToken);
+            if (string.IsNullOrWhiteSpace(encryptedAccessToken))
+            {
+                encryptedAccessToken = accessToken;
+            }
+
+            const string sql = @"
+IF EXISTS (SELECT 1 FROM dbo.UserGitHubTokens WHERE cpID = @cpId)
+BEGIN
+    UPDATE dbo.UserGitHubTokens
+    SET access_token = @accessToken,
+        refresh_token = @refreshToken,
+        expires_at = @expiresAt
+    WHERE cpID = @cpId
+END
+ELSE
+BEGIN
+    INSERT INTO dbo.UserGitHubTokens (cpID, access_token, refresh_token, expires_at)
+    VALUES (@cpId, @accessToken, @refreshToken, @expiresAt)
+END";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            command.Parameters.AddWithValue("@accessToken", encryptedAccessToken);
+            command.Parameters.AddWithValue("@refreshToken", encryptedRefreshToken);
+            command.Parameters.AddWithValue("@expiresAt", expiresAt == null ? DBNull.Value : expiresAt.Value);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task SaveGithubInstallationIdAsync(SqlConnection connection, long cpId, long installationId)
+        {
+            const string sql = @"
+IF EXISTS (SELECT 1 FROM dbo.UserGitHubTokens WHERE cpID = @cpId)
+BEGIN
+    UPDATE dbo.UserGitHubTokens SET installation_id = @installationId WHERE cpID = @cpId
+END
+ELSE
+BEGIN
+    INSERT INTO dbo.UserGitHubTokens (cpID, access_token, refresh_token, installation_id)
+    VALUES (@cpId, '', '', @installationId)
+END";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            command.Parameters.AddWithValue("@installationId", installationId.ToString(CultureInfo.InvariantCulture));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task ClearGithubTokensAsync(SqlConnection connection, long cpId)
+        {
+            const string sql = "UPDATE dbo.UserGitHubTokens SET access_token = '', refresh_token = '' WHERE cpID = @cpId";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task SaveGithubDeployHookAsync(SqlConnection connection, int siteUid, long workqueueId)
+        {
+            const string sql = @"
+IF EXISTS (SELECT 1 FROM dbo.UserGitHubDeployhook WHERE site_uid = @siteUid)
+BEGIN
+    UPDATE dbo.UserGitHubDeployhook
+    SET workqueue_id = @workqueueId,
+        last_update = GETDATE()
+    WHERE site_uid = @siteUid
+END
+ELSE
+BEGIN
+    INSERT INTO dbo.UserGitHubDeployhook (site_uid, workqueue_id, last_update)
+    VALUES (@siteUid, @workqueueId, GETDATE())
+END";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@siteUid", siteUid);
+            command.Parameters.AddWithValue("@workqueueId", workqueueId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task<bool> DeleteGithubDeployHookForSiteAsync(SqlConnection connection, int siteUid)
+        {
+            const string sql = "DELETE FROM dbo.UserGitHubDeployhook WHERE site_uid = @siteUid";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@siteUid", siteUid);
+            return await command.ExecuteNonQueryAsync() > 0;
+        }
+
+        private static async Task DeleteGithubDeployHookByWorkqueueIdAsync(SqlConnection connection, long workqueueId)
+        {
+            const string sql = "DELETE FROM dbo.UserGitHubDeployhook WHERE workqueue_id = @workqueueId";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@workqueueId", workqueueId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task<bool> GithubDeployHookExistsAsync(SqlConnection connection, long workqueueId)
+        {
+            const string sql = "SELECT COUNT(*) FROM dbo.UserGitHubDeployhook WHERE workqueue_id = @workqueueId";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@workqueueId", workqueueId);
+            return Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture) > 0;
+        }
+
+        private static async Task<GithubDeployHookJob> RequeueGithubDeployHookAsync(SqlConnection connection, long workqueueId)
+        {
+            const string pendingSql = @"
+SELECT COUNT(*)
+FROM dbo.workqueue
+WHERE status <> 2 AND status <> 3 AND type = 'deploy' AND id = @workqueueId";
+            await using (var pendingCommand = new SqlCommand(pendingSql, connection))
+            {
+                pendingCommand.Parameters.AddWithValue("@workqueueId", workqueueId);
+                var pending = Convert.ToInt32(await pendingCommand.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+                if (pending > 0)
+                {
+                    return new GithubDeployHookJob("Error, there is a existing task in the queue. Please wait a bit and try again.", "ERROR", DateTime.Now.ToString(CultureInfo.InvariantCulture));
+                }
+            }
+
+            const string sql = "UPDATE dbo.workqueue SET status = 0, enterdate = GETDATE() WHERE id = @workqueueId";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@workqueueId", workqueueId);
+            await command.ExecuteNonQueryAsync();
+            return new GithubDeployHookJob(workqueueId.ToString(CultureInfo.InvariantCulture), "PENDING", DateTime.Now.ToString(CultureInfo.InvariantCulture));
+        }
+
+        private async Task<long> TryDecryptGithubDeployHookJobIdAsync(string encryptedJobId)
+        {
+            if (string.IsNullOrWhiteSpace(encryptedJobId))
+            {
+                return 0;
+            }
+
+            if (long.TryParse(encryptedJobId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var plainJobId))
+            {
+                return plainJobId;
+            }
+
+            var decrypted = await TryLegacyDecryptImportKey2Async(encryptedJobId);
+            return long.TryParse(decrypted, NumberStyles.Integer, CultureInfo.InvariantCulture, out var jobId) ? jobId : 0;
+        }
+
+        private string GetGithubDeployHookBaseUrl()
+        {
+            var configured = ConfigOrEnv("Github:DeployHookBaseUrl", "GITHUB_DEPLOYHOOK_BASE_URL").Trim().TrimEnd('/');
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                return configured;
+            }
+
+            var publicUrl = ConfigOrEnv("PublicApp:BaseUrl", "PUBLIC_APP_BASE_URL", "http://localhost:5056").Trim().TrimEnd('/');
+            return string.IsNullOrWhiteSpace(publicUrl) ? "http://localhost:5056" : publicUrl;
+        }
+
+        private static async Task WriteGithubPopupHtmlAsync(HttpContext context, string title, string message, bool closeWindow)
+        {
+            context.Response.ContentType = "text/html; charset=utf-8";
+            var safeTitle = WebUtility.HtmlEncode(title);
+            var safeMessage = WebUtility.HtmlEncode(message);
+            var returnUrl = NormalizeLocalReturnUrl(context.Session.GetString("github_return_url") ?? "") ?? "/panel_cp?section=websites";
+            var safeReturnUrl = JsonSerializer.Serialize(returnUrl);
+            var closeScript = closeWindow
+                ? $"setTimeout(function(){{ if (window.opener) {{ window.close(); }} else {{ window.location.href = {safeReturnUrl}; }} }}, 900);"
+                : $"setTimeout(function(){{ window.location.href = {safeReturnUrl}; }}, 900);";
+            await context.Response.WriteAsync($@"<!doctype html>
+<html>
+<head>
+  <meta charset=""utf-8"" />
+  <title>{safeTitle}</title>
+  <style>
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: #050505; color: #ededed; font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
+    main {{ width: min(460px, calc(100vw - 40px)); border: 1px solid #242424; border-radius: 12px; padding: 28px; background: #111; box-shadow: 0 24px 70px rgba(0,0,0,.35); }}
+    h1 {{ margin: 0 0 8px; font-size: 22px; }}
+    p {{ margin: 0; color: #a1a1aa; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{safeTitle}</h1>
+    <p>{safeMessage}</p>
+  </main>
+  <script>
+    if (window.opener) {{
+      try {{ window.opener.postMessage({{ type: 'github-auth-complete' }}, window.location.origin); }} catch (error) {{}}
+    }}
+    {closeScript}
+  </script>
+</body>
+</html>");
+        }
+
+        private static string? NormalizeLocalReturnUrl(string value)
+        {
+            var trimmed = (value ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                return null;
+            }
+
+            if (!trimmed.StartsWith("/", StringComparison.Ordinal) || trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.Contains("\\", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return trimmed;
+        }
+
         private static DateOnly? CalculateDomainExpiration(DateOnly? startDate, int buyYear)
         {
             if (startDate == null)
@@ -15584,6 +15982,21 @@ ORDER BY adddate DESC, ipid DESC",
                     "website-more-functions"
                 );
                 var result = await CreateHostingWorkqueueAsync(connection, new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType), queueRequest);
+                if (result.Success &&
+                    normalizedKey == "github-deploy" &&
+                    result.Id > 0 &&
+                    fields.TryGetValue("createDeployhook", out var createDeployhook) &&
+                    string.Equals(createDeployhook, "true", StringComparison.OrdinalIgnoreCase))
+                {
+                    await SaveGithubDeployHookAsync(connection, site.SiteUid, result.Id);
+                    var status = await LoadGithubDeployStatusAsync(connection, site);
+                    return new HostingSiteFunctionMutationResponse(true, "Github deploy job queued and deploy hook saved.", new
+                    {
+                        queue = result,
+                        github = status
+                    });
+                }
+
                 return new HostingSiteFunctionMutationResponse(result.Success, result.Message, result);
             }
 
@@ -23436,6 +23849,24 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record HostingDatabaseProvisionRequest(long CpId, string Engine, string Name, string Login, string Password, int QuotaMb, string Collation, string ServerId) : IHostingCpRequest;
         private sealed record HostingEmailProvisionRequest(long CpId, string Domain, string Password, int QuotaMb, int MailboxQuota, string MailServer) : IHostingCpRequest;
         private sealed record HostingFtpProvisionRequest(long CpId, string Login, string Password, string Path, int QuotaMb, string Permission) : IHostingCpRequest;
+        private sealed record GithubOAuthSettings(string ClientId, string ClientSecret, string InstallUrl, string RedirectUri)
+        {
+            public bool IsConfigured => !string.IsNullOrWhiteSpace(ClientId) && !string.IsNullOrWhiteSpace(ClientSecret) && !string.IsNullOrWhiteSpace(InstallUrl);
+            public string MissingMessage => "GitHub OAuth is not configured. Set GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, and GITHUB_INSTALL_URL before connecting GitHub.";
+        }
+        private sealed record GithubTokenExchangeResult(bool Success, string Message, string AccessToken, string RefreshToken, DateTime? ExpiresAt);
+        private sealed record GithubTokenRow(string AccessToken, string RefreshToken, DateTime? ExpiresAt, string InstallationId)
+        {
+            public static GithubTokenRow Empty { get; } = new("", "", null, "");
+        }
+        private sealed record GithubDeployHookRow(long WorkqueueId, DateTime? LastUpdate)
+        {
+            public static GithubDeployHookRow Empty { get; } = new(0, null);
+        }
+        private sealed record GithubDeployStatusResponse(bool Success, string Message, GithubDeployStatus? Github);
+        private sealed record GithubDeployStatus(long CpId, int SiteUid, bool Connected, bool HasInstallation, DateTime? ExpiresAt, string InstallationId, bool HasDeployHook, long WorkqueueId, string HookUrl, DateTime? HookLastUpdate);
+        private sealed record GithubDeployHookRunResponse(GithubDeployHookJob Job);
+        private sealed record GithubDeployHookJob(string Id, string State, string CreatedAt);
         private sealed record HostingSiteFunctionResponse(bool Success, string Message, HostingSiteFunctionDetails? Function);
         private sealed record HostingSiteFunctionMutationRequest(long CpId, string Action, Dictionary<string, string> Fields);
         private sealed record HostingSiteFunctionMutationResponse(bool Success, string Message, object? Details);

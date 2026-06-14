@@ -3183,6 +3183,36 @@ html[data-theme="light"] .ram-meter {
   justify-content: flex-end;
 }
 
+.github-status-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.github-hook-card {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.github-hook-card h3 {
+  margin: 10px 0 6px;
+}
+
+.github-hook-card code {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  display: block;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+  padding: 12px;
+}
+
 .github-deploy-form {
   display: grid;
   gap: 16px;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -3447,8 +3447,10 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
       if (response.ok && result?.success) {
         await reloadActivity();
       }
+      return result;
     } catch {
       setGithubDeployMessage("Unable to reach GitHub deploy service.");
+      return null;
     } finally {
       setIsGithubDeployBusy(false);
     }
@@ -3458,6 +3460,7 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
     return (
       <GithubDeployPage
         site={githubDeploySite}
+        cpId={cpId}
         cpLogin={sitesDashboard?.cpLogin}
         isBusy={isGithubDeployBusy}
         message={githubDeployMessage}
@@ -3838,10 +3841,15 @@ function SubdomainDrawer({ draft, domains, message, isBusy, onChange, onClose, o
   );
 }
 
-function GithubDeployPage({ site, cpLogin, isBusy, message, onBack, onSubmit }) {
+function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubmit }) {
   const [deployMethod, setDeployMethod] = useState("git");
   const [gitMethod, setGitMethod] = useState("token");
   const [showMore, setShowMore] = useState(false);
+  const [githubStatus, setGithubStatus] = useState(null);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [isHookPanelOpen, setIsHookPanelOpen] = useState(false);
+  const [isRevokingHook, setIsRevokingHook] = useState(false);
   const [draft, setDraft] = useState({
     repourl: "https://github.com/User/MyRepository.git",
     gitBranch: "",
@@ -3853,27 +3861,79 @@ function GithubDeployPage({ site, cpLogin, isBusy, message, onBack, onSubmit }) 
   });
   const sitePath = simplifySitePath(site?.sitePath, cpLogin);
 
+  const loadGithubStatus = useCallback(async () => {
+    if (!site?.siteUid) return;
+    setIsLoadingStatus(true);
+    setStatusMessage("");
+    try {
+      const query = cpId ? `?cpId=${encodeURIComponent(cpId)}` : "";
+      const response = await fetch(`/api/hosting/sites/${site.siteUid}/github${query}`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setStatusMessage(result?.message || "Unable to load Github deploy status.");
+        return;
+      }
+      setGithubStatus(result.github);
+    } catch {
+      setStatusMessage("Unable to reach Github deploy status service.");
+    } finally {
+      setIsLoadingStatus(false);
+    }
+  }, [cpId, site?.siteUid]);
+
+  useEffect(() => {
+    loadGithubStatus();
+  }, [loadGithubStatus]);
+
+  useEffect(() => {
+    function onGithubMessage(event) {
+      if (event.origin !== window.location.origin || event.data?.type !== "github-auth-complete") return;
+      loadGithubStatus();
+    }
+
+    window.addEventListener("message", onGithubMessage);
+    return () => window.removeEventListener("message", onGithubMessage);
+  }, [loadGithubStatus]);
+
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
   }
 
-  function openGitHubPopup(action) {
-    const url = `/github/callback?action=${encodeURIComponent(action)}`;
-    const title = "GitHub Authentication";
-    const w = 600;
-    const h = 700;
-    const dualScreenLeft = window.screenLeft !== undefined ? window.screenLeft : window.screen.left;
-    const dualScreenTop = window.screenTop !== undefined ? window.screenTop : window.screen.top;
-    const width = window.innerWidth || document.documentElement.clientWidth || screen.width;
-    const height = window.innerHeight || document.documentElement.clientHeight || screen.height;
-    const systemZoom = width / window.screen.availWidth;
-    const left = (width - w) / 2 / systemZoom + dualScreenLeft;
-    const top = (height - h) / 2 / systemZoom + dualScreenTop;
-    const popup = window.open(url, title, `scrollbars=yes,width=${w / systemZoom},height=${h / systemZoom},top=${top},left=${left}`);
-    if (window.focus && popup) popup.focus();
+  function openGitHubAuth(action) {
+    const query = new URLSearchParams({
+      action,
+      cpId: String(cpId || ""),
+      returnUrl: `${window.location.pathname}${window.location.search}`
+    });
+    window.location.href = `/github/callback?${query.toString()}`;
   }
 
-  function submit(event) {
+  async function revokeDeployHook() {
+    if (!site?.siteUid) return;
+    setIsRevokingHook(true);
+    setStatusMessage("");
+    try {
+      const query = cpId ? `?cpId=${encodeURIComponent(cpId)}` : "";
+      const response = await fetch(`/api/hosting/sites/${site.siteUid}/github/deployhook/revoke${query}`, {
+        method: "POST"
+      });
+      const result = await response.json().catch(() => null);
+      setStatusMessage(result?.message || "Deploy hook updated.");
+      await loadGithubStatus();
+    } catch {
+      setStatusMessage("Unable to revoke deploy hook.");
+    } finally {
+      setIsRevokingHook(false);
+    }
+  }
+
+  async function copyDeployHook() {
+    if (!githubStatus?.hookUrl) return;
+    await navigator.clipboard?.writeText(githubStatus.hookUrl);
+    setStatusMessage("Deploy hook URL copied.");
+  }
+
+  async function submit(event) {
     event.preventDefault();
     const fields = {
       source: deployMethod === "git" ? draft.repourl : "uploaded-zip",
@@ -3887,8 +3947,20 @@ function GithubDeployPage({ site, cpLogin, isBusy, message, onBack, onSubmit }) 
       startcmd: draft.startcmd,
       createDeployhook: draft.createDeployhook ? "true" : "false"
     };
-    onSubmit(fields);
+    const result = await onSubmit(fields);
+    if (result?.success) {
+      await loadGithubStatus();
+      if (draft.createDeployhook) {
+        setIsHookPanelOpen(true);
+      }
+    }
   }
+
+  const isConnected = Boolean(githubStatus?.connected);
+  const hasGitHubAppInstalled = Boolean(githubStatus?.hasInstallation);
+  const connectAction = hasGitHubAppInstalled ? "auth" : "install";
+  const connectionLabel = isConnected ? "Connected" : hasGitHubAppInstalled ? "App Installed" : "Not connected";
+  const connectButtonLabel = isConnected ? "Reconnect GitHub Account" : hasGitHubAppInstalled ? "Authorize GitHub Account" : "Connect GitHub Account";
 
   return (
     <section className="github-deploy-page">
@@ -3905,15 +3977,51 @@ function GithubDeployPage({ site, cpLogin, isBusy, message, onBack, onSubmit }) 
         <div>
           <h3>{site?.siteName}</h3>
           <p>Deploy target: {sitePath}</p>
+          <div className="github-status-row">
+            <span className={isConnected ? "status-pill green" : hasGitHubAppInstalled ? "status-pill blue" : "status-pill muted"}>
+              {isLoadingStatus ? <LoadingIcon label="Loading Github status" /> : connectionLabel}
+            </span>
+            {githubStatus?.hasDeployHook && <span className="status-pill blue">Deploy Hook Ready</span>}
+          </div>
         </div>
         <div className="github-connect-actions">
-          <button className="secondary-button compact" type="button" onClick={() => openGitHubPopup("install")}>Connect GitHub Account</button>
-          <button className="secondary-button compact danger" type="button" onClick={() => openGitHubPopup("disconnect")}>Disconnect GitHub Account</button>
-          <button className="secondary-button compact" type="button">Deploy Hooks</button>
+          <button className="secondary-button compact" type="button" onClick={() => openGitHubAuth(connectAction)}>
+            {connectButtonLabel}
+          </button>
+          <button className="secondary-button compact danger" type="button" onClick={() => openGitHubAuth("disconnect")} disabled={!isConnected}>
+            Disconnect GitHub Account
+          </button>
+          <button className="secondary-button compact" type="button" onClick={() => setIsHookPanelOpen((open) => !open)}>
+            Deploy Hooks
+          </button>
         </div>
       </div>
 
+      {statusMessage && <p className="sandbox-message">{statusMessage}</p>}
       {message && <p className="sandbox-message">{message}</p>}
+
+      {isHookPanelOpen && (
+        <div className="panel-card github-hook-card">
+          <div>
+            <span className="status-pill blue">Deploy Hook</span>
+            <h3>GitHub Webhook URL</h3>
+            {githubStatus?.hookUrl ? (
+              <>
+                <p>Use this URL as the GitHub webhook target for this deploy job.</p>
+                <code>{githubStatus.hookUrl}</code>
+              </>
+            ) : (
+              <p>Please submit a deploy request with Create Deploy Hook selected.</p>
+            )}
+          </div>
+          <div className="github-connect-actions">
+            <button className="secondary-button compact" type="button" onClick={copyDeployHook} disabled={!githubStatus?.hookUrl}>Copy</button>
+            <button className="secondary-button compact danger" type="button" onClick={revokeDeployHook} disabled={!githubStatus?.hasDeployHook || isRevokingHook}>
+              {isRevokingHook ? <LoadingIcon label="Revoking hook" /> : "Revoke"}
+            </button>
+          </div>
+        </div>
+      )}
 
       <form className="panel-card github-deploy-form" onSubmit={submit}>
         <fieldset className="choice-fieldset">
@@ -9487,12 +9595,25 @@ function CustomSelect({ value, options = [], onChange, ariaLabel = "Choose optio
   function updateMenuPosition() {
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const menuWidth = Math.min(Math.max(rect.width, 180), 360, Math.max(180, window.innerWidth - 16));
+    const viewportPadding = 8;
+    const menuWidth = Math.min(
+      Math.max(rect.width, 160),
+      Math.max(160, window.innerWidth - (viewportPadding * 2))
+    );
     const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - menuWidth - 8));
+    const optionCount = Math.max(1, normalizedOptions.length);
+    const estimatedHeight = Math.min(280, (optionCount * 36) + 12);
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const spaceAbove = rect.top - viewportPadding;
+    const openUp = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+    const top = openUp
+      ? Math.max(viewportPadding, rect.top - estimatedHeight - 6)
+      : rect.bottom + 6;
     setMenuPosition({
       left,
-      top: rect.bottom + 6,
-      width: menuWidth
+      top,
+      width: menuWidth,
+      maxHeight: openUp ? Math.min(280, Math.max(120, spaceAbove - 12)) : Math.min(280, Math.max(120, spaceBelow - 6))
     });
   }
 
@@ -9540,7 +9661,12 @@ function CustomSelect({ value, options = [], onChange, ariaLabel = "Choose optio
           className="custom-select-options floating-custom-select-options"
           role="listbox"
           aria-label={ariaLabel}
-          style={menuPosition ? { left: `${menuPosition.left}px`, top: `${menuPosition.top}px`, width: `${menuPosition.width}px` } : undefined}
+          style={menuPosition ? {
+            left: `${menuPosition.left}px`,
+            top: `${menuPosition.top}px`,
+            width: `${menuPosition.width}px`,
+            maxHeight: `${menuPosition.maxHeight}px`
+          } : undefined}
         >
           {normalizedOptions.map((option) => (
             <button
