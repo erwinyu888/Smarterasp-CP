@@ -466,7 +466,7 @@ Current rebuild status:
 ### Speed Notes
 
 - Load FTP list from `cp_config_FTP`.
-- Create/password update remain blocked until Persits-compatible `encryptpwd` / `encryptFTPpwd` output is reproduced exactly.
+- Create/password update use the configured standalone Classic ASP `encryptpwd` / `encryptFTPpwd` bridge and write the active `cp_config_FTP` fields directly.
 
 ## CDN
 

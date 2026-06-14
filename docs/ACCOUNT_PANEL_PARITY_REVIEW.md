@@ -60,23 +60,22 @@ These read paths passed against the running app on `http://localhost:5056`:
 | Affiliate summary/referrals/commission | `affiliate*.asp` | Read working | Summary, referrals, commissions, payout log load from live data. |
 | Affiliate withdraw | `commissionview_action.asp`, `affiliate_withdraw.asp` | Implemented with OMS gateway dependency | Validates annual paid referral minimum and payout rules; cashout depends on configured legacy OMS service. |
 | Profile settings | `profile.asp`, `profile_update_action.asp` | Mostly implemented | Contact/billing fields mapped. Mobile/SMS PIN verification remains blocked by SMS test target/gateway policy. |
-| Password change/reset | `password_change*.asp`, `retrieve_password*.asp` | Basic account password write implemented | CP/FTP/IIS credential sync remains blocked by exact legacy encryption/decrypt compatibility. |
-| Email change verification | `profile_update_action.asp`, `emailchangeverify.asp` | Request/verify records implemented | Final encrypted `customer_profile.email` write still blocked by legacy encryption compatibility. |
-| 2FA status/disable | `2fa_verify.asp`, `2fa_action.asp`, `2fa_change.asp` | Read/disable only | Enable/setup blocked by exact legacy encrypted secret format. |
+| Password change/reset | `password_change*.asp`, `retrieve_password*.asp` | Account, CP password hash, root FTP, and IIS Manager/WebDeploy password sync use the configured legacy encrypt bridge | SSRS/Linux credential parity still needs disposable remote targets. |
+| Email change verification | `profile_update_action.asp`, `emailchangeverify.asp` | Request/verify records and final encrypted `customer_profile.email` write implemented through the legacy encrypt bridge | Helpdesk sync depends on `HELPDESK_USER_UPDATE_API` when configured. |
+| 2FA status/disable | `2fa_verify.asp`, `2fa_action.asp`, `2fa_change.asp` | Login verification, setup, confirm, legacy encrypted secret read, and disable implemented through the legacy 2FA helpers plus encrypt/decrypt bridge | Live legacy 2FA rows were sampled on 2026-06-14: encrypted secrets decrypted through the standalone `decryptpwd` bridge into valid 16-character TOTP secrets, and the legacy verifier returned the expected invalid response for a dummy code. |
 | Support links | `chat.asp`, `helpdesk.asp` | Linked | External support links present. |
 
 ## Items Not Complete
 
 These are not bugs in the current implementation; they are intentionally blocked until exact legacy dependencies or disposable test targets exist:
 
-1. 2FA setup/write: needs exact `encryptpwd`/`decryptpwd` compatibility for existing `[2fa]` storage.
-2. SMS phone verification: needs SMS gateway policy and disposable phone number.
-3. Account re-verification email: needs exact `importkey2` encryption and production email template.
-4. Domain transferability check: needs exact `/account/xmlsample/checktransfer.txt`.
-5. Full payment-provider internals: currently redirects to Classic ASP member3 checkout pages.
-6. Product-specific post-payment add-on fulfillment: still belongs to Classic ASP fulfillment pages after checkout.
-7. Full domain contact/write parity: should only be tested with a disposable owned domain.
-8. CP/FTP/IIS credential sync after password change: needs exact legacy decrypt/encrypt compatibility.
+1. SMS phone verification: needs SMS gateway policy and disposable phone number.
+2. Account re-verification email: production template is wired, encrypted email decrypt is wired, and the endpoint now fails closed until the deployed standalone encryption bridge supports `encryptimportkey2`.
+3. Domain transferability check: rebuilt checkout now uses the exact `check_transfer` OpenSRS payload from fallback `/Users/erwinyu/Downloads/cp8/account/xmlSample/checktransfer.txt` because the latest hosting dump is missing that referenced file outside ignored folders.
+4. Full payment-provider internals: currently redirects to Classic ASP member3 checkout pages.
+5. Product-specific post-payment add-on fulfillment: still belongs to Classic ASP fulfillment pages after checkout.
+6. Full domain contact/write parity: selected contact type now maps to the old `modifyContact(domain,..., mycontacttype)` flow and syncs `DomainRegisterInfo`; live write test should only be run as an explicit no-op or against a disposable owned domain.
+7. SSRS/Linux credential sync after password change: needs the exact remote targets and disposable users before live parity testing.
 
 ## Fixes From This Review
 

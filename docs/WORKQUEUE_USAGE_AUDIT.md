@@ -26,7 +26,7 @@ Rule: the rebuilt control panel may insert `ehbconfig.dbo.workqueue` rows only w
 
 | Area | Classic Source | Required Behavior |
 |---|---|---|
-| VS WebDeploy / Remote IIS enable-disable | `/Users/erwinyu/Downloads/hosting/cp8/cp/iis_manager_webdeploy_action.asp` | Direct calls to `/IIS_api.asp`; no queue. Currently blocked by Persits-compatible `decryptpwd` for `cpPasswordHash`. |
+| VS WebDeploy / Remote IIS enable-disable | `/Users/erwinyu/Downloads/hosting/cp8/cp/iis_manager_webdeploy_action.asp` | Direct calls to `/IIS_api.asp`; no queue. Currently blocked by the exact active password-source helper because latest `getCpPasswordHashByCpID` keeps its DB lookup inside `if 1 = 2`; `decryptpwd` itself is bridge-backed. |
 | VS WebDeploy / Remote IIS Fix ACL | `/Users/erwinyu/Downloads/hosting/cp8/cp/iis_manager_webdeploy_action.asp` | Direct POST to `/tools/resetDefaultPermissionsBySiteUid.asp`; no queue. |
 | Mapped Path | `/Users/erwinyu/Downloads/hosting/cp8/cp/domainbind_actions.asp` | Direct site-path validation/update first; `changepool` only as a specific side effect, not a generic queue job. |
 | Site On/Off | `/Users/erwinyu/Downloads/hosting/cp8/cp/boxinfo_siteonoff.asp` plus IIS RPC helpers | Direct `/iis_api.asp` start/stop calls; no queue. |

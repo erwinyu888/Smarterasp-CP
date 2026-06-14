@@ -921,8 +921,35 @@ html[data-theme="light"] .nav-item {
   font-weight: 400;
 }
 
+.nav-stat.badge-counter {
+  align-items: center;
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(59, 130, 246, 0.34);
+  border-radius: 999px;
+  color: #bfdbfe;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 20px;
+  min-width: 26px;
+  padding: 3px 8px;
+}
+
+.nav-stat.badge-counter .loading-icon {
+  height: 12px;
+  width: 12px;
+}
+
 html[data-theme="light"] .nav-stat {
   color: #747474;
+}
+
+html[data-theme="light"] .nav-stat.badge-counter {
+  background: #eaf2ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
 }
 
 .nav-stat.warning {
@@ -1102,6 +1129,11 @@ html[data-theme="light"] .support-title {
 .support-status-dot.red {
   background: #ef4444;
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+}
+
+.support-status-dot.grey {
+  background: #8b949e;
+  box-shadow: 0 0 0 3px rgba(139, 148, 158, 0.16);
 }
 
 html[data-theme="light"] .support-links a,
@@ -2398,16 +2430,25 @@ html[data-theme="light"] .ram-meter {
   justify-content: space-between;
 }
 
-.website-live-summary {
+.website-toolbar-summary,
+.website-toolbar-controls {
   align-items: center;
   display: flex;
-  gap: 14px;
-  justify-content: space-between;
+  gap: 10px;
 }
 
-.website-live-summary p {
+.website-toolbar-summary {
+  margin-left: auto;
+}
+
+.website-toolbar-summary p {
   color: var(--muted);
-  margin: 10px 0 0;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.website-toolbar-controls {
+  justify-content: flex-end;
 }
 
 .website-actions,
@@ -3026,6 +3067,73 @@ html[data-theme="light"] .ram-meter {
   color: var(--muted);
   height: 15px;
   width: 15px;
+}
+
+.ftp-path-control {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.ftp-folder-modal {
+  max-height: min(680px, calc(100vh - 40px));
+  max-width: 620px;
+  overflow: hidden;
+  width: min(620px, 100%);
+}
+
+.ftp-folder-modal-header,
+.ftp-folder-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.ftp-folder-modal-header h2 {
+  margin-top: 10px;
+}
+
+.ftp-folder-actions {
+  justify-content: flex-start;
+}
+
+.ftp-folder-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.ftp-folder-row {
+  align-items: center;
+  background: var(--panel-strong);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  min-height: 42px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.ftp-folder-row:last-child {
+  border-bottom: 0;
+}
+
+.ftp-folder-row:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-strong));
+}
+
+.ftp-folder-row .menu-icon {
+  color: var(--accent);
+  height: 16px;
+  width: 16px;
 }
 
 .database-card-header p {
@@ -4347,8 +4455,57 @@ button:disabled {
 }
 
 .danger-button {
-  border-color: rgba(245, 165, 36, 0.38);
-  color: var(--warn);
+  background: var(--warn);
+  border-color: var(--warn);
+  color: #111111;
+}
+
+.danger-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+html[data-theme="light"] .danger-button {
+  color: #171717;
+}
+
+.modal-backdrop {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.58);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 20px;
+  position: fixed;
+  z-index: 220;
+}
+
+.confirm-modal {
+  display: grid;
+  gap: 14px;
+  max-width: 460px;
+  padding: 22px;
+  width: min(460px, 100%);
+}
+
+.confirm-modal h2 {
+  color: var(--ink);
+  font-size: 1.08rem;
+  font-weight: 400;
+  margin: 0;
+}
+
+.confirm-modal p {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.confirm-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .vpn-purchase-title {
@@ -4525,12 +4682,56 @@ button:disabled {
 }
 
 .settings-info-card {
+  align-content: start;
   background: var(--field);
   border: 1px solid var(--line);
   border-radius: 8px;
   display: grid;
   gap: 12px;
   padding: 14px;
+}
+
+.settings-info-heading,
+.settings-inline-action {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.settings-inline-action {
+  justify-content: flex-start;
+}
+
+.settings-inline-action span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-edit-button {
+  align-items: center;
+  background: color-mix(in srgb, var(--field) 78%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  width: 28px;
+}
+
+.settings-edit-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-edit-button .menu-icon {
+  height: 14px;
+  width: 14px;
 }
 
 .profile-card h2,
@@ -4617,6 +4818,91 @@ button:disabled {
   color: var(--muted);
   cursor: not-allowed;
   opacity: 0.75;
+}
+
+.helpdesk-message-body {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.helpdesk-message-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.helpdesk-message-body a:hover {
+  text-decoration: underline;
+}
+
+.password-sync-panel {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.password-change-form {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.95fr);
+}
+
+.password-change-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.password-change-fields .primary-button {
+  justify-self: start;
+}
+
+.password-sync-heading {
+  align-items: center;
+  color: var(--ink);
+  display: flex;
+  font-size: 0.86rem;
+  justify-content: space-between;
+}
+
+.password-sync-list {
+  display: grid;
+  gap: 12px;
+}
+
+.password-sync-group {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.password-sync-group:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.settings-form .checkbox-row {
+  align-items: center;
+  color: var(--ink);
+  display: flex;
+  font-size: 0.82rem;
+  gap: 8px;
+}
+
+.settings-form .checkbox-row.compact {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.settings-form .checkbox-row input {
+  accent-color: var(--accent);
+  min-height: 14px;
+  padding: 0;
+  width: 14px;
 }
 
 .two-factor-setup-form {
@@ -5213,6 +5499,27 @@ html[data-theme="light"] .ssl-domain-badge {
   width: min(760px, calc(100vw - 32px));
 }
 
+.settings-drawer {
+  max-width: 720px;
+}
+
+.settings-drawer-card {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.settings-drawer-card .settings-form {
+  max-width: none;
+}
+
+@media (max-width: 760px) {
+  .password-change-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 .function-drawer-header {
   align-items: flex-start;
   display: flex;
@@ -5297,6 +5604,10 @@ html[data-theme="light"] .ssl-domain-badge {
   display: grid;
   gap: 12px;
   padding: 14px;
+}
+
+.compact-site-name-form {
+  max-width: 520px;
 }
 
 .function-field-form h3,
@@ -5547,9 +5858,202 @@ tr:last-child td {
   padding: 18px;
 }
 
+.helpdesk-ticket-detail {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+}
+
+.helpdesk-user-indicator {
+  align-items: flex-end;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  bottom: 18px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.26);
+  color: var(--ink);
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  position: fixed;
+  right: 18px;
+  z-index: 30;
+}
+
+.helpdesk-user-indicator span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.helpdesk-user-indicator strong {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.15;
+}
+
 .helpdesk-form {
   display: grid;
   gap: 14px;
+}
+
+.helpdesk-large-textarea {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  min-height: 330px;
+  padding: 12px 13px;
+  resize: vertical;
+  width: 100%;
+}
+
+.helpdesk-large-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  outline: 0;
+}
+
+.helpdesk-dropzone-wrap {
+  display: grid;
+  gap: 9px;
+}
+
+.helpdesk-dropzone-label {
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 500;
+}
+
+.helpdesk-dropzone {
+  align-items: center;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--panel) 94%, transparent), color-mix(in srgb, var(--field) 94%, transparent));
+  border: 1px dashed color-mix(in srgb, var(--muted) 48%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  gap: 14px;
+  min-height: 116px;
+  padding: 18px;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.helpdesk-dropzone:hover,
+.helpdesk-dropzone.dragging {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--panel)), color-mix(in srgb, var(--panel) 90%, transparent));
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent), 0 18px 44px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px);
+}
+
+.helpdesk-dropzone-wrap.compact .helpdesk-dropzone {
+  min-height: 98px;
+}
+
+.helpdesk-dropzone-icon {
+  align-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  border-radius: 8px;
+  color: var(--accent);
+  display: inline-flex;
+  flex: 0 0 48px;
+  height: 48px;
+  justify-content: center;
+  width: 48px;
+}
+
+.helpdesk-dropzone-icon .menu-icon {
+  height: 22px;
+  width: 22px;
+}
+
+.helpdesk-dropzone-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.helpdesk-dropzone-copy strong {
+  color: var(--ink);
+  font-size: 0.94rem;
+  font-weight: 500;
+}
+
+.helpdesk-dropzone-copy small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.helpdesk-dropzone-input {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+
+.helpdesk-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.helpdesk-file-chip {
+  align-items: center;
+  background: color-mix(in srgb, var(--field) 86%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  display: inline-flex;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 34px;
+  padding: 6px 8px 6px 10px;
+}
+
+.helpdesk-file-chip .menu-icon {
+  color: var(--muted);
+  flex: 0 0 auto;
+  height: 15px;
+  width: 15px;
+}
+
+.helpdesk-file-chip span {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.helpdesk-file-chip small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.helpdesk-file-chip button {
+  align-items: center;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 0;
+  border-radius: 999px;
+  color: var(--ink);
+  display: inline-flex;
+  font-size: 1rem;
+  height: 22px;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  width: 22px;
+}
+
+.helpdesk-file-chip button:hover {
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #ef4444;
 }
 
 .form-grid.two {
@@ -5577,12 +6081,78 @@ tr:last-child td {
   width: 8px;
 }
 
-.helpdesk-status.pending span {
-  background: #ef4444;
+.helpdesk-status.waiting span {
+  background: #8b949e;
 }
 
 .helpdesk-status.staff span {
-  background: #3b82f6;
+  background: #ef4444;
+}
+
+.form-hint {
+  color: var(--muted);
+  display: block;
+  font-size: 0.78rem;
+  margin-top: 6px;
+}
+
+.table-link-button {
+  background: transparent;
+  border: 0;
+  color: #5aa7ff;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.table-link-button:hover {
+  text-decoration: underline;
+}
+
+.helpdesk-message,
+.helpdesk-note {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.helpdesk-message strong,
+.helpdesk-note strong {
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.helpdesk-message div,
+.helpdesk-note p {
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.helpdesk-note-list {
+  display: grid;
+  gap: 12px;
+}
+
+.helpdesk-note > div {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.helpdesk-note span {
+  color: var(--soft);
+  font-size: 0.78rem;
+}
+
+.helpdesk-note.staff {
+  border-color: color-mix(in srgb, #3b82f6 45%, var(--line));
 }
 
 .empty-text {
@@ -5599,6 +6169,11 @@ tr:last-child td {
 
   .form-grid.two {
     grid-template-columns: 1fr;
+  }
+
+  .helpdesk-user-indicator {
+    bottom: 12px;
+    right: 12px;
   }
 }
 
@@ -6301,6 +6876,14 @@ html[data-theme="light"] .success-link-button {
   .website-card-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .website-toolbar-summary {
+    margin-left: 0;
+  }
+
+  .website-toolbar-controls {
+    justify-content: flex-start;
   }
 
   .view-toggle {

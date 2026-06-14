@@ -8,9 +8,12 @@ const authRedirectExemptPaths = [
   "/api/auth/login-config",
   "/api/auth/me",
   "/api/auth/logout",
+  "/api/auth/2fa/verify",
   "/api/auth/password-reset/request",
   "/api/auth/password-reset/confirm"
 ];
+
+const cloudflareTurnstileTestSiteKey = "1x00000000000000000000AA";
 
 function fetchUrlPath(input) {
   const rawUrl = typeof input === "string" ? input : input?.url;
@@ -389,6 +392,7 @@ function App() {
     return ["dark", "light", "class"].includes(savedTheme) ? savedTheme : "dark";
   });
   const [currentUser, setCurrentUser] = useState(null);
+  const [twoFactorLogin, setTwoFactorLogin] = useState("");
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
@@ -413,6 +417,10 @@ function App() {
 
         if (response.ok && result?.success) {
           setCurrentUser(result.user);
+          if (result.user?.isControlPanelLogin && (route === "panel" || route === "login")) {
+            window.history.replaceState({}, "", "/panel_cp");
+            setRoute("panel_cp");
+          }
         } else if (!isPublicRoute(route)) {
           window.history.replaceState({}, "", "/");
           setRoute("login");
@@ -441,8 +449,22 @@ function App() {
     setRoute("login");
   }, [currentUser, isAuthReady, route]);
 
+  useEffect(() => {
+    if (!isAuthReady || !currentUser?.isControlPanelLogin) return;
+    if (route === "panel" || route === "login") {
+      window.history.replaceState({}, "", "/panel_cp");
+      setRoute("panel_cp");
+    }
+  }, [currentUser, isAuthReady, route]);
+
   const goToPanel = (event) => {
     event?.preventDefault();
+    if (currentUser?.isControlPanelLogin) {
+      window.history.pushState({}, "", "/panel_cp");
+      setRoute("panel_cp");
+      return;
+    }
+
     window.history.pushState({}, "", "/panel");
     setRoute("panel");
   };
@@ -467,9 +489,23 @@ function App() {
 
   const handleLogin = (user, event) => {
     event?.preventDefault();
+    setTwoFactorLogin("");
     setCurrentUser(user);
+    if (user?.isControlPanelLogin) {
+      window.history.pushState({}, "", "/panel_cp");
+      setRoute("panel_cp");
+      return;
+    }
+
     window.history.pushState({}, "", "/panel");
     setRoute("panel");
+  };
+
+  const handleTwoFactorRequired = (login, event) => {
+    event?.preventDefault();
+    setTwoFactorLogin(login || "");
+    window.history.pushState({}, "", "/account/2fa_verify");
+    setRoute("two-factor");
   };
 
   const handleLogout = async () => {
@@ -522,9 +558,13 @@ function App() {
     }} onToggleTheme={toggleTheme} />;
   }
 
+  if (route === "two-factor") {
+    return <TwoFactorVerify theme={theme} login={twoFactorLogin} onVerified={handleLogin} onCancel={handleLogout} onToggleTheme={toggleTheme} />;
+  }
+
   return route === "panel"
     ? <Panel theme={theme} currentUser={currentUser} onLogout={handleLogout} onManageHosting={goToControlPanel} onToggleTheme={toggleTheme} />
-    : <Login onLogin={handleLogin} theme={theme} onToggleTheme={toggleTheme} onForgotPassword={goToPasswordResetRequest} />;
+    : <Login onLogin={handleLogin} onTwoFactorRequired={handleTwoFactorRequired} theme={theme} onToggleTheme={toggleTheme} onForgotPassword={goToPasswordResetRequest} />;
 }
 
 function appRouteFromPath(pathname) {
@@ -535,11 +575,12 @@ function appRouteFromPath(pathname) {
   if (pathname === "/account/emailchangeverify") return "email-verify";
   if (pathname === "/account/retrieve_password") return "password-reset-request";
   if (pathname === "/account/retrieve_password_reset") return "password-reset-confirm";
+  if (pathname === "/account/2fa_verify") return "two-factor";
   return "login";
 }
 
 function isPublicRoute(route) {
-  return ["login", "checkout", "invoice", "email-verify", "password-reset-request", "password-reset-confirm"].includes(route);
+  return ["login", "checkout", "invoice", "email-verify", "password-reset-request", "password-reset-confirm", "two-factor"].includes(route);
 }
 
 function InvoicePage({ theme, onBackToPanel }) {
@@ -1109,7 +1150,85 @@ function PasswordResetConfirm({ theme, onBackToLogin, onToggleTheme }) {
   );
 }
 
-function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
+function TwoFactorVerify({ theme, login, onVerified, onCancel, onToggleTheme }) {
+  const [oneCode, setOneCode] = useState("");
+  const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleVerifySubmit(event) {
+    event.preventDefault();
+    setMessage("");
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch("/api/auth/2fa/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ oneCode })
+      });
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.success || !result?.user) {
+        setMessage(result?.message ?? "Invalid PIN.");
+        return;
+      }
+
+      onVerified(result.user, event);
+    } catch {
+      setMessage("Unable to reach the 2FA verification service. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-page">
+      <header className="login-header">
+        <a className="brand" href="/" aria-label="ControlPanel home" onClick={onCancel}>
+          <span className="brand-mark login-server-icon" aria-hidden="true"><MenuIcon name="server" /></span>
+          <span>ControlPanel</span>
+        </a>
+        <nav className="login-links" aria-label="Top navigation">
+          <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+        </nav>
+      </header>
+
+      <section className="login-card" aria-label="Two-step authentication">
+        <div className="login-card-header">
+          <div className="product-mark login-server-icon" aria-hidden="true"><MenuIcon name="shield" /></div>
+          <h1>Two-step authentication</h1>
+          <p>Enter the six-digit code from your authenticator app{login ? ` for ${login}` : ""}.</p>
+        </div>
+
+        <form className="login-form" onSubmit={handleVerifySubmit}>
+          <label>
+            Authenticator code
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              maxLength={6}
+              value={oneCode}
+              onChange={(event) => setOneCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            />
+          </label>
+          {message && <p className="login-error">{message}</p>}
+          <button className="primary-button full" type="submit" disabled={isSubmitting || oneCode.length !== 6}>
+            {isSubmitting ? <LoadingIcon label="Verifying code" /> : "Verify"}
+          </button>
+          <button className="secondary-button full" type="button" onClick={onCancel}>
+            Back to Login
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function Login({ onLogin, onTwoFactorRequired, theme, onToggleTheme, onForgotPassword }) {
   const [login, setLogin] = useState("jyu001");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -1194,7 +1313,8 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
     event.preventDefault();
     setLoginError("");
 
-    if (turnstileConfig.turnstileEnabled && !turnstileToken) {
+    const isTurnstileTestKey = turnstileConfig.siteKey === cloudflareTurnstileTestSiteKey;
+    if (turnstileConfig.turnstileEnabled && !turnstileToken && !isTurnstileTestKey) {
       setLoginError("Complete the bot check before logging in.");
       return;
     }
@@ -1215,6 +1335,11 @@ function Login({ onLogin, theme, onToggleTheme, onForgotPassword }) {
       if (!response.ok || !result?.success) {
         setLoginError(result?.message ?? "Login failed. Please check your username and password.");
         if (turnstileConfig.turnstileEnabled) resetTurnstile();
+        return;
+      }
+
+      if (result.requiresTwoFactor) {
+        onTwoFactorRequired(result.login || login, event);
         return;
       }
 
@@ -1382,11 +1507,9 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
       }
 
       const openTickets = result.dashboard?.openTickets ?? [];
-      const hasStaffReply = openTickets.some((ticket) => helpdeskStatusInfo(ticket).tone === "staff");
-      if (hasStaffReply) {
-        setHelpdeskStatus("staff");
-      } else if (openTickets.length) {
-        setHelpdeskStatus("pending");
+      const latestOpenTicket = openTickets[0];
+      if (latestOpenTicket) {
+        setHelpdeskStatus(helpdeskStatusInfo(latestOpenTicket).tone);
       } else {
         setHelpdeskStatus("none");
       }
@@ -1479,8 +1602,8 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
               aria-hidden="true"
               className={[
                 "support-status-dot",
-                helpdeskStatus === "staff" ? "blue" : "",
-                helpdeskStatus === "pending" ? "red" : ""
+                helpdeskStatus === "staff" ? "red" : "",
+                helpdeskStatus === "waiting" ? "grey" : ""
               ].filter(Boolean).join(" ")}
             />
           </button>
@@ -1599,12 +1722,18 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
   const [selectedCpId, setSelectedCpId] = useState(0);
   const [isHostingPlanMenuOpen, setIsHostingPlanMenuOpen] = useState(false);
   const [accountFunds, setAccountFunds] = useState(null);
+  const [sectionCounts, setSectionCounts] = useState({ websites: null, databases: null });
+  const [sidebarBrandName, setSidebarBrandName] = useState("SMARTERASP.NET");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const activeTitle = useMemo(
-    () => controlPanelSections.find((section) => section.id === activeSection)?.label ?? "Dashboard",
+    () => activeSection === "helpdesk"
+      ? "24/7 Helpdesk"
+      : controlPanelSections.find((section) => section.id === activeSection)?.label ?? "Dashboard",
     [activeSection]
   );
-  const selectedHostingPlan = hostingPlanOptions.find((plan) => plan.cpId === selectedCpId) ?? hostingPlanOptions[0];
+  const isControlPanelLogin = Boolean(currentUser?.isControlPanelLogin);
+  const displayLogin = currentUser?.cpLogin || currentUser?.login || "Account";
+  const selectedHostingPlan = hostingPlanOptions.find((plan) => Number(plan.cpId) === Number(selectedCpId)) ?? hostingPlanOptions[0];
   const selectedPlanLabel = selectedHostingPlan?.cpLogin || selectedHostingPlan?.primaryDomain || "Select Hosting Plan";
 
   useEffect(() => {
@@ -1620,13 +1749,23 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
         const billingResult = await billingResponse.json().catch(() => null);
         if (!isMounted || !dashboardResponse.ok || !result?.success) return;
 
-        const plans = result.dashboard?.hostingAccounts ?? [];
+        const rawPlans = result.dashboard?.hostingAccounts ?? [];
+        setSidebarBrandName((result.dashboard?.customer?.brandDomain || "smarterasp.net").toUpperCase());
+        const currentCpId = Number(currentUser?.cpId) || 0;
+        const currentCpLogin = String(currentUser?.cpLogin || "").trim().toLowerCase();
+        const plans = currentUser?.isControlPanelLogin
+          ? rawPlans.filter((plan) => {
+              const planCpId = Number(plan.cpId) || 0;
+              const planCpLogin = String(plan.cpLogin || "").trim().toLowerCase();
+              return (currentCpId > 0 && planCpId === currentCpId) || (currentCpLogin && planCpLogin === currentCpLogin);
+            })
+          : rawPlans;
         setHostingPlanOptions(plans);
         if (billingResponse.ok && billingResult?.success) {
           setAccountFunds(formatUsdFull(billingResult.dashboard?.balance?.amount ?? 0));
         }
         if (plans.length) {
-          setSelectedCpId((currentCpId) => currentCpId || plans[0].cpId);
+          setSelectedCpId((currentSelectedCpId) => currentUser?.isControlPanelLogin ? plans[0].cpId : currentSelectedCpId || plans[0].cpId);
         }
       } catch {
         if (isMounted) setHostingPlanOptions([]);
@@ -1637,11 +1776,44 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [currentUser?.cpId, currentUser?.isControlPanelLogin]);
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [activeSection, selectedCpId]);
+
+  useEffect(() => {
+    if (!selectedCpId) {
+      setSectionCounts({ websites: null, databases: null });
+      return;
+    }
+
+    let isMounted = true;
+    setSectionCounts({ websites: null, databases: null });
+
+    async function loadSectionCounts() {
+      const [sitesResult, databasesResult] = await Promise.allSettled([
+        fetch(hostingApiUrl("/api/hosting/sites", selectedCpId)).then((response) => response.json().then((body) => ({ ok: response.ok, body }))),
+        fetch(hostingApiUrl("/api/hosting/databases", selectedCpId)).then((response) => response.json().then((body) => ({ ok: response.ok, body })))
+      ]);
+
+      if (!isMounted) return;
+
+      setSectionCounts({
+        websites: sitesResult.status === "fulfilled" && sitesResult.value.ok && sitesResult.value.body?.success
+          ? sitesResult.value.body.dashboard?.sites?.length ?? 0
+          : 0,
+        databases: databasesResult.status === "fulfilled" && databasesResult.value.ok && databasesResult.value.body?.success
+          ? databasesResult.value.body.dashboard?.totals?.total ?? databasesResult.value.body.dashboard?.databases?.length ?? 0
+          : 0
+      });
+    }
+
+    loadSectionCounts();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedCpId]);
 
   return (
     <div className={isMobileMenuOpen ? "app-shell mobile-menu-open" : "app-shell"}>
@@ -1655,59 +1827,70 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
           <MenuIcon name="x" />
         </button>
         <div className="sidebar-top">
-          <div className="mock-plan-select-wrap">
-            <button
-              aria-expanded={isHostingPlanMenuOpen}
-              aria-haspopup="listbox"
-              className="mock-plan-trigger"
-              type="button"
-              onClick={() => setIsHostingPlanMenuOpen((open) => !open)}
-            >
-              <span className="mock-plan-trigger-label">
+          {isControlPanelLogin ? (
+            <div className="brand project-brand cp-static-brand" aria-label="Current brand">
+              <span className="brand-server-icon" aria-hidden="true">
                 <MenuIcon name="server" />
-                <span>{selectedPlanLabel}</span>
               </span>
-              <MenuIcon name="chevron-down" />
-            </button>
-            {isHostingPlanMenuOpen && (
-              <div className="mock-plan-menu" role="listbox" aria-label="Hosting plans">
-                {hostingPlanOptions.map((plan) => (
-                  <button
-                    aria-selected={selectedCpId === plan.cpId}
-                    className={selectedCpId === plan.cpId ? "mock-plan-option active" : "mock-plan-option"}
-                    key={plan.cpId}
-                    role="option"
-                    type="button"
-                    onClick={() => {
-                      setSelectedCpId(plan.cpId);
-                      setIsHostingPlanMenuOpen(false);
-                    }}
-                  >
-                    <span className="mock-plan-option-label">
-                      <MenuIcon name="server" />
-                      <span>{plan.cpLogin || plan.primaryDomain}</span>
-                    </span>
-                  </button>
-                ))}
-                {!hostingPlanOptions.length && (
-                  <button className="mock-plan-option" type="button">
-                    <span className="mock-plan-option-label">
-                      <MenuIcon name="server" />
-                      <LoadingIcon label="Loading plans" />
-                    </span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+              <span className="brand-name">{sidebarBrandName}</span>
+            </div>
+          ) : (
+            <div className="mock-plan-select-wrap">
+              <button
+                aria-expanded={isHostingPlanMenuOpen}
+                aria-haspopup="listbox"
+                className="mock-plan-trigger"
+                type="button"
+                onClick={() => setIsHostingPlanMenuOpen((open) => !open)}
+              >
+                <span className="mock-plan-trigger-label">
+                  <MenuIcon name="server" />
+                  <span>{selectedPlanLabel}</span>
+                </span>
+                <MenuIcon name="chevron-down" />
+              </button>
+              {isHostingPlanMenuOpen && (
+                <div className="mock-plan-menu" role="listbox" aria-label="Hosting plans">
+                  {hostingPlanOptions.map((plan) => (
+                    <button
+                      aria-selected={Number(selectedCpId) === Number(plan.cpId)}
+                      className={Number(selectedCpId) === Number(plan.cpId) ? "mock-plan-option active" : "mock-plan-option"}
+                      key={plan.cpId}
+                      role="option"
+                      type="button"
+                      onClick={() => {
+                        setSelectedCpId(plan.cpId);
+                        setIsHostingPlanMenuOpen(false);
+                      }}
+                    >
+                      <span className="mock-plan-option-label">
+                        <MenuIcon name="server" />
+                        <span>{plan.cpLogin || plan.primaryDomain}</span>
+                      </span>
+                    </button>
+                  ))}
+                  {!hostingPlanOptions.length && (
+                    <button className="mock-plan-option" type="button">
+                      <span className="mock-plan-option-label">
+                        <MenuIcon name="server" />
+                        <LoadingIcon label="Loading plans" />
+                      </span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <nav className="side-nav" aria-label="Hosting control panel sections">
-          <button className="nav-item back-account-item" type="button" onClick={onBackToPanel}>
-            <span className="nav-label">
-              <MenuIcon name="back" />
-              <span>Back to Account</span>
-            </span>
-          </button>
+          {!isControlPanelLogin && (
+            <button className="nav-item back-account-item" type="button" onClick={onBackToPanel}>
+              <span className="nav-label">
+                <MenuIcon name="back" />
+                <span>Back to Account</span>
+              </span>
+            </button>
+          )}
           {controlPanelSections.map((section) => (
             <button
               className={section.id === activeSection ? "nav-item active" : "nav-item"}
@@ -1719,6 +1902,11 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
                 <MenuIcon name={section.icon} />
                 <span>{section.label}</span>
               </span>
+              {["websites", "databases"].includes(section.id) && sectionCounts[section.id] !== null && (
+                <span className="nav-stat badge-counter" aria-label={`${section.label} count`}>
+                  {sectionCounts[section.id]}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -1735,15 +1923,15 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
             <MenuIcon name="book" />
             <span>Knowledge Base</span>
           </a>
-          <a href="https://member3.smarterasp.net/account/helpdesk">
+          <button type="button" onClick={() => setActiveSection("helpdesk")}>
             <MenuIcon name="ticket" />
-            <span>Helpdesk</span>
-          </a>
+            <span>24/7 Helpdesk</span>
+          </button>
         </div>
         <div className="reward-card" aria-label="Account balance">
-          <ProfileAvatar username={currentUser?.login ?? "Account"} />
+          <ProfileAvatar username={displayLogin} />
           <div>
-            <strong>{(currentUser?.login ?? "Account").toUpperCase()}</strong>
+            <strong>{displayLogin.toUpperCase()}</strong>
             <span>Funds {accountFunds ?? "--"}</span>
           </div>
         </div>
@@ -1772,7 +1960,8 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
         {activeSection === "cdn" && <DomainServicesSection mode="cdn" cpId={selectedCpId} />}
         {activeSection === "ssl" && <DomainServicesSection mode="ssl" cpId={selectedCpId} />}
         {activeSection === "advance" && <AdvanceSection cpId={selectedCpId} />}
-        {!["dashboard", "websites", "databases", "emails", "files", "apps", "ftp", "dns", "cdn", "ssl", "advance"].includes(activeSection) && <HostingCpPlaceholder title={activeTitle} />}
+        {activeSection === "helpdesk" && <HelpdeskSection />}
+        {!["dashboard", "websites", "databases", "emails", "files", "apps", "ftp", "dns", "cdn", "ssl", "advance", "helpdesk"].includes(activeSection) && <HostingCpPlaceholder title={activeTitle} />}
       </main>
     </div>
   );
@@ -1893,26 +2082,12 @@ function HostingDashboard({ cpId }) {
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
   const [copiedDns, setCopiedDns] = useState(false);
-  const serverLogs = [
-    {
-      timeCreated: "6/10/2026 6:16:49 PM",
-      message: "A process serving the selected hosting application pool suffered a fatal communication error with the Windows Process Activation Service. The process id was '13612'. The data field contains the error number."
-    },
-    {
-      timeCreated: "6/9/2026 2:16:59 PM",
-      message: "A process serving the selected hosting application pool suffered a fatal communication error with the Windows Process Activation Service. The process id was '84032'. The data field contains the error number."
-    }
-  ];
+  const serverLogs = dashboard?.healthLogs ?? [];
   const usageStats = dashboard?.metrics?.length
     ? dashboard.metrics.map((metric) => [metric.value, metric.label])
-    : [
-      ["3072 MB", "Ram Quota"],
-      ["107 GB", "Bandwidth Usage"],
-      ["85.85 GB", "Disk Usage"],
-      ["248K", "File Usage"]
-    ];
-  const ramQuota = dashboard?.ramQuotaMb ?? 3072;
-  const ramUsed = dashboard?.ramUsedMb ?? 333;
+    : [];
+  const ramQuota = dashboard?.ramQuotaMb ?? 0;
+  const ramUsed = dashboard?.ramUsedMb ?? 0;
   const ramPercentage = Math.max(0, Math.min(100, Math.round((ramUsed / Math.max(ramQuota, 1)) * 100)));
   const dnsServers = dashboard?.dnsServers?.length ? dashboard.dnsServers : ["NS1.SITE4NOW.NET", "NS2.SITE4NOW.NET", "NS3.SITE4NOW.NET"];
   const migrations = securityDashboard?.migrations ?? [];
@@ -2063,21 +2238,23 @@ function HostingDashboard({ cpId }) {
         ))}
       </div>
 
-      <article className="panel-card server-log-card">
-        <h2>Server Log</h2>
-        <div className="server-log-table" role="table" aria-label="Server Log">
-          <div className="server-log-head" role="row">
-            <span role="columnheader">TimeCreated</span>
-            <span role="columnheader">Message</span>
-          </div>
-          {serverLogs.map((log) => (
-            <div className="server-log-row" role="row" key={log.timeCreated}>
-              <time dateTime={log.timeCreated}>{log.timeCreated}</time>
-              <p>{log.message}</p>
+      {serverLogs.length > 0 && (
+        <article className="panel-card server-log-card">
+          <h2>Health Log</h2>
+          <div className="server-log-table" role="table" aria-label="Health Log">
+            <div className="server-log-head" role="row">
+              <span role="columnheader">TimeCreated</span>
+              <span role="columnheader">Message</span>
             </div>
-          ))}
-        </div>
-      </article>
+            {serverLogs.map((log) => (
+              <div className="server-log-row" role="row" key={log.timeCreated}>
+                <time dateTime={log.timeCreated}>{log.timeCreated}</time>
+                <p>{log.message}</p>
+              </div>
+            ))}
+          </div>
+        </article>
+      )}
     </section>
   );
 }
@@ -2360,15 +2537,14 @@ function WebsitesSection({ cpId }) {
           <button className="secondary-button compact" type="button" onClick={() => queueWebsiteTest("+ Sub Domain")}>+ Sub Domain</button>
           <button className="secondary-button compact" type="button" onClick={() => queueWebsiteTest("+ Automated Backups")}>+ Automated Backups</button>
         </div>
-        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Website view mode" />
-      </div>
-
-      <div className="panel-card website-live-summary">
-        <div>
+        <div className="website-toolbar-summary">
           <span className="status-pill blue">{isLoadingSites ? <LoadingIcon label="Loading hosting websites" /> : "Live websites"}</span>
           <p>{sitesDashboard ? `${siteRecords.length} sites` : "Checking website list"}</p>
         </div>
-        <RefreshButton onClick={refreshWebsitesSection} />
+        <div className="website-toolbar-controls">
+          <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Website view mode" />
+          <RefreshButton onClick={refreshWebsitesSection} />
+        </div>
       </div>
 
       {websiteMessage && <p className="sandbox-message">{websiteMessage}</p>}
@@ -2836,6 +3012,7 @@ function WebsiteMoreFunctionsPopover({ isOpen, onAction, style }) {
 function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, message, onChangeField, onClose, onRefresh, onSubmit }) {
   const details = activeFunction.details;
   const data = details?.data ?? {};
+  const isSiteNameEditor = details?.key === "site-name" || activeFunction.key === "site-name";
   const visibleGroups = Object.entries(data).filter(([, value]) => {
     if (Array.isArray(value)) return value.length > 0;
     if (value && typeof value === "object") return Object.keys(value).length > 0;
@@ -2865,7 +3042,32 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, messa
         {error && <p className="sandbox-message danger">{error}</p>}
         {message && <p className="sandbox-message">{message}</p>}
 
-        {details && (
+        {isSiteNameEditor && (
+          <form className="function-field-form compact-site-name-form" onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit("save");
+          }}>
+            <label>
+              Current Site Name
+              <input value={activeFunction.site?.siteName ?? ""} readOnly />
+            </label>
+            <label>
+              New Site Name
+              <input
+                value={fields.siteName ?? ""}
+                onChange={(event) => onChangeField("siteName", event.target.value)}
+                placeholder="New site name"
+              />
+            </label>
+            <div className="function-submit-row">
+              <button className="primary-button compact" type="submit" disabled={isLoading || !(fields.siteName ?? "").trim()}>
+                Submit
+              </button>
+            </div>
+          </form>
+        )}
+
+        {details && !isSiteNameEditor && (
           <>
             <dl className="function-meta">
               <div><dt>Site</dt><dd>{activeFunction.site?.siteName}</dd></div>
@@ -4130,9 +4332,13 @@ function FtpSection({ cpId }) {
   const [isLoadingFtp, setIsLoadingFtp] = useState(true);
   const [ftpError, setFtpError] = useState("");
   const [ftpMessage, setFtpMessage] = useState("");
-  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test" });
+  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", password: "CodexFtp123!", path: "/" });
   const [editingFtpLogin, setEditingFtpLogin] = useState("");
   const [isFtpMutating, setIsFtpMutating] = useState(false);
+  const [isFtpFolderPickerOpen, setIsFtpFolderPickerOpen] = useState(false);
+  const [isLoadingFtpFolders, setIsLoadingFtpFolders] = useState(false);
+  const [ftpFolderPicker, setFtpFolderPicker] = useState(null);
+  const [ftpFolderError, setFtpFolderError] = useState("");
 
   async function loadFtp() {
     setIsLoadingFtp(true);
@@ -4169,9 +4375,43 @@ function FtpSection({ cpId }) {
     if (!ftpDashboard?.cpLogin || editingFtpLogin) return;
     setFtpDraft((draft) => {
       if (draft.path && !draft.path.includes("openreward-001") && !draft.path.includes("jyu001-001")) return draft;
-      return { ...draft, path: "www\\codex-test" };
+      return { ...draft, path: "/" };
     });
   }, [ftpDashboard?.cpLogin, editingFtpLogin]);
+
+  async function browseFtpFolders(path = ftpDraft.path || "/") {
+    setIsLoadingFtpFolders(true);
+    setFtpFolderError("");
+    try {
+      const params = new URLSearchParams({
+        path: path === "/" ? "" : path,
+        sortBy: "name",
+        orderBy: "asc"
+      });
+      const response = await fetch(hostingApiUrl(`/api/hosting/files/browse?${params.toString()}`, cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setFtpFolderError(formatFileManagerMessage(result?.message ?? "Unable to load folders."));
+        return;
+      }
+
+      setFtpFolderPicker(result.fileManager);
+    } catch {
+      setFtpFolderError("Unable to reach file manager folder API.");
+    } finally {
+      setIsLoadingFtpFolders(false);
+    }
+  }
+
+  function openFtpFolderPicker() {
+    setIsFtpFolderPickerOpen(true);
+    browseFtpFolders(ftpDraft.path || "/");
+  }
+
+  function chooseFtpFolder(path) {
+    setFtpDraft((draft) => ({ ...draft, path: normalizeFtpPickerPath(path) }));
+    setIsFtpFolderPickerOpen(false);
+  }
 
   async function runFtpRequest(path, options = {}) {
     setFtpMessage("");
@@ -4215,7 +4455,7 @@ function FtpSection({ cpId }) {
         : await provisionHosting("/api/hosting/ftp/users", cpId, payload);
       setFtpMessage(result.message);
       setEditingFtpLogin("");
-      setFtpDraft((draft) => ({ ...draft, login: "codex-test-ftp", password: "CodexFtp123!" }));
+      setFtpDraft((draft) => ({ ...draft, login: "codex-test-ftp", password: "CodexFtp123!", path: "/" }));
       await loadFtp();
     } catch (error) {
       setFtpMessage(error.message);
@@ -4259,7 +4499,7 @@ function FtpSection({ cpId }) {
         <div>
           <span className="status-pill blue">Live FTP</span>
           <h2>FTP Manager</h2>
-          <p>FTP account inventory from cp_config_FTP. Active Classic ASP create/delete writes this table directly; password writes need Persits-compatible encryption before they are enabled.</p>
+          <p>FTP account inventory from cp_config_FTP. Create, delete, and password updates follow the active Classic ASP DB flow.</p>
         </div>
         <div className="database-total-grid">
           <div><span>Total</span><strong>{totals.total}</strong></div>
@@ -4273,7 +4513,7 @@ function FtpSection({ cpId }) {
         <div className="database-actions">
           <button className="primary-button compact" type="button" onClick={() => {
             setEditingFtpLogin("");
-            setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test" });
+            setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "/" });
           }}>+ FTP User</button>
         </div>
       </div>
@@ -4295,17 +4535,72 @@ function FtpSection({ cpId }) {
           </label>
           <label>
             Path
-            <input value={ftpDraft.path} disabled={!!editingFtpLogin} onChange={(event) => setFtpDraft((draft) => ({ ...draft, path: event.target.value }))} />
+            <span className="ftp-path-control">
+              <input value={ftpDraft.path} disabled={!!editingFtpLogin} onChange={(event) => setFtpDraft((draft) => ({ ...draft, path: event.target.value || "/" }))} />
+              {!editingFtpLogin && (
+                <IconActionButton label="Select Folder" onClick={openFtpFolderPicker} />
+              )}
+            </span>
           </label>
           <button className="primary-button compact" type="submit" disabled={isFtpMutating}>{editingFtpLogin ? "Save FTP User" : "Create FTP User"}</button>
           {editingFtpLogin && (
             <button className="secondary-button compact" type="button" onClick={() => {
               setEditingFtpLogin("");
-              setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "www\\codex-test" });
+              setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "/" });
             }}>Cancel</button>
           )}
         </form>
       </article>
+
+      {isFtpFolderPickerOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setIsFtpFolderPickerOpen(false);
+        }}>
+          <article className="panel-card confirm-modal ftp-folder-modal" role="dialog" aria-modal="true" aria-label="Select FTP folder">
+            <div className="ftp-folder-modal-header">
+              <div>
+                <span className="status-pill blue">Folder</span>
+                <h2>Select FTP Root Folder</h2>
+                <p>{normalizeFtpPickerPath(ftpFolderPicker?.currentPath || ftpDraft.path || "/")}</p>
+              </div>
+              <button className="secondary-button compact icon-only-button" type="button" title="Close" aria-label="Close" onClick={() => setIsFtpFolderPickerOpen(false)}>
+                <MenuIcon name="close" />
+              </button>
+            </div>
+            <div className="ftp-folder-actions">
+              <button className="secondary-button compact" type="button" disabled={isLoadingFtpFolders} onClick={() => browseFtpFolders("/")}>
+                <MenuIcon name="folder" />
+                Root
+              </button>
+              <button className="secondary-button compact" type="button" disabled={isLoadingFtpFolders || !ftpFolderPicker?.parentPath} onClick={() => browseFtpFolders(ftpFolderPicker?.parentPath || "/")}>
+                <MenuIcon name="back" />
+                Parent
+              </button>
+              <button className="primary-button compact" type="button" onClick={() => chooseFtpFolder(ftpFolderPicker?.currentPath || "/")}>
+                Select This Folder
+              </button>
+            </div>
+            {isLoadingFtpFolders && <LoadingState label="Loading folders" />}
+            {ftpFolderError && <p className="renewal-action-message">{ftpFolderError}</p>}
+            {!isLoadingFtpFolders && !ftpFolderError && (
+              <div className="ftp-folder-list">
+                {(ftpFolderPicker?.folders ?? []).length === 0 && <p className="empty-state-text">No folders found here.</p>}
+                {(ftpFolderPicker?.folders ?? []).map((folder) => (
+                  <button
+                    className="ftp-folder-row"
+                    key={folder.relativePath || folder.name}
+                    type="button"
+                    onClick={() => browseFtpFolders(folder.relativePath || folder.name)}
+                  >
+                    <MenuIcon name="folder" />
+                    <span>{folder.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </article>
+        </div>
+      )}
 
       {isLoadingFtp && <LoadingState label="Loading FTP users" />}
       {ftpMessage && <p className="sandbox-message">{ftpMessage}</p>}
@@ -4380,6 +4675,12 @@ function displayFtpLogin(login, cpLogin) {
     return "Root FTP User";
   }
   return text || "FTP User";
+}
+
+function normalizeFtpPickerPath(path) {
+  const text = String(path ?? "").replace(/\\/g, "/").trim();
+  if (!text || text === ".") return "/";
+  return text.startsWith("/") ? text : `/${text}`;
 }
 
 function FilesSection({ cpId }) {
@@ -7158,6 +7459,12 @@ function MenuIcon({ name }) {
         <path d="M5 16v3h14v-3" />
       </>
     ),
+    file: (
+      <>
+        <path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5Z" />
+        <path d="M14 3.5V8h4M9 12h6M9 15h6" />
+      </>
+    ),
     download: (
       <>
         <path d="M12 4v12" />
@@ -9403,8 +9710,18 @@ function DomainSection() {
     return selectedDomainProfile[tab] ?? null;
   }
 
-  function contactValueFromProfile(contact) {
+  function domainContactTypeForTab(tab) {
+    return {
+      registrant: "owner",
+      admin: "admin",
+      billing: "billing",
+      technical: "tech"
+    }[tab] ?? "owner";
+  }
+
+  function contactValueFromProfile(contact, tab = activeDomainContactTab) {
     return [
+      `contact_type=${domainContactTypeForTab(tab)}`,
       `first_name=${contact?.firstName ?? ""}`,
       `last_name=${contact?.lastName ?? ""}`,
       `org_name=${contact?.organization ?? ""}`,
@@ -9446,7 +9763,7 @@ function DomainSection() {
     const contact = domainContactForTab(tab);
     setDomainRegistrarForm({
       action: "contact",
-      value: contactValueFromProfile(contact)
+      value: contactValueFromProfile(contact, tab)
     });
     setDomainActionMessage("");
     setDomainAuthCodeMessage("");
@@ -11591,6 +11908,68 @@ function profileFormFromSettings(profile) {
   };
 }
 
+function plainHelpdeskText(html) {
+  if (!html) return "";
+  const withBreaks = String(html)
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/\s*p\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "");
+
+  if (typeof document === "undefined") {
+    return withBreaks
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = withBreaks;
+  return textarea.value;
+}
+
+function HelpdeskMessageBody({ html }) {
+  const text = plainHelpdeskText(html);
+  const urlPattern = /(https?:\/\/[^\s<>"']+)/gi;
+  const nodes = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = urlPattern.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index);
+    if (before) nodes.push(before);
+
+    const rawUrl = match[0].replace(/[),.;]+$/g, "");
+    const trailing = match[0].slice(rawUrl.length);
+    nodes.push(
+      <a href={rawUrl} key={`${rawUrl}-${match.index}`} target="_blank" rel="noreferrer">
+        {rawUrl}
+      </a>
+    );
+    if (trailing) nodes.push(trailing);
+    lastIndex = match.index + match[0].length;
+  }
+
+  const after = text.slice(lastIndex);
+  if (after) nodes.push(after);
+
+  return <div className="helpdesk-message-body">{nodes}</div>;
+}
+
+function defaultPasswordSyncTargets(accounts = []) {
+  return accounts
+    .filter((account) => account?.status === "Active")
+    .flatMap((account) => {
+      const targets = [`cp_${account.cpId}`];
+      if (!(account.webHostType || "").includes("LX")) {
+        targets.push(`ftp_${account.cpId}`, `iis_${account.cpId}`);
+      }
+      return targets;
+    });
+}
+
 function HelpdeskSection() {
   const [dashboard, setDashboard] = useState(null);
   const [form, setForm] = useState(null);
@@ -11598,14 +11977,21 @@ function HelpdeskSection() {
   const [isCreating, setIsCreating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [isReadingTicket, setIsReadingTicket] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [replyFiles, setReplyFiles] = useState([]);
+  const [isReplying, setIsReplying] = useState(false);
+  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
+  const [isClosingTicket, setIsClosingTicket] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [ticketFiles, setTicketFiles] = useState([]);
   const [ticketForm, setTicketForm] = useState({
     subject: "",
     email: "",
     url: "",
-    description: "",
-    attachment: ""
+    description: ""
   });
 
   async function loadHelpdesk() {
@@ -11649,16 +12035,15 @@ function HelpdeskSection() {
     setMessage("");
     setError("");
     try {
+      const formData = new FormData();
+      formData.set("subject", ticketForm.subject);
+      formData.set("email", ticketForm.email);
+      formData.set("url", ticketForm.url);
+      formData.set("description", ticketForm.description);
+      ticketFiles.forEach((file) => formData.append("files", file));
       const response = await fetch("/api/account/helpdesk/tickets", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subject: ticketForm.subject,
-          email: ticketForm.email,
-          url: ticketForm.url,
-          description: ticketForm.description,
-          attachment: ticketForm.attachment
-        })
+        body: formData
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.success) {
@@ -11671,9 +12056,10 @@ function HelpdeskSection() {
         ...current,
         subject: "",
         url: "",
-        description: "",
-        attachment: ""
+        description: ""
       }));
+      setTicketFiles([]);
+      setIsCreating(false);
       await loadHelpdesk();
     } catch {
       setError("Unable to submit ticket.");
@@ -11682,15 +12068,126 @@ function HelpdeskSection() {
     }
   }
 
+  async function openTicket(callId) {
+    setIsReadingTicket(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(`/api/account/helpdesk/tickets/${callId}`);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setError(result?.message ?? "Unable to load ticket.");
+        return;
+      }
+
+      setSelectedTicket(result.ticket);
+      setReplyText("");
+      setReplyFiles([]);
+    } catch {
+      setError("Unable to load ticket.");
+    } finally {
+      setIsReadingTicket(false);
+    }
+  }
+
+  async function submitReply(event) {
+    event.preventDefault();
+    if (!selectedTicket?.summary?.callId) return;
+    setIsReplying(true);
+    setError("");
+    setMessage("");
+    try {
+      const formData = new FormData();
+      formData.set("description", replyText);
+      replyFiles.forEach((file) => formData.append("files", file));
+      const response = await fetch(`/api/account/helpdesk/tickets/${selectedTicket.summary.callId}/reply`, {
+        method: "POST",
+        body: formData
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setError(result?.message ?? "Unable to submit reply.");
+        return;
+      }
+
+      setSelectedTicket(result.ticket);
+      setReplyText("");
+      setReplyFiles([]);
+      setMessage(result.message ?? "Reply submitted.");
+      await loadHelpdesk();
+    } catch {
+      setError("Unable to submit reply.");
+    } finally {
+      setIsReplying(false);
+    }
+  }
+
+  async function closeTicket() {
+    if (!selectedTicket?.summary?.callId) return;
+    setIsClosingTicket(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(`/api/account/helpdesk/tickets/${selectedTicket.summary.callId}/close`, {
+        method: "POST"
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setError(result?.message ?? "Unable to close ticket.");
+        return;
+      }
+
+      setIsCloseConfirmOpen(false);
+      setSelectedTicket(null);
+      setMessage(result.message ?? "Ticket marked as resolved.");
+      await loadHelpdesk();
+    } catch {
+      setError("Unable to close ticket.");
+    } finally {
+      setIsClosingTicket(false);
+    }
+  }
+
+  function chooseTicketFiles(input) {
+    const files = input?.target?.files ?? input;
+    setTicketFiles(normalizeHelpdeskFiles(files));
+    if (input?.target) input.target.value = "";
+  }
+
+  function chooseReplyFiles(input) {
+    const files = input?.target?.files ?? input;
+    setReplyFiles(normalizeHelpdeskFiles(files));
+    if (input?.target) input.target.value = "";
+  }
+
+  function removeTicketFile(indexToRemove) {
+    setTicketFiles((current) => current.filter((_, index) => index !== indexToRemove));
+  }
+
+  function removeReplyFile(indexToRemove) {
+    setReplyFiles((current) => current.filter((_, index) => index !== indexToRemove));
+  }
+
+  function switchHelpdeskTab(tab) {
+    setTicketFiles([]);
+    setActiveTab(tab);
+    setIsCreating(false);
+  }
+
+  function closeCreateTicketPanel() {
+    setTicketFiles([]);
+    setIsCreating(false);
+  }
+
   return (
     <section className="helpdesk-section">
       <div className="helpdesk-toolbar">
-        <div className="tabs" role="tablist" aria-label="Helpdesk tickets">
-          <button className={activeTab === "my" ? "tab active" : "tab"} type="button" role="tab" aria-selected={activeTab === "my"} onClick={() => setActiveTab("my")}>
+        <div className="tabs" role="tablist" aria-label="Helpdesk tickets" onMouseDownCapture={closeCreateTicketPanel} onClickCapture={closeCreateTicketPanel}>
+          <button className={activeTab === "my" ? "tab active" : "tab"} type="button" role="tab" aria-selected={activeTab === "my"} onPointerDown={closeCreateTicketPanel} onClick={() => switchHelpdeskTab("my")}>
             <MenuIcon name="ticket" />
             <span>My Tickets</span>
           </button>
-          <button className={activeTab === "closed" ? "tab active" : "tab"} type="button" role="tab" aria-selected={activeTab === "closed"} onClick={() => setActiveTab("closed")}>
+          <button className={activeTab === "closed" ? "tab active" : "tab"} type="button" role="tab" aria-selected={activeTab === "closed"} onPointerDown={closeCreateTicketPanel} onClick={() => switchHelpdeskTab("closed")}>
             <MenuIcon name="checklist" />
             <span>Closed Tickets</span>
           </button>
@@ -11720,12 +12217,9 @@ function HelpdeskSection() {
 
             <label>
               Description
-              <textarea value={ticketForm.description} onChange={(event) => setTicketForm((current) => ({ ...current, description: event.target.value }))} rows={6} required />
+              <textarea className="helpdesk-large-textarea" value={ticketForm.description} onChange={(event) => setTicketForm((current) => ({ ...current, description: event.target.value }))} rows={18} required />
             </label>
-            <label>
-              Attachment
-              <textarea value={ticketForm.attachment} onChange={(event) => setTicketForm((current) => ({ ...current, attachment: event.target.value }))} rows={3} />
-            </label>
+            <HelpdeskDropZone files={ticketFiles} onChange={chooseTicketFiles} onRemove={removeTicketFile} />
 
             <div className="form-actions right">
               <button className="primary-button compact" type="submit" disabled={isSubmitting}>
@@ -11739,6 +12233,7 @@ function HelpdeskSection() {
       )}
 
       {!isCreating && error && <p className="renewal-action-message error">{error}</p>}
+      {!isCreating && message && <p className="renewal-action-message success">{message}</p>}
 
       {isLoading && <LoadingState label="Loading helpdesk tickets" />}
       {dashboard && (
@@ -11747,8 +12242,73 @@ function HelpdeskSection() {
             tickets={activeTab === "my" ? dashboard.openTickets ?? [] : dashboard.closedTickets ?? []}
             emptyText={activeTab === "my" ? "No current tickets." : "No closed tickets."}
             mode={activeTab}
+            onOpen={openTicket}
           />
         </article>
+      )}
+      {dashboard?.user?.username && (
+        <div className="helpdesk-user-indicator" aria-label="Current Helpdesk username">
+          <span>Helpdesk user</span>
+          <strong>{dashboard.user.username}</strong>
+        </div>
+      )}
+      {isReadingTicket && <LoadingState label="Loading ticket" />}
+      {selectedTicket && (
+        <article className="panel-card helpdesk-ticket-detail">
+          <div className="function-drawer-header">
+            <div>
+              <span className="eyebrow">Ticket #{selectedTicket.summary.callId}</span>
+              <h2>{selectedTicket.summary.subject}</h2>
+              <p>{selectedTicket.url || "No domain provided"} · {formatDateTime(selectedTicket.summary.enterDate)}</p>
+            </div>
+            {!selectedTicket.summary.closeDate && (
+              <button className="danger-button compact" type="button" onClick={() => setIsCloseConfirmOpen(true)}>Mark Ticket as Resolved (Close)</button>
+            )}
+          </div>
+          <div className="helpdesk-message">
+            <strong>Original Request</strong>
+            <HelpdeskMessageBody html={selectedTicket.description} />
+          </div>
+          <div className="helpdesk-note-list">
+            {(selectedTicket.notes ?? []).map((note) => (
+              <div className={`helpdesk-note ${note.authorType}`} key={note.noteId || `${note.enterDate}-${note.authorName}`}>
+                <div>
+                  <strong>{note.authorName || (note.authorType === "staff" ? "Support" : selectedTicket.user?.username)}</strong>
+                  <span>{formatDateTime(note.enterDate)}</span>
+                </div>
+                <HelpdeskMessageBody html={note.comment} />
+              </div>
+            ))}
+          </div>
+          {!selectedTicket.summary.closeDate && (
+            <form className="helpdesk-form" onSubmit={submitReply}>
+              <label>
+                Reply
+                <textarea className="helpdesk-large-textarea" value={replyText} onChange={(event) => setReplyText(event.target.value)} rows={15} required={replyFiles.length === 0} />
+              </label>
+              <HelpdeskDropZone files={replyFiles} onChange={chooseReplyFiles} onRemove={removeReplyFile} compact />
+              <div className="form-actions right">
+                <button className="primary-button compact" type="submit" disabled={isReplying}>
+                  {isReplying ? <LoadingIcon label="Submitting reply" /> : "Submit Reply"}
+                </button>
+              </div>
+            </form>
+          )}
+        </article>
+      )}
+      {isCloseConfirmOpen && selectedTicket && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="panel-card confirm-modal" role="dialog" aria-modal="true" aria-labelledby="close-ticket-title">
+            <h2 id="close-ticket-title">Mark ticket as resolved?</h2>
+            <p>This will close ticket #{selectedTicket.summary.callId}. You can still view it in Closed Tickets after it is marked resolved.</p>
+            <div className="confirm-actions">
+              <button className="secondary-button compact" type="button" disabled={isClosingTicket} onClick={() => setIsCloseConfirmOpen(false)}>No</button>
+              <button className="danger-button compact" type="button" disabled={isClosingTicket} onClick={closeTicket}>
+                {isClosingTicket ? <LoadingIcon label="Closing ticket" /> : "Yes, Close Ticket"}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </section>
   );
@@ -11759,18 +12319,90 @@ function helpdeskStatusInfo(ticket) {
   const staffReplied = ticket.replyCount > 0 && !state.includes("pending") && !state.includes("q");
   return staffReplied
     ? { label: "Staff Replied", tone: "staff" }
-    : { label: "Pending", tone: "pending" };
+    : { label: "Waiting for Staff", tone: "waiting" };
 }
 
-function HelpdeskTicketTable({ tickets, emptyText, mode = "my" }) {
+function normalizeHelpdeskFiles(files) {
+  return Array.from(files ?? []).slice(0, 5);
+}
+
+function formatHelpdeskFileSize(size) {
+  if (!Number.isFinite(size)) return "";
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.ceil(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+function HelpdeskDropZone({ files, onChange, onRemove, compact = false }) {
+  const inputId = useMemo(() => `helpdesk-upload-${Math.random().toString(36).slice(2)}`, []);
+  const [isDragging, setIsDragging] = useState(false);
+
+  function handleDragOver(event) {
+    event.preventDefault();
+    setIsDragging(true);
+  }
+
+  function handleDragLeave(event) {
+    event.preventDefault();
+    setIsDragging(false);
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    setIsDragging(false);
+    onChange(event.dataTransfer.files);
+  }
+
+  return (
+    <section className={["helpdesk-dropzone-wrap", compact ? "compact" : ""].filter(Boolean).join(" ")}>
+      <span className="helpdesk-dropzone-label">Attachments</span>
+      <label
+        className={["helpdesk-dropzone", isDragging ? "dragging" : ""].filter(Boolean).join(" ")}
+        htmlFor={inputId}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <span className="helpdesk-dropzone-icon" aria-hidden="true"><MenuIcon name="upload" /></span>
+        <span className="helpdesk-dropzone-copy">
+          <strong>Drop files here or click to browse</strong>
+          <small>Images, Word, PDF, Excel, or CSV. Up to 5 files, 5MB each.</small>
+        </span>
+        <input
+          id={inputId}
+          className="helpdesk-dropzone-input"
+          type="file"
+          multiple
+          accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,.doc,.docx,.pdf,.xls,.xlsx,.csv"
+          onChange={onChange}
+        />
+      </label>
+      {files.length > 0 && (
+        <div className="helpdesk-file-list" aria-label="Selected attachments">
+          {files.map((file, index) => (
+            <span className="helpdesk-file-chip" key={`${file.name}-${file.size}-${index}`}>
+              <MenuIcon name="file" />
+              <span>{file.name}</span>
+              <small>{formatHelpdeskFileSize(file.size)}</small>
+              <button type="button" onClick={() => onRemove(index)} aria-label={`Remove ${file.name}`}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function HelpdeskTicketTable({ tickets, emptyText, mode = "my", onOpen }) {
   if (mode === "closed") {
     return tickets.length ? (
       <DataTable
-        columns={["Ticket ID", "Priority", "Subject", "Closed Time"]}
+        columns={["Username", "Ticket ID", "Priority", "Subject", "Closed Time"]}
         rows={tickets.map((ticket) => [
-          ticket.callId,
+          ticket.username || "--",
+          <button className="table-link-button" type="button" onClick={() => onOpen?.(ticket.callId)}>{ticket.callId}</button>,
           ticket.priority,
-          ticket.subject,
+          <button className="table-link-button" type="button" onClick={() => onOpen?.(ticket.callId)}>{ticket.subject}</button>,
           formatDateTime(ticket.closeDate)
         ])}
       />
@@ -11781,13 +12413,14 @@ function HelpdeskTicketTable({ tickets, emptyText, mode = "my" }) {
 
   return tickets.length ? (
     <DataTable
-      columns={["Ticket ID", "Priority", "Subject", "Created Time", "Status"]}
+      columns={["Username", "Ticket ID", "Priority", "Subject", "Created Time", "Status"]}
       rows={tickets.map((ticket) => {
         const status = helpdeskStatusInfo(ticket);
         return [
-          ticket.callId,
+          ticket.username || "--",
+          <button className="table-link-button" type="button" onClick={() => onOpen?.(ticket.callId)}>{ticket.callId}</button>,
           `Priority${ticket.priority}`,
-          ticket.subject,
+          <button className="table-link-button" type="button" onClick={() => onOpen?.(ticket.callId)}>{ticket.subject}</button>,
           formatDateTime(ticket.enterDate),
           <span className={`helpdesk-status ${status.tone}`}><span />{status.label}</span>
         ];
@@ -11826,17 +12459,23 @@ function SettingsSection() {
   const [emailChange, setEmailChange] = useState("");
   const [emailChangeMessage, setEmailChangeMessage] = useState("");
   const [isRequestingEmailChange, setIsRequestingEmailChange] = useState(false);
+  const [mobileForm, setMobileForm] = useState({ countryCode: "", mobileNumber: "", pin: "" });
+  const [mobileMessage, setMobileMessage] = useState("");
+  const [isSendingMobilePin, setIsSendingMobilePin] = useState(false);
+  const [isVerifyingMobilePin, setIsVerifyingMobilePin] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
     newPassword: "",
     confirmPassword: ""
   });
+  const [passwordSyncTargets, setPasswordSyncTargets] = useState([]);
   const [passwordMessage, setPasswordMessage] = useState("");
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [twoFactorMessage, setTwoFactorMessage] = useState("");
   const [isUpdatingTwoFactor, setIsUpdatingTwoFactor] = useState(false);
   const [twoFactorSetup, setTwoFactorSetup] = useState(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [settingsEditor, setSettingsEditor] = useState("");
 
   async function loadSettings() {
     setIsLoadingSettings(true);
@@ -11851,6 +12490,7 @@ function SettingsSection() {
 
       setSettings(result.dashboard);
       setProfileForm(profileFormFromSettings(result.dashboard?.profile));
+      setPasswordSyncTargets(defaultPasswordSyncTargets(result.dashboard?.hostingAccounts));
     } catch {
       setSettingsError("Unable to reach account settings service.");
     } finally {
@@ -11866,8 +12506,28 @@ function SettingsSection() {
     setPasswordForm((current) => ({ ...current, [field]: value }));
   }
 
+  function togglePasswordSyncTarget(target, isChecked) {
+    setPasswordSyncTargets((current) => {
+      const next = new Set(current);
+      if (isChecked) {
+        next.add(target);
+      } else {
+        next.delete(target);
+      }
+      return Array.from(next);
+    });
+  }
+
+  function toggleAllPasswordSyncTargets(isChecked) {
+    setPasswordSyncTargets(isChecked ? defaultPasswordSyncTargets(settings?.hostingAccounts) : []);
+  }
+
   function updateProfileField(field, value) {
     setProfileForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateMobileField(field, value) {
+    setMobileForm((current) => ({ ...current, [field]: value }));
   }
 
   function copyContactAddressToBilling() {
@@ -11915,7 +12575,7 @@ function SettingsSection() {
       const response = await fetch("/api/account/settings/password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(passwordForm)
+        body: JSON.stringify({ ...passwordForm, syncTargets: passwordSyncTargets })
       });
       const result = await response.json().catch(() => null);
       setPasswordMessage(result?.message ?? "Unable to update password.");
@@ -11949,6 +12609,58 @@ function SettingsSection() {
       setEmailChangeMessage("Unable to reach email verification service.");
     } finally {
       setIsRequestingEmailChange(false);
+    }
+  }
+
+  async function sendMobilePin(event) {
+    event.preventDefault();
+    setIsSendingMobilePin(true);
+    setMobileMessage("");
+
+    try {
+      const response = await fetch("/api/account/settings/mobile/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          countryCode: mobileForm.countryCode,
+          mobileNumber: mobileForm.mobileNumber
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setMobileMessage(result?.message ?? "Unable to send SMS PIN.");
+    } catch {
+      setMobileMessage("Unable to reach SMS verification service.");
+    } finally {
+      setIsSendingMobilePin(false);
+    }
+  }
+
+  async function verifyMobilePin(event) {
+    event.preventDefault();
+    setIsVerifyingMobilePin(true);
+    setMobileMessage("");
+
+    try {
+      const response = await fetch("/api/account/settings/mobile/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          countryCode: mobileForm.countryCode,
+          mobileNumber: mobileForm.mobileNumber,
+          pin: mobileForm.pin
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setMobileMessage(result?.message ?? "Unable to verify SMS PIN.");
+      if (response.ok && result?.success) {
+        setSettings(result.dashboard);
+        setProfileForm(profileFormFromSettings(result.dashboard?.profile));
+        setMobileForm((current) => ({ ...current, pin: "" }));
+      }
+    } catch {
+      setMobileMessage("Unable to reach SMS verification service.");
+    } finally {
+      setIsVerifyingMobilePin(false);
     }
   }
 
@@ -12017,6 +12729,10 @@ function SettingsSection() {
 
   const profile = settings?.profile;
   const twoFactor = settings?.twoFactor;
+  const activeHostingAccounts = (settings?.hostingAccounts ?? []).filter((account) => account.status === "Active");
+  const availablePasswordSyncTargets = defaultPasswordSyncTargets(activeHostingAccounts);
+  const isEveryPasswordSyncTargetChecked = availablePasswordSyncTargets.length > 0
+    && availablePasswordSyncTargets.every((target) => passwordSyncTargets.includes(target));
 
   return (
     <section className="settings-section">
@@ -12031,7 +12747,12 @@ function SettingsSection() {
         {profile && (
           <div className="settings-card-grid">
             <article className="settings-info-card">
-              <span className="status-pill">Profile</span>
+              <div className="settings-info-heading">
+                <span className="status-pill">Profile</span>
+                <button className="settings-edit-button" type="button" title="Edit Profile" aria-label="Edit Profile" onClick={() => setSettingsEditor((current) => current === "profile" ? "" : "profile")}>
+                  <MenuIcon name="edit" />
+                </button>
+              </div>
               <dl className="card-meta single">
                 <div><dt>Customer ID</dt><dd>{profile.customerId}</dd></div>
                 <div><dt>Login</dt><dd>{profile.login}</dd></div>
@@ -12045,10 +12766,42 @@ function SettingsSection() {
             <article className="settings-info-card">
               <span className="status-pill">Security</span>
               <dl className="card-meta single">
-                <div><dt>Email</dt><dd>{profile.emailDisplay || "Stored securely"}</dd></div>
-                <div><dt>Mobile</dt><dd>{profile.mobileNumber || "N/A"}</dd></div>
-                <div><dt>Email Verified</dt><dd>{profile.reVerify ? "Yes" : "Needs verification"}</dd></div>
-                <div><dt>2FA Status</dt><dd>{twoFactor?.isEnabled ? "Enabled" : "Disabled"}</dd></div>
+                <div>
+                  <dt>Email</dt>
+                  <dd className="settings-inline-action">
+                    <span>{profile.emailDisplay || "Stored securely"}</span>
+                    <button className="settings-edit-button" type="button" title="Edit Email Address" aria-label="Edit Email Address" onClick={() => setSettingsEditor((current) => current === "email" ? "" : "email")}>
+                      <MenuIcon name="edit" />
+                    </button>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Mobile</dt>
+                  <dd className="settings-inline-action">
+                    <span>{profile.mobileNumber || "N/A"}</span>
+                    <button className="settings-edit-button" type="button" title="Verify Mobile Number" aria-label="Verify Mobile Number" onClick={() => setSettingsEditor((current) => current === "mobile" ? "" : "mobile")}>
+                      <MenuIcon name="edit" />
+                    </button>
+                  </dd>
+                </div>
+                <div>
+                  <dt>2FA Status</dt>
+                  <dd className="settings-inline-action">
+                    <span>{twoFactor?.isEnabled ? "Enabled" : "Disabled"}</span>
+                    <button className="settings-edit-button" type="button" title="Edit 2FA Status" aria-label="Edit 2FA Status" onClick={() => setSettingsEditor((current) => current === "twoFactor" ? "" : "twoFactor")}>
+                      <MenuIcon name="edit" />
+                    </button>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Password</dt>
+                  <dd className="settings-inline-action">
+                    <span>********</span>
+                    <button className="settings-edit-button" type="button" title="Change Password" aria-label="Change Password" onClick={() => setSettingsEditor((current) => current === "password" ? "" : "password")}>
+                      <MenuIcon name="edit" />
+                    </button>
+                  </dd>
+                </div>
                 <div><dt>2FA Created</dt><dd>{formatDate(twoFactor?.enterDate)}</dd></div>
               </dl>
             </article>
@@ -12056,7 +12809,24 @@ function SettingsSection() {
         )}
       </article>
 
-      <article className="panel-card profile-card">
+      {settingsEditor && <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) setSettingsEditor("");
+      }}>
+        <aside className="function-drawer panel-card settings-drawer" role="dialog" aria-modal="true" aria-label="Account settings editor">
+          <header className="function-drawer-header">
+            <div>
+              <span className="status-pill blue">Settings</span>
+              <h2>{settingsEditorTitle(settingsEditor)}</h2>
+              <p>{settingsEditorDescription(settingsEditor)}</p>
+            </div>
+            <div className="function-drawer-actions">
+              <button className="secondary-button compact icon-only-button" type="button" onClick={() => setSettingsEditor("")} title="Close" aria-label="Close">
+                <MenuIcon name="x" />
+              </button>
+            </div>
+          </header>
+
+      {settingsEditor === "profile" && <article className="panel-card profile-card settings-drawer-card">
         <div>
           <span className="status-pill blue">Profile</span>
           <h2>Update Profile</h2>
@@ -12077,16 +12847,6 @@ function SettingsSection() {
               type="text"
               value={profileForm.companyName}
               onChange={(event) => updateProfileField("companyName", event.target.value)}
-            />
-          </label>
-          <label>
-            Mobile
-            <input
-              type="tel"
-              value={profileForm.mobileNumber}
-              disabled
-              title="Mobile changes require SMS PIN verification in the Classic ASP flow."
-              onChange={(event) => updateProfileField("mobileNumber", event.target.value)}
             />
           </label>
           <label>
@@ -12157,10 +12917,9 @@ function SettingsSection() {
           </div>
         </form>
         {profileMessage && <p className="renewal-action-message">{profileMessage}</p>}
-        <p className="settings-helper-text">Mobile changes require SMS PIN verification; that write path is blocked until the legacy SMS gateway test target is confirmed.</p>
-      </article>
+      </article>}
 
-      <article className="panel-card password-card">
+      {settingsEditor === "email" && <article className="panel-card password-card settings-drawer-card">
         <div>
           <span className="status-pill blue">Email</span>
           <h2>Change Email Address</h2>
@@ -12181,9 +12940,54 @@ function SettingsSection() {
           </button>
         </form>
         {emailChangeMessage && <p className="renewal-action-message">{emailChangeMessage}</p>}
-      </article>
+      </article>}
 
-      <article className="panel-card password-card">
+      {settingsEditor === "mobile" && <article className="panel-card password-card settings-drawer-card">
+        <div>
+          <span className="status-pill blue">Mobile</span>
+          <h2>Verify Mobile Number</h2>
+          <p>Send a one-time PIN through the same SMS gateway used by the old account panel.</p>
+        </div>
+        <form className="settings-form" onSubmit={sendMobilePin}>
+          <label>
+            Country Code
+            <input
+              type="text"
+              value={mobileForm.countryCode}
+              onChange={(event) => updateMobileField("countryCode", event.target.value)}
+            />
+          </label>
+          <label>
+            Mobile Number
+            <input
+              type="tel"
+              value={mobileForm.mobileNumber}
+              onChange={(event) => updateMobileField("mobileNumber", event.target.value)}
+            />
+          </label>
+          <button className="primary-button compact" type="submit" disabled={isSendingMobilePin || !mobileForm.mobileNumber.trim()}>
+            {isSendingMobilePin ? <LoadingIcon label="Sending SMS PIN" /> : "Send PIN"}
+          </button>
+        </form>
+        <form className="settings-form" onSubmit={verifyMobilePin}>
+          <label>
+            PIN
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={4}
+              value={mobileForm.pin}
+              onChange={(event) => updateMobileField("pin", event.target.value.replace(/\D/g, "").slice(0, 4))}
+            />
+          </label>
+          <button className="primary-button compact" type="submit" disabled={isVerifyingMobilePin || mobileForm.pin.length !== 4}>
+            {isVerifyingMobilePin ? <LoadingIcon label="Verifying SMS PIN" /> : "Verify PIN"}
+          </button>
+        </form>
+        {mobileMessage && <p className="renewal-action-message">{mobileMessage}</p>}
+      </article>}
+
+      {settingsEditor === "twoFactor" && <article className="panel-card password-card settings-drawer-card">
         <div>
           <span className={twoFactor?.isEnabled ? "status-pill" : "status-pill muted"}>
             {twoFactor?.isEnabled ? "Enabled" : "Disabled"}
@@ -12226,51 +13030,131 @@ function SettingsSection() {
           </form>
         )}
         {twoFactorMessage && <p className="renewal-action-message">{twoFactorMessage}</p>}
-      </article>
+      </article>}
 
-      <article className="panel-card password-card">
+      {settingsEditor === "password" && <article className="panel-card password-card settings-drawer-card">
         <div>
           <span className="status-pill blue">Password</span>
           <h2>Change Account Password</h2>
-          <p>This updates the main account login password. Hosting control panel, FTP, and IIS user sync will be handled in the hosting control panel workflow.</p>
+          <p>This updates the main account login password and can sync selected hosting passwords like the old control panel.</p>
         </div>
-        <form className="settings-form" onSubmit={changePassword}>
-          <label>
-            Current Password
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={passwordForm.currentPassword}
-              onChange={(event) => updatePasswordField("currentPassword", event.target.value)}
-            />
-          </label>
-          <label>
-            New Password
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={passwordForm.newPassword}
-              onChange={(event) => updatePasswordField("newPassword", event.target.value)}
-            />
-          </label>
-          <label>
-            Confirm New Password
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={passwordForm.confirmPassword}
-              onChange={(event) => updatePasswordField("confirmPassword", event.target.value)}
-            />
-          </label>
-          <button className="primary-button" type="submit" disabled={isChangingPassword}>
-            {isChangingPassword ? "Updating..." : "Update Password"}
-          </button>
+        <form className="settings-form password-change-form" onSubmit={changePassword}>
+          <div className="password-change-fields">
+            <label>
+              Current Password
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={passwordForm.currentPassword}
+                onChange={(event) => updatePasswordField("currentPassword", event.target.value)}
+              />
+            </label>
+            <label>
+              New Password
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={passwordForm.newPassword}
+                onChange={(event) => updatePasswordField("newPassword", event.target.value)}
+              />
+            </label>
+            <label>
+              Confirm New Password
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={passwordForm.confirmPassword}
+                onChange={(event) => updatePasswordField("confirmPassword", event.target.value)}
+              />
+            </label>
+            <button className="primary-button" type="submit" disabled={isChangingPassword}>
+              {isChangingPassword ? "Updating..." : "Update Password"}
+            </button>
+          </div>
+          <div className="password-sync-panel">
+            <div className="password-sync-heading">
+              <span>Password Sync To (Suggested):</span>
+              {activeHostingAccounts.length > 0 && (
+                <label className="checkbox-row compact">
+                  <input
+                    type="checkbox"
+                    checked={isEveryPasswordSyncTargetChecked}
+                    onChange={(event) => toggleAllPasswordSyncTargets(event.target.checked)}
+                  />
+                  Check All
+                </label>
+              )}
+            </div>
+            {activeHostingAccounts.length > 0 ? (
+              <div className="password-sync-list">
+                {activeHostingAccounts.map((account) => {
+                const isLinux = (account.webHostType || "").includes("LX");
+                return (
+                  <div className="password-sync-group" key={account.cpId}>
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={passwordSyncTargets.includes(`cp_${account.cpId}`)}
+                        onChange={(event) => togglePasswordSyncTarget(`cp_${account.cpId}`, event.target.checked)}
+                      />
+                      <span>"{account.cpLogin}" account password</span>
+                    </label>
+                    {!isLinux && (
+                      <>
+                        <label className="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={passwordSyncTargets.includes(`ftp_${account.cpId}`)}
+                            onChange={(event) => togglePasswordSyncTarget(`ftp_${account.cpId}`, event.target.checked)}
+                          />
+                          <span>"{account.cpLogin}" FTP password</span>
+                        </label>
+                        <label className="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={passwordSyncTargets.includes(`iis_${account.cpId}`)}
+                            onChange={(event) => togglePasswordSyncTarget(`iis_${account.cpId}`, event.target.checked)}
+                          />
+                          <span>"{account.cpLogin}" WebDeploy / Remote IIS password</span>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+              </div>
+            ) : (
+              <p className="settings-helper-text">No active hosting plans were found for password sync.</p>
+            )}
+          </div>
         </form>
         {passwordMessage && <p className="renewal-action-message">{passwordMessage}</p>}
-      </article>
+      </article>}
+        </aside>
+      </div>}
       <KnowledgeBaseCard title="Security App Guides" articles={securityGuideArticles} badge="2FA Guides" />
     </section>
   );
+}
+
+function settingsEditorTitle(editor) {
+  return {
+    profile: "Edit Profile",
+    email: "Change Email",
+    mobile: "Verify Mobile",
+    twoFactor: "Two-Factor Authentication",
+    password: "Change Password"
+  }[editor] ?? "Account Settings";
+}
+
+function settingsEditorDescription(editor) {
+  return {
+    profile: "Update account profile, contact, and billing information.",
+    email: "Create a verification request for a new account email.",
+    mobile: "Send and confirm an SMS PIN before saving the mobile number.",
+    twoFactor: "Set up or disable authenticator-based login protection.",
+    password: "Update the account password and sync selected hosting credentials."
+  }[editor] ?? "Update account settings.";
 }
 
 function AffiliateSection() {

@@ -116,7 +116,7 @@ Compatibility updates made:
 - `/ftp_api.asp` calls for FTP create/edit/enable/delete are inside `if 1 = 2 then ... end if` blocks in the latest source and are intentionally ignored.
 - Additional FTP user creation now normalizes new FTP logins like latest `ftp_action.asp`: `.` becomes `_`, and `-0` becomes `_0`.
 - Additional FTP user creation now uses rebuilt `getDiskQuota(cpID)` behavior for local `cp_config_FTP.ftp_quota`: `additionalDiskQuota + product_config.webspace`, with the same 100 MB default when no CP row/plan quota is found.
-- Password update follows the active DB-only `updateFtpUserPassword(...)` path, but must wait for exact Persits-compatible `encryptpwd` and `encryptFTPpwd` output.
+- Password update follows the active DB-only `updateFtpUserPassword(...)` path using the configured standalone Classic ASP `encryptpwd` and `encryptFTPpwd` bridge.
 - Path/quota/permission update, enable/disable, and permission reset are not enabled because their implementation is inside disabled `if 1 = 2` blocks.
 - Delete follows active `deleteFTP(...)` behavior and removes the `cp_config_FTP` row.
 - Root FTP user deletion remains blocked.

@@ -76,8 +76,8 @@ Path boundary tests returned `400` before reaching the remote agent:
 The detailed blocker list remains in `docs/REBUILD_BLOCKERS.md`. Current high-priority blockers for `/panel_cp` are:
 
 1. File manager unzip needs a disposable valid zip inside the customer-owned folder, or the exact zip worker flow completed first.
-2. FTP create/password updates need exact Persits-compatible `encryptpwd` and `encryptFTPpwd` output.
-3. WebDeploy / Remote IIS enable-disable needs exact compatible `decryptpwd` for `cpPasswordHash`.
+2. FTP create/password updates now use the standalone Classic ASP `encryptpwd` and `encryptFTPpwd` bridge; remaining FTP edits are limited to the active ASP DB-only paths.
+3. WebDeploy / Remote IIS enable-disable needs the exact current active password-source helper because latest `getCpPasswordHashByCpID` keeps its DB lookup inside `if 1 = 2`; `decryptpwd` itself is now bridge-backed.
 4. Domain Manager writes need the full Classic ASP side-effect chain for IIS, DNS, first-domain updates, free SSL cleanup, and mail cleanup.
 5. Scheduled Tasks need the exact `scheduletask` connection string.
 6. CDN and outgoing-port writes need confirmed shared gateway access and disposable non-temp domain targets.

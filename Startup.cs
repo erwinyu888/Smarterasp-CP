@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -18,6 +19,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 
@@ -95,6 +97,22 @@ namespace controlpanel
                 app.UseDeveloperExceptionPage();
             }
 
+            app.Use(async (context, next) =>
+            {
+                if (context.Request.Path.StartsWithSegments("/helpdesk_temp", out var remaining))
+                {
+                    if (!remaining.HasValue || remaining == "/")
+                    {
+                        context.Response.StatusCode = StatusCodes.Status404NotFound;
+                        return;
+                    }
+
+                    context.Request.Path = $"/api/account/helpdesk/attachments{remaining}";
+                }
+
+                await next();
+            });
+
             app.UseDefaultFiles();
             app.UseStaticFiles();
 
@@ -104,6 +122,7 @@ namespace controlpanel
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapPost("/api/auth/login", HandleLoginAsync);
+                endpoints.MapPost("/api/auth/2fa/verify", HandleLoginTwoFactorVerifyAsync);
                 endpoints.MapGet("/api/auth/login-config", HandleLoginConfigAsync);
                 endpoints.MapGet("/api/auth/me", HandleCurrentUserAsync);
                 endpoints.MapPost("/api/auth/logout", HandleLogoutAsync);
@@ -155,6 +174,8 @@ namespace controlpanel
                 endpoints.MapPost("/api/account/new-purchase/complete", HandleNewPurchaseCompleteAsync);
                 endpoints.MapGet("/api/account/settings", HandleAccountSettingsAsync);
                 endpoints.MapPost("/api/account/settings/profile", HandleAccountProfileUpdateAsync);
+                endpoints.MapPost("/api/account/settings/mobile/send", HandleAccountMobileVerificationSendAsync);
+                endpoints.MapPost("/api/account/settings/mobile/verify", HandleAccountMobileVerificationConfirmAsync);
                 endpoints.MapPost("/api/account/settings/password", HandleAccountPasswordChangeAsync);
                 endpoints.MapPost("/api/account/settings/email-change", HandleAccountEmailChangeRequestAsync);
                 endpoints.MapGet("/api/account/settings/email-change/verify", HandleAccountEmailChangeVerifyAsync);
@@ -168,6 +189,10 @@ namespace controlpanel
                 endpoints.MapGet("/api/account/helpdesk", HandleAccountHelpdeskAsync);
                 endpoints.MapGet("/api/account/helpdesk/form", HandleAccountHelpdeskFormAsync);
                 endpoints.MapPost("/api/account/helpdesk/tickets", HandleAccountHelpdeskTicketCreateAsync);
+                endpoints.MapGet("/api/account/helpdesk/tickets/{callId:long}", HandleAccountHelpdeskTicketReadAsync);
+                endpoints.MapPost("/api/account/helpdesk/tickets/{callId:long}/reply", HandleAccountHelpdeskTicketReplyAsync);
+                endpoints.MapPost("/api/account/helpdesk/tickets/{callId:long}/close", HandleAccountHelpdeskTicketCloseAsync);
+                endpoints.MapGet("/api/account/helpdesk/attachments/{fileName}", HandleAccountHelpdeskAttachmentAsync);
                 endpoints.MapGet("/api/account/checkout-temp/{guid}", HandleCheckoutTempOrderAsync);
                 endpoints.MapPost("/api/account/checkout-temp/{guid}/pay-with-balance", HandleCheckoutPayWithBalanceAsync);
                 endpoints.MapGet("/api/account/renew-temp/{guid}", HandleRenewTempOrderAsync);
@@ -751,7 +776,7 @@ WHERE customer_urgent_log_id = @logId
                     "privacy-off" => await UpdateDomainWhoisPrivacyWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, false, remoteIp),
                     "status" => await GetDomainStatusWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, remoteIp),
                     "auth-code" => await GetDomainAuthCodeWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, remoteIp),
-                    "contact" => await UpdateDomainContactWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, value, remoteIp),
+                    "contact" => await UpdateDomainContactWithOpenSrsAsync(connection, sessionUser.CustomerId, domain.RegisterInfoId, httpClient, openSrs, domain.DomainName, credential, value, remoteIp),
                     "auto-renew-on" => await UpdateDomainExpireActionWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, true, remoteIp),
                     "auto-renew-off" => await UpdateDomainExpireActionWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, false, remoteIp),
                     "forwarding" => await UpdateDomainForwardingWithOpenSrsAsync(httpClient, openSrs, domain.DomainName, credential, value, remoteIp),
@@ -3063,6 +3088,235 @@ WHERE customerID = @customerId";
             await Results.Ok(new AccountSettingsResponse(true, "Profile updated.", settings)).ExecuteAsync(context);
         }
 
+        private async Task HandleAccountMobileVerificationSendAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Not signed in."),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<AccountMobileVerificationSendRequest>();
+            var mobileNumber = NormalizeSmsMobileNumber(request?.MobileNumber ?? "", request?.CountryCode ?? "");
+            if (string.IsNullOrWhiteSpace(mobileNumber))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "Enter a valid mobile number.")).ExecuteAsync(context);
+                return;
+            }
+
+            if (mobileNumber.StartsWith("7", StringComparison.Ordinal))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "This phone number is not reachable for SMS verification.")).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            if (!await IsMobileNumberAvailableForCustomerAsync(connection, sessionUser.CustomerId, mobileNumber))
+            {
+                await Results.BadRequest(new AccountActionResponse(false, "This mobile number is already used by another account.")).ExecuteAsync(context);
+                return;
+            }
+
+            if (!await CanSendSmsVerificationAsync(connection, sessionUser.CustomerId))
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "SMS verification is locked after 3 sends in 10 hours. Please try again later."),
+                    statusCode: StatusCodes.Status429TooManyRequests
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var pin = RandomNumberGenerator.GetInt32(0, 10000).ToString("D4", CultureInfo.InvariantCulture);
+            var brandDomain = GetBrandDomainForCustomer(sessionUser.CustomerId);
+            var sentStatus = await SendSmsVerificationPinAsync(mobileNumber, pin, brandDomain);
+
+            if (sentStatus.Contains("success", StringComparison.OrdinalIgnoreCase))
+            {
+                await InsertSmsVerificationAsync(connection, sessionUser.CustomerId, mobileNumber, pin, sentStatus);
+                await Results.Ok(new AccountActionResponse(true, "PIN sent.")).ExecuteAsync(context);
+                return;
+            }
+
+            var message = sentStatus.Contains("is not a mobile number", StringComparison.OrdinalIgnoreCase)
+                || sentStatus.Contains("is not a valid phone number", StringComparison.OrdinalIgnoreCase)
+                ? $"Please enter a valid phone number. +{mobileNumber} is not a valid number."
+                : sentStatus.Contains("is not currently reachable", StringComparison.OrdinalIgnoreCase)
+                    ? "This phone number is not currently reachable."
+                    : "SMS gateway did not send the PIN.";
+
+            await Results.BadRequest(new AccountActionResponse(false, message)).ExecuteAsync(context);
+        }
+
+        private async Task HandleAccountMobileVerificationConfirmAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new AccountSettingsResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<AccountMobileVerificationConfirmRequest>();
+            var mobileNumber = NormalizeSmsMobileNumber(request?.MobileNumber ?? "", request?.CountryCode ?? "");
+            var pin = Regex.Replace(request?.Pin ?? "", "[^0-9]", "");
+            if (string.IsNullOrWhiteSpace(mobileNumber) || pin.Length != 4)
+            {
+                await Results.BadRequest(new AccountSettingsResponse(false, "Enter the mobile number and 4-digit PIN.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            if (!await HasMatchingSmsVerificationAsync(connection, sessionUser.CustomerId, mobileNumber, pin))
+            {
+                await Results.BadRequest(new AccountSettingsResponse(false, "Invalid or expired SMS PIN.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            const string updateSql = @"
+UPDATE dbo.customer_profile
+SET status = 1,
+    mobile_number = @mobileNumber
+WHERE customerID = @customerId";
+
+            await using (var command = new SqlCommand(updateSql, connection))
+            {
+                command.Parameters.AddWithValue("@mobileNumber", mobileNumber);
+                command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var settings = await LoadAccountSettingsAsync(connection, sessionUser.CustomerId);
+            await Results.Ok(new AccountSettingsResponse(true, "Phone number updated.", settings)).ExecuteAsync(context);
+        }
+
+        private static string NormalizeSmsMobileNumber(string mobileNumber, string countryCode)
+        {
+            var rawMobile = Regex.Replace(mobileNumber ?? "", "[^0-9]", "");
+            var rawCountry = Regex.Replace(countryCode ?? "", "[^0-9]", "");
+            if (string.IsNullOrWhiteSpace(rawMobile))
+            {
+                return "";
+            }
+
+            if (!string.IsNullOrWhiteSpace(rawCountry) && !rawMobile.StartsWith(rawCountry, StringComparison.Ordinal))
+            {
+                rawMobile = rawCountry + rawMobile.TrimStart('0');
+            }
+
+            return rawMobile.TrimStart('+');
+        }
+
+        private static async Task<bool> IsMobileNumberAvailableForCustomerAsync(SqlConnection connection, long customerId, string mobileNumber)
+        {
+            const string sql = @"
+SELECT TOP 1 customerID
+FROM dbo.customer_profile
+WHERE mobile_number = @mobileNumber
+  AND customerID <> @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@mobileNumber", mobileNumber);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            var result = await command.ExecuteScalarAsync();
+            return result == null || result == DBNull.Value;
+        }
+
+        private static async Task<bool> CanSendSmsVerificationAsync(SqlConnection connection, long customerId)
+        {
+            const string sql = @"
+SELECT COUNT(*)
+FROM dbo.sms_verify
+WHERE sent_time >= DATEADD(hh, -10, SYSDATETIME())
+  AND customerID = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            var count = Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+            return count <= 2;
+        }
+
+        private static async Task InsertSmsVerificationAsync(SqlConnection connection, long customerId, string mobileNumber, string verifyCode, string sentStatus)
+        {
+            const string sql = @"
+INSERT INTO dbo.sms_verify (customerID, mobile_number, verify_code, sent_status, sent_time)
+VALUES (@customerId, @mobileNumber, @verifyCode, @sentStatus, GETDATE())";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            command.Parameters.AddWithValue("@mobileNumber", mobileNumber);
+            command.Parameters.AddWithValue("@verifyCode", verifyCode);
+            command.Parameters.AddWithValue("@sentStatus", sentStatus.Length > 1000 ? sentStatus[..1000] : sentStatus);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        private static async Task<bool> HasMatchingSmsVerificationAsync(SqlConnection connection, long customerId, string mobileNumber, string verifyCode)
+        {
+            const string sql = @"
+SELECT TOP 1 1
+FROM dbo.sms_verify
+WHERE customerID = @customerId
+  AND mobile_number = @mobileNumber
+  AND verify_code = @verifyCode
+  AND sent_time >= DATEADD(hh, -10, SYSDATETIME())
+ORDER BY sent_time DESC";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            command.Parameters.AddWithValue("@mobileNumber", mobileNumber);
+            command.Parameters.AddWithValue("@verifyCode", verifyCode);
+            var result = await command.ExecuteScalarAsync();
+            return result != null && result != DBNull.Value;
+        }
+
+        private static async Task<string> SendSmsVerificationPinAsync(string mobileNumber, string pin, string brandDomain)
+        {
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                using var content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["to"] = mobileNumber,
+                    ["pincode"] = pin,
+                    ["branddomain"] = brandDomain
+                });
+
+                using var response = await httpClient.PostAsync("http://www.smarterasp.net/sms/sms2.php", content);
+                var body = (await response.Content.ReadAsStringAsync()).Trim();
+                return string.IsNullOrWhiteSpace(body)
+                    ? $"{(int)response.StatusCode} {response.ReasonPhrase}".Trim()
+                    : body;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return ex.Message;
+            }
+        }
+
         private async Task HandleAccountPasswordChangeAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -3137,7 +3391,7 @@ WHERE customerID = @customerId";
             command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
             await command.ExecuteNonQueryAsync();
 
-            var syncResult = await SyncAccountPasswordTargetsAsync(connection, sessionUser.CustomerId, newPassword);
+            var syncResult = await SyncAccountPasswordTargetsAsync(connection, sessionUser.CustomerId, newPassword, request?.SyncTargets);
 
             context.Session.SetString("customerID", sessionUser.CustomerId.ToString(CultureInfo.InvariantCulture));
             context.Session.SetString("customerLogin", sessionUser.Login);
@@ -3283,11 +3537,11 @@ ORDER BY rv.create_date DESC";
                 return;
             }
 
-            var encryptedEmail = TryLegacyEncryptPwd(newEmail);
+            var encryptedEmail = await TryLegacyEncryptPwdAsync(newEmail);
             if (string.IsNullOrWhiteSpace(encryptedEmail))
             {
                 await Results.Json(
-                    new EmailChangeVerifyResponse(false, "Email verified, but customer_profile.email was not changed because legacy encryptpwd-compatible email writing is not configured yet.", false, newEmail, createdAt),
+                    new EmailChangeVerifyResponse(false, "Email verified, but customer_profile.email was not changed because the legacy encryptpwd API did not return a value.", false, newEmail, createdAt),
                     statusCode: StatusCodes.Status409Conflict
                 ).ExecuteAsync(context);
                 return;
@@ -3348,18 +3602,29 @@ WHERE customerID = @customerId
             }
 
             var brandDomain = GetBrandDomainForCustomer(sessionUser.CustomerId);
-            var guid = GenerateResetToken();
-            var reverifyUrl = BuildAbsoluteUrl(context, $"/account/re-verify_password_reset?guid={Uri.EscapeDataString(guid)}");
+            var guid = await TryLegacyImportKey2EncryptAsync($"{DateTime.Now}|{sessionUser.CustomerId}");
+            if (string.IsNullOrWhiteSpace(guid))
+            {
+                await Results.Json(
+                    new AccountActionResponse(false, "Account re-verification needs the legacy importkey2 encryption bridge to support encryptimportkey2."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var reverifyUrl = $"https://member.{brandDomain}/account/re-verify_password_reset?guid={Uri.EscapeDataString(guid)}".Replace("member.", "member5.", StringComparison.OrdinalIgnoreCase);
+            var htmlTemplate = await LoadReverifyEmailTemplateAsync();
+            var htmlBody = htmlTemplate
+                .Replace("[BRANDDOMAIN]", WebUtility.HtmlEncode(brandDomain), StringComparison.OrdinalIgnoreCase)
+                .Replace("[GUID]", WebUtility.HtmlEncode(guid), StringComparison.OrdinalIgnoreCase)
+                .Replace("member.", "member5.", StringComparison.OrdinalIgnoreCase);
             var mailResult = await SendAccountEmailAsync(
                 email.Email,
                 "Verify Account",
-                $@"
-<p>Hello {WebUtility.HtmlEncode(sessionUser.Login)},</p>
-<p>Please verify your {WebUtility.HtmlEncode(brandDomain)} account by opening the link below.</p>
-<p><a href=""{WebUtility.HtmlEncode(reverifyUrl)}"">Verify account</a></p>",
+                htmlBody,
                 $@"Hello {sessionUser.Login},
 
-Please verify your {brandDomain} account:
+Please goto the following link to verify your account:
 
 {reverifyUrl}",
                 fromEmail: $"noreply@{brandDomain}"
@@ -3528,11 +3793,11 @@ WHERE customerID = @customerId", connection);
                 return;
             }
 
-            var encryptedSecret = TryLegacyEncryptPwd(secret);
+            var encryptedSecret = await TryLegacyEncryptPwdAsync(secret);
             if (string.IsNullOrWhiteSpace(encryptedSecret))
             {
                 await Results.Json(
-                    new AccountSettingsResponse(false, "2FA code verified, but setup cannot be saved because legacy encryptpwd-compatible secret writing is not configured yet.", null),
+                    new AccountSettingsResponse(false, "2FA code verified, but setup cannot be saved because the legacy encryptpwd API did not return a value.", null),
                     statusCode: StatusCodes.Status409Conflict
                 ).ExecuteAsync(context);
                 return;
@@ -3619,16 +3884,16 @@ VALUES (@customerId, @secret, GETDATE(), 1);", command =>
                 await using var connection = new SqlConnection(connectionString);
                 await connection.OpenAsync();
 
-                var user = await LoadHelpdeskUserAsync(connection, sessionUser.Login);
-                if (user == null)
+                var users = await LoadHelpdeskUsersForScopeAsync(connection, EffectiveHelpdeskLogin(sessionUser));
+                if (users.Count == 0)
                 {
                     await Results.Ok(new AccountHelpdeskResponse(false, "Helpdesk login was not found for this account.", null)).ExecuteAsync(context);
                     return;
                 }
 
-                var openTickets = await LoadHelpdeskTicketListAsync(connection, "sp_GetOpenTicketsByUserID", user.UserId);
-                var closedTickets = await LoadHelpdeskTicketListAsync(connection, "sp_GetCloseTicketsByUserID", user.UserId);
-                await Results.Ok(new AccountHelpdeskResponse(true, "Helpdesk loaded.", new AccountHelpdeskDashboard(user, openTickets, closedTickets))).ExecuteAsync(context);
+                var openTickets = await LoadHelpdeskTicketListAsync(connection, users, isClosed: false);
+                var closedTickets = await LoadHelpdeskTicketListAsync(connection, users, isClosed: true);
+                await Results.Ok(new AccountHelpdeskResponse(true, "Helpdesk loaded.", new AccountHelpdeskDashboard(users[0], openTickets, closedTickets))).ExecuteAsync(context);
             }
             catch (SqlException ex)
             {
@@ -3656,9 +3921,8 @@ VALUES (@customerId, @secret, GETDATE(), 1);", command =>
             {
                 await using var connection = new SqlConnection(connectionString);
                 await connection.OpenAsync();
-                var categories = await LoadHelpdeskCategoriesAsync(connection);
                 var email = await LoadReadableCustomerEmailAsync(sessionUser.CustomerId);
-                await Results.Ok(new AccountHelpdeskFormResponse(true, "Helpdesk form loaded.", new AccountHelpdeskForm(categories, email.Success ? email.Email : "", email.Message))).ExecuteAsync(context);
+                await Results.Ok(new AccountHelpdeskFormResponse(true, "Helpdesk form loaded.", new AccountHelpdeskForm([], email.Success ? email.Email : "", email.Message))).ExecuteAsync(context);
             }
             catch (SqlException ex)
             {
@@ -3675,30 +3939,57 @@ VALUES (@customerId, @secret, GETDATE(), 1);", command =>
                 return;
             }
 
-            var request = await context.Request.ReadFromJsonAsync<HelpdeskTicketCreateRequest>();
-            if (request == null)
+            var uploadedFiles = new List<IFormFile>();
+            string subject;
+            string domain;
+            string email;
+            string description;
+            try
             {
-                await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Missing ticket request.", null)).ExecuteAsync(context);
+                if (context.Request.HasFormContentType)
+                {
+                    var form = await context.Request.ReadFormAsync();
+                    subject = StripHtmlBracket(form["subject"].ToString(), 200);
+                    domain = StripHtmlBracket(form["url"].ToString(), 200);
+                    email = StripHtmlBracket(form["email"].ToString(), 100);
+                    description = StripHtmlBracket(form["description"].ToString(), 4000);
+                    uploadedFiles.AddRange(form.Files);
+                }
+                else
+                {
+                    var request = await context.Request.ReadFromJsonAsync<HelpdeskTicketCreateRequest>();
+                    if (request == null)
+                    {
+                        await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Missing ticket request.", null)).ExecuteAsync(context);
+                        return;
+                    }
+
+                    subject = StripHtmlBracket(request.Subject, 200);
+                    domain = StripHtmlBracket(request.Url, 200);
+                    email = StripHtmlBracket(request.Email, 100);
+                    var descriptionParts = new[] { request.Description, request.Attachment }
+                        .Where(value => !string.IsNullOrWhiteSpace(value));
+                    description = StripHtmlBracket(string.Join(Environment.NewLine + Environment.NewLine, descriptionParts), 4000);
+                }
+            }
+            catch (InvalidDataException ex)
+            {
+                await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, ex.Message, null)).ExecuteAsync(context);
                 return;
             }
-
-            const int legacyNewTicketCategoryId = 197;
-            const int legacyNewTicketSubcategoryId = 248;
-            const int legacyNewTicketPriority = 2;
-            var categoryId = request.CategoryId > 0 ? request.CategoryId : legacyNewTicketCategoryId;
-            var subcategoryId = request.SubCategoryId > 0 ? request.SubCategoryId : legacyNewTicketSubcategoryId;
-            var subject = StripHtmlBracket(request.Subject, 300);
-            var url = StripHtmlBracket(request.Url, 50);
-            var email = StripHtmlBracket(request.Email, 100);
-            var descriptionParts = new[] { request.Description, request.Attachment }
-                .Where(value => !string.IsNullOrWhiteSpace(value));
-            var description = StripHtmlBracket(string.Join(Environment.NewLine + Environment.NewLine, descriptionParts), 4000)
-                .Replace("\r\n", "<br>", StringComparison.Ordinal)
-                .Replace("\n", "<br>", StringComparison.Ordinal)
-                .Replace("\r", "<br>", StringComparison.Ordinal);
             if (string.IsNullOrWhiteSpace(subject))
             {
                 await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Subject is required.", null)).ExecuteAsync(context);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(domain))
+            {
+                await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Domain is required.", null)).ExecuteAsync(context);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Description is required.", null)).ExecuteAsync(context);
                 return;
             }
 
@@ -3714,86 +4005,287 @@ VALUES (@customerId, @secret, GETDATE(), 1);", command =>
                 await using var connection = new SqlConnection(connectionString);
                 await connection.OpenAsync();
 
-                var user = await LoadHelpdeskUserAsync(connection, sessionUser.Login);
+                var user = await FindHelpdeskUserForTicketAsync(connection, EffectiveHelpdeskLogin(sessionUser));
                 if (user == null)
                 {
-                    await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Helpdesk login was not found for this account.", null)).ExecuteAsync(context);
-                    return;
-                }
-
-                var category = await LoadHelpdeskCategoryAsync(connection, categoryId);
-                if (category == null)
-                {
-                    await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Selected category was not found.", null)).ExecuteAsync(context);
-                    return;
-                }
-
-                if (!await HelpdeskSubcategoryBelongsToCategoryAsync(connection, categoryId, subcategoryId))
-                {
-                    await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Selected subcategory was not found for this category.", null)).ExecuteAsync(context);
+                    await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Error - user not found in helpdesk, please contact support", null)).ExecuteAsync(context);
                     return;
                 }
 
                 if (string.IsNullOrWhiteSpace(email))
                 {
+                    email = user.Email;
+                }
+
+                if (string.IsNullOrWhiteSpace(email))
+                {
                     var defaultEmail = await LoadReadableCustomerEmailAsync(sessionUser.CustomerId);
-                    email = defaultEmail.Success ? defaultEmail.Email : "";
+                    if (!defaultEmail.Success || string.IsNullOrWhiteSpace(defaultEmail.Email))
+                    {
+                        await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, "Contact email is required.", null)).ExecuteAsync(context);
+                        return;
+                    }
+
+                    email = defaultEmail.Email;
                 }
 
-                var descriptionHtml = categoryId == legacyNewTicketCategoryId && subcategoryId == legacyNewTicketSubcategoryId
-                    ? description
-                    : await BuildHelpdeskDescriptionAsync(connection, subcategoryId, description, request.Fields ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
-                var webServerIp = await RetrieveUserWebServerIpAsync(sessionUser.Login);
-                var serverType = string.IsNullOrWhiteSpace(webServerIp) ? 0 : 1;
-                if (serverType == 0 && sessionUser.Login.EndsWith("_free", StringComparison.OrdinalIgnoreCase))
+                var uploadUrls = await SaveHelpdeskUploadsAsync(context, uploadedFiles);
+                description = BuildHelpdeskHtmlBody(description, uploadUrls);
+                var myIp = context.Connection.RemoteIpAddress?.ToString();
+                if (string.IsNullOrWhiteSpace(myIp))
                 {
-                    serverType = 1;
+                    myIp = "0.0.0.0";
                 }
 
-                var priority = categoryId == legacyNewTicketCategoryId && subcategoryId == legacyNewTicketSubcategoryId
-                    ? legacyNewTicketPriority
-                    : category.IsDefaultPriority ? category.DefaultPriority : Math.Clamp(request.Priority <= 0 ? 3 : request.Priority, 1, 5);
-                var queueLevel = category.IsDefaultQueueLevel ? category.DefaultQueueLevel : priority < 3 ? 2 : 1;
-                long callId;
-                try
-                {
-                    callId = await CreateHelpdeskTicketAsync(connection, user.UserId, email, context.Connection.RemoteIpAddress?.ToString() ?? "", url, subject, descriptionHtml, subcategoryId, priority, queueLevel, webServerIp, serverType);
-                }
-                catch (SqlException ex) when (IsMissingCpLoginColumn(ex))
-                {
-                    callId = await CreateHelpdeskTicketCompatAsync(connection, user.UserId, email, context.Connection.RemoteIpAddress?.ToString() ?? "", url, subject, descriptionHtml, subcategoryId, priority, queueLevel, webServerIp, serverType);
-                }
+                var callId = await CreateHelpdeskTicketAsync(
+                    connection,
+                    user.UserId,
+                    email,
+                    myIp,
+                    domain,
+                    subject,
+                    description,
+                    subcategoryId: 248,
+                    priority: 2,
+                    queueLevel: 2,
+                    webServerIp: "",
+                    serverType: 0);
+
                 if (callId <= 0)
                 {
                     await Results.Problem("Helpdesk ticket creation failed.").ExecuteAsync(context);
                     return;
                 }
 
-                try
-                {
-                    await WriteHelpdeskUserLogAsync(connection, callId, user.UserId, 1);
-                }
-                catch (SqlException ex) when (IsTicketQueueCompatibilityIssue(ex))
-                {
-                    await WriteHelpdeskCompatLogAsync(connection, callId, $"Audit log skipped due schema mismatch: {ex.Message}");
-                }
-                try
-                {
-                    await AutoAssignHelpdeskTicketAsync(connection, callId, queueLevel);
-                }
-                catch (SqlException ex) when (IsTicketQueueCompatibilityIssue(ex))
-                {
-                    // Queueing logic is non-blocking if legacy/proxy schemas differ.
-                    await WriteHelpdeskCompatLogAsync(connection, callId, $"Auto-assign skipped due schema mismatch: {ex.Message}");
-                }
-
-                var ticket = new HelpdeskTicketSummary(callId, subject, "Q", priority, 0, DateTime.Now, null, category.Description, "", false);
+                var ticket = new HelpdeskTicketSummary(callId, user.Username, subject, "Q", 2, 0, DateTime.Now, null, "Support", "", false);
                 await Results.Ok(new AccountHelpdeskTicketCreateResponse(true, $"Ticket #{callId} submitted.", ticket)).ExecuteAsync(context);
             }
             catch (SqlException ex)
             {
                 await Results.BadRequest(new AccountHelpdeskTicketCreateResponse(false, $"Helpdesk database is unavailable: {ex.Message}", null)).ExecuteAsync(context);
             }
+        }
+
+        private async Task HandleAccountHelpdeskTicketReadAsync(HttpContext context, long callId)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountHelpdeskTicketDetailResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetHelpdeskConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing HelpDesk connection string. Set HELPDESK_CONNECTION_STRING.").ExecuteAsync(context);
+                return;
+            }
+
+            try
+            {
+                await using var connection = new SqlConnection(connectionString);
+                await connection.OpenAsync();
+                var users = await LoadHelpdeskUsersForScopeAsync(connection, EffectiveHelpdeskLogin(sessionUser));
+                var detail = await LoadHelpdeskTicketDetailAsync(connection, users, callId);
+                if (detail == null)
+                {
+                    await Results.Json(new AccountHelpdeskTicketDetailResponse(false, "Ticket was not found for this account.", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                    return;
+                }
+
+                await Results.Ok(new AccountHelpdeskTicketDetailResponse(true, "Ticket loaded.", detail)).ExecuteAsync(context);
+            }
+            catch (SqlException ex)
+            {
+                await Results.BadRequest(new AccountHelpdeskTicketDetailResponse(false, $"Helpdesk database is unavailable: {ex.Message}", null)).ExecuteAsync(context);
+            }
+        }
+
+        private async Task HandleAccountHelpdeskTicketReplyAsync(HttpContext context, long callId)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountHelpdeskTicketReplyResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var files = new List<IFormFile>();
+            string description;
+            try
+            {
+                if (context.Request.HasFormContentType)
+                {
+                    var form = await context.Request.ReadFormAsync();
+                    description = StripHtmlBracket(form["description"].ToString(), 4000);
+                    files.AddRange(form.Files);
+                }
+                else
+                {
+                    var request = await context.Request.ReadFromJsonAsync<HelpdeskTicketReplyRequest>();
+                    description = StripHtmlBracket(request?.Description, 4000);
+                }
+            }
+            catch (InvalidDataException ex)
+            {
+                await Results.BadRequest(new AccountHelpdeskTicketReplyResponse(false, ex.Message, null)).ExecuteAsync(context);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(description) && files.Count == 0)
+            {
+                await Results.BadRequest(new AccountHelpdeskTicketReplyResponse(false, "Reply description is required.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetHelpdeskConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing HelpDesk connection string. Set HELPDESK_CONNECTION_STRING.").ExecuteAsync(context);
+                return;
+            }
+
+            try
+            {
+                await using var connection = new SqlConnection(connectionString);
+                await connection.OpenAsync();
+                var users = await LoadHelpdeskUsersForScopeAsync(connection, EffectiveHelpdeskLogin(sessionUser));
+                var detail = await LoadHelpdeskTicketDetailAsync(connection, users, callId);
+                if (detail == null)
+                {
+                    await Results.Json(new AccountHelpdeskTicketReplyResponse(false, "Ticket was not found for this account.", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                    return;
+                }
+
+                if (detail.Summary.CloseDate.HasValue)
+                {
+                    await Results.BadRequest(new AccountHelpdeskTicketReplyResponse(false, "Closed tickets cannot be replied to.", null)).ExecuteAsync(context);
+                    return;
+                }
+
+                var user = users.FirstOrDefault(item => item.UserId == detail.User.UserId) ?? users[0];
+                var uploadUrls = await SaveHelpdeskUploadsAsync(context, files);
+                var body = BuildHelpdeskHtmlBody(description, uploadUrls);
+                var myIp = context.Connection.RemoteIpAddress?.ToString();
+                if (string.IsNullOrWhiteSpace(myIp))
+                {
+                    myIp = "0.0.0.0";
+                }
+
+                var note = await CreateHelpdeskReplyAsync(connection, callId, user.UserId, body, myIp);
+                var updatedDetail = await LoadHelpdeskTicketDetailAsync(connection, users, callId);
+                await Results.Ok(new AccountHelpdeskTicketReplyResponse(true, "Reply submitted.", updatedDetail ?? detail with { Notes = [.. detail.Notes, note] })).ExecuteAsync(context);
+            }
+            catch (SqlException ex)
+            {
+                await Results.BadRequest(new AccountHelpdeskTicketReplyResponse(false, $"Helpdesk database is unavailable: {ex.Message}", null)).ExecuteAsync(context);
+            }
+        }
+
+        private async Task HandleAccountHelpdeskTicketCloseAsync(HttpContext context, long callId)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountHelpdeskTicketReplyResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetHelpdeskConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing HelpDesk connection string. Set HELPDESK_CONNECTION_STRING.").ExecuteAsync(context);
+                return;
+            }
+
+            try
+            {
+                await using var connection = new SqlConnection(connectionString);
+                await connection.OpenAsync();
+                var users = await LoadHelpdeskUsersForScopeAsync(connection, EffectiveHelpdeskLogin(sessionUser));
+                var detail = await LoadHelpdeskTicketDetailAsync(connection, users, callId);
+                if (detail == null)
+                {
+                    await Results.Json(new AccountHelpdeskTicketReplyResponse(false, "Ticket was not found for this account.", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                    return;
+                }
+
+                if (detail.Summary.CloseDate.HasValue)
+                {
+                    await Results.Ok(new AccountHelpdeskTicketReplyResponse(true, "Ticket is already closed.", detail)).ExecuteAsync(context);
+                    return;
+                }
+
+                await CloseHelpdeskTicketAsync(connection, callId);
+                var updatedDetail = await LoadHelpdeskTicketDetailAsync(connection, users, callId);
+                await Results.Ok(new AccountHelpdeskTicketReplyResponse(true, "Ticket marked as resolved.", updatedDetail ?? detail)).ExecuteAsync(context);
+            }
+            catch (SqlException ex)
+            {
+                await Results.BadRequest(new AccountHelpdeskTicketReplyResponse(false, $"Helpdesk database is unavailable: {ex.Message}", null)).ExecuteAsync(context);
+            }
+        }
+
+        private async Task HandleAccountHelpdeskAttachmentAsync(HttpContext context, string fileName)
+        {
+            fileName = NormalizeHelpdeskAttachmentFileName(fileName);
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                await Results.NotFound().ExecuteAsync(context);
+                return;
+            }
+
+            var environment = context.RequestServices.GetRequiredService<IWebHostEnvironment>();
+            var filePath = ResolveHelpdeskAttachmentPath(environment, fileName);
+            if (string.IsNullOrWhiteSpace(filePath) || !System.IO.File.Exists(filePath))
+            {
+                await Results.NotFound().ExecuteAsync(context);
+                return;
+            }
+
+            var providedToken = context.Request.Query["token"].ToString();
+            var canRead = await IsValidHelpdeskAttachmentTokenAsync(filePath, providedToken);
+            if (!canRead)
+            {
+                var sessionUser = GetSessionUser(context);
+                if (sessionUser == null)
+                {
+                    await Results.Json(new AccountActionResponse(false, "Not signed in."), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                    return;
+                }
+
+                var connectionString = GetHelpdeskConnectionString();
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    await Results.Problem("Missing HelpDesk connection string. Set HELPDESK_CONNECTION_STRING.").ExecuteAsync(context);
+                    return;
+                }
+
+                try
+                {
+                    await using var connection = new SqlConnection(connectionString);
+                    await connection.OpenAsync();
+                    var users = await LoadHelpdeskUsersForScopeAsync(connection, EffectiveHelpdeskLogin(sessionUser));
+                    canRead = await HelpdeskAttachmentBelongsToUsersAsync(connection, users, fileName);
+                }
+                catch (SqlException ex)
+                {
+                    await Results.Json(new AccountActionResponse(false, $"Helpdesk database is unavailable: {ex.Message}"), statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
+                    return;
+                }
+
+                if (!canRead)
+                {
+                    await Results.NotFound().ExecuteAsync(context);
+                    return;
+                }
+            }
+
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Headers["Cache-Control"] = "private, no-store";
+            context.Response.Headers["Content-Disposition"] = $"inline; filename=\"{fileName.Replace("\"", "", StringComparison.Ordinal)}\"";
+            await Results.File(filePath, GetHelpdeskAttachmentContentType(fileName), fileDownloadName: null, enableRangeProcessing: false).ExecuteAsync(context);
         }
 
         private async Task HandleHostingSitesAsync(HttpContext context)
@@ -5485,6 +5977,12 @@ WHERE id = @jobId
 
         private static long GetRequestedCpId(HttpContext context)
         {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser?.IsControlPanelLogin == true && sessionUser.CpId > 0)
+            {
+                return sessionUser.CpId;
+            }
+
             var value = context.Request.Query["cpId"].FirstOrDefault();
             return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var cpId) ? cpId : 0;
         }
@@ -5769,6 +6267,11 @@ WHERE id = @id
                 var turnstileToken = loginRequest?.TurnstileToken?.Trim() ?? "";
                 if (string.IsNullOrWhiteSpace(turnstileToken))
                 {
+                    if (IsCloudflareTurnstileTestSecret(turnstileSecret))
+                    {
+                        goto SkipTurnstileVerification;
+                    }
+
                     await Results.BadRequest(new LoginResponse(false, "Complete the bot check before logging in.", null)).ExecuteAsync(context);
                     return;
                 }
@@ -5785,6 +6288,8 @@ WHERE id = @id
                 }
             }
 
+        SkipTurnstileVerification:
+
             var connectionString = GetEhbConfigConnectionString();
 
             if (string.IsNullOrWhiteSpace(connectionString))
@@ -5796,29 +6301,69 @@ WHERE id = @id
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
 
+            if (login.Contains('-', StringComparison.Ordinal))
+            {
+                var cpUser = await LoadControlPanelLoginUserAsync(connection, login);
+                if (cpUser == null)
+                {
+                    await TrackFailedLoginAsync(context, login);
+                    await Results.Json(
+                        new LoginResponse(false, "Login failed. Please check your username and password.", null),
+                        statusCode: StatusCodes.Status401Unauthorized
+                    ).ExecuteAsync(context);
+                    return;
+                }
+
+                var twoFactor = await CheckLoginTwoFactorAsync(connection, cpUser.CustomerId);
+                if (twoFactor.Required)
+                {
+                    if (string.IsNullOrWhiteSpace(twoFactor.Secret))
+                    {
+                        await Results.Json(new LoginResponse(false, twoFactor.Message, null), statusCode: StatusCodes.Status409Conflict).ExecuteAsync(context);
+                        return;
+                    }
+
+                    SetPendingTwoFactorLogin(context, cpUser, twoFactor.Secret);
+                    ClearFailedLogin(context, login);
+                    await Results.Ok(new LoginResponse(true, "Two-step authentication is required.", null, true, cpUser.CpLogin)).ExecuteAsync(context);
+                    return;
+                }
+
+                SetAuthenticatedSession(context, cpUser);
+                ClearFailedLogin(context, login);
+
+                await Results.Ok(new LoginResponse(true, "Login successful.", cpUser)).ExecuteAsync(context);
+                return;
+            }
+
             const string sql = @"
 SELECT TOP 1 customerID, customerLogin, customer_type, status, pp1
 FROM dbo.customer_profile
 WHERE LOWER(customerLogin) = LOWER(@login)";
 
-            await using var command = new SqlCommand(sql, connection);
-            command.Parameters.AddWithValue("@login", login);
-
-            await using var reader = await command.ExecuteReaderAsync();
-            if (!await reader.ReadAsync())
+            long customerId;
+            string customerLogin;
+            string customerType;
+            int status;
+            await using (var command = new SqlCommand(sql, connection))
             {
-                await TrackFailedLoginAsync(context, login);
-                await Results.Json(
-                    new LoginResponse(false, "Login failed. Please check your username and password.", null),
-                    statusCode: StatusCodes.Status401Unauthorized
-                ).ExecuteAsync(context);
-                return;
-            }
+                command.Parameters.AddWithValue("@login", login);
+                await using var reader = await command.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                {
+                    await TrackFailedLoginAsync(context, login);
+                    await Results.Json(
+                        new LoginResponse(false, "Login failed. Please check your username and password.", null),
+                        statusCode: StatusCodes.Status401Unauthorized
+                    ).ExecuteAsync(context);
+                    return;
+                }
 
-            var customerId = reader.GetInt64(0);
-            var customerLogin = reader.GetString(1);
-            var customerType = reader.GetString(2);
-            var status = reader.IsDBNull(3) ? -1 : reader.GetInt32(3);
+                customerId = reader.GetInt64(0);
+                customerLogin = reader.GetString(1);
+                customerType = reader.GetString(2);
+                status = reader.IsDBNull(3) ? -1 : reader.GetInt32(3);
+            }
 
             if (status != 1)
             {
@@ -5834,13 +6379,240 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
                 return;
             }
 
-            context.Session.SetString("customerID", customerId.ToString());
-            context.Session.SetString("customerLogin", customerLogin);
-            context.Session.SetString("customerType", customerType);
-            SetPersistentSessionCookie(context, new LoginUser(customerId, customerLogin, customerType));
+            var accountUser = new LoginUser(customerId, customerLogin, customerType);
+            var accountTwoFactor = await CheckLoginTwoFactorAsync(connection, accountUser.CustomerId);
+            if (accountTwoFactor.Required)
+            {
+                if (string.IsNullOrWhiteSpace(accountTwoFactor.Secret))
+                {
+                    await Results.Json(new LoginResponse(false, accountTwoFactor.Message, null), statusCode: StatusCodes.Status409Conflict).ExecuteAsync(context);
+                    return;
+                }
+
+                SetPendingTwoFactorLogin(context, accountUser, accountTwoFactor.Secret);
+                ClearFailedLogin(context, login);
+                await Results.Ok(new LoginResponse(true, "Two-step authentication is required.", null, true, accountUser.Login)).ExecuteAsync(context);
+                return;
+            }
+
+            SetAuthenticatedSession(context, accountUser);
             ClearFailedLogin(context, login);
 
-            await Results.Ok(new LoginResponse(true, "Login successful.", new LoginUser(customerId, customerLogin, customerType))).ExecuteAsync(context);
+            await Results.Ok(new LoginResponse(true, "Login successful.", accountUser)).ExecuteAsync(context);
+        }
+
+        private async Task HandleLoginTwoFactorVerifyAsync(HttpContext context)
+        {
+            var pendingUser = GetPendingTwoFactorLogin(context);
+            if (pendingUser == null)
+            {
+                await Results.Json(
+                    new LoginResponse(false, "Two-step authentication session expired. Please log in again.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<TwoFactorLoginVerifyRequest>();
+            var code = new string((request?.OneCode ?? "").Where(char.IsDigit).ToArray());
+            if (code.Length != 6)
+            {
+                await Results.BadRequest(new LoginResponse(false, "Enter the six-digit authenticator code.", null, true, pendingUser.Login)).ExecuteAsync(context);
+                return;
+            }
+
+            var failCount = context.Session.GetInt32("2fa_verify_failcount") ?? 0;
+            if (failCount > 3)
+            {
+                ClearPendingTwoFactorLogin(context);
+                await Results.Json(
+                    new LoginResponse(false, "Too many invalid 2FA attempts. Please log in again.", null),
+                    statusCode: StatusCodes.Status429TooManyRequests
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var secret = context.Session.GetString("2fa_login_secret") ?? "";
+            if (string.IsNullOrWhiteSpace(secret))
+            {
+                ClearPendingTwoFactorLogin(context);
+                await Results.Json(
+                    new LoginResponse(false, "Two-step authentication session expired. Please log in again.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var verifyResult = await VerifyLegacyTwoFactorCodeAsync(secret, code);
+            if (!verifyResult.Success)
+            {
+                var nextFailCount = failCount + 1;
+                context.Session.SetInt32("2fa_verify_failcount", nextFailCount);
+                if (nextFailCount > 3)
+                {
+                    ClearPendingTwoFactorLogin(context);
+                    await Results.Json(
+                        new LoginResponse(false, "Too many invalid 2FA attempts. Please log in again.", null),
+                        statusCode: StatusCodes.Status429TooManyRequests
+                    ).ExecuteAsync(context);
+                    return;
+                }
+
+                await Results.BadRequest(new LoginResponse(false, verifyResult.Message, null, true, pendingUser.Login)).ExecuteAsync(context);
+                return;
+            }
+
+            ClearPendingTwoFactorLogin(context);
+            SetAuthenticatedSession(context, pendingUser);
+            await Results.Ok(new LoginResponse(true, "Login successful.", pendingUser)).ExecuteAsync(context);
+        }
+
+        private static void SetAuthenticatedSession(HttpContext context, LoginUser user)
+        {
+            context.Session.SetString("customerID", user.CustomerId.ToString(CultureInfo.InvariantCulture));
+            context.Session.SetString("customerLogin", user.Login);
+            context.Session.SetString("customerType", user.CustomerType);
+
+            if (user.IsControlPanelLogin)
+            {
+                context.Session.SetString("loginScope", "cp");
+                context.Session.SetString("cpID", user.CpId.ToString(CultureInfo.InvariantCulture));
+                context.Session.SetString("cpLogin", user.CpLogin);
+            }
+            else
+            {
+                context.Session.SetString("loginScope", "account");
+                context.Session.Remove("cpID");
+                context.Session.Remove("cpLogin");
+            }
+
+            SetPersistentSessionCookie(context, user);
+        }
+
+        private static void SetPendingTwoFactorLogin(HttpContext context, LoginUser user, string secret)
+        {
+            context.Session.Remove("customerID");
+            context.Session.Remove("customerLogin");
+            context.Session.Remove("customerType");
+            context.Session.Remove("loginScope");
+            context.Session.Remove("cpID");
+            context.Session.Remove("cpLogin");
+            context.Response.Cookies.Delete(PersistentSessionCookieName);
+
+            context.Session.SetString("2fa_login_customerID", user.CustomerId.ToString(CultureInfo.InvariantCulture));
+            context.Session.SetString("2fa_login_customerLogin", user.Login);
+            context.Session.SetString("2fa_login_customerType", user.CustomerType);
+            context.Session.SetString("2fa_login_scope", user.IsControlPanelLogin ? "cp" : "account");
+            context.Session.SetString("2fa_login_cpID", user.CpId.ToString(CultureInfo.InvariantCulture));
+            context.Session.SetString("2fa_login_cpLogin", user.CpLogin);
+            context.Session.SetString("2fa_login_secret", secret);
+            context.Session.SetInt32("2fa_verify_failcount", 0);
+        }
+
+        private static LoginUser? GetPendingTwoFactorLogin(HttpContext context)
+        {
+            var customerIdText = context.Session.GetString("2fa_login_customerID") ?? "";
+            if (!long.TryParse(customerIdText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var customerId) || customerId <= 0)
+            {
+                return null;
+            }
+
+            var login = context.Session.GetString("2fa_login_customerLogin") ?? "";
+            if (string.IsNullOrWhiteSpace(login))
+            {
+                return null;
+            }
+
+            var customerType = context.Session.GetString("2fa_login_customerType") ?? "";
+            var scope = context.Session.GetString("2fa_login_scope") ?? "account";
+            var isControlPanelLogin = scope.Equals("cp", StringComparison.OrdinalIgnoreCase);
+            var cpIdText = context.Session.GetString("2fa_login_cpID") ?? "";
+            long.TryParse(cpIdText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var cpId);
+            var cpLogin = context.Session.GetString("2fa_login_cpLogin") ?? "";
+
+            return new LoginUser(customerId, login, customerType, isControlPanelLogin, cpId, cpLogin);
+        }
+
+        private static void ClearPendingTwoFactorLogin(HttpContext context)
+        {
+            context.Session.Remove("2fa_login_customerID");
+            context.Session.Remove("2fa_login_customerLogin");
+            context.Session.Remove("2fa_login_customerType");
+            context.Session.Remove("2fa_login_scope");
+            context.Session.Remove("2fa_login_cpID");
+            context.Session.Remove("2fa_login_cpLogin");
+            context.Session.Remove("2fa_login_secret");
+            context.Session.Remove("2fa_verify_failcount");
+        }
+
+        private async Task<LoginTwoFactorCheck> CheckLoginTwoFactorAsync(SqlConnection connection, long customerId)
+        {
+            const string sql = @"
+SELECT TOP 1 CAST(secret AS nvarchar(max)) AS secret
+FROM dbo.[2fa]
+WHERE customerID = @customerId
+  AND ISNULL(IsEnabled, 0) = 1
+ORDER BY enterdate DESC";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            var value = await command.ExecuteScalarAsync();
+            if (value == null || value == DBNull.Value)
+            {
+                return new LoginTwoFactorCheck(false, "", "2FA is not enabled.");
+            }
+
+            var secret = await ReadableTwoFactorSecretAsync(Convert.ToString(value, CultureInfo.InvariantCulture) ?? "");
+            if (string.IsNullOrWhiteSpace(secret))
+            {
+                return new LoginTwoFactorCheck(
+                    true,
+                    "",
+                    "2FA is enabled, but the stored authenticator secret cannot be decrypted by the new panel yet. Configure LEGACY_DECRYPTPWD_API_URL or legacy-compatible crypto before enforcing login-time 2FA."
+                );
+            }
+
+            return new LoginTwoFactorCheck(true, secret, "2FA is enabled.");
+        }
+
+        private static async Task<LoginUser?> LoadControlPanelLoginUserAsync(SqlConnection connection, string cpLogin)
+        {
+            const string sql = @"
+SELECT TOP 1
+    cc.customerID,
+    cp.customerLogin,
+    ISNULL(cp.customer_type, '') AS customerType,
+    ISNULL(cp.status, 0) AS customerStatus,
+    cc.cpID,
+    cc.cpLogin,
+    ISNULL(cc.status, 0) AS cpStatus
+FROM dbo.cp_config cc
+INNER JOIN dbo.customer_profile cp ON cp.customerID = cc.customerID
+WHERE LOWER(cc.cpLogin) = LOWER(@cpLogin)
+  AND ISNULL(cc.hideit, 0) = 0
+ORDER BY CASE WHEN cc.status = 1 THEN 0 ELSE 1 END, cc.cpID";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpLogin", cpLogin);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            var customerStatus = ReadInt32(reader, "customerStatus");
+            var cpStatus = ReadInt32(reader, "cpStatus");
+            if (customerStatus != 1 || cpStatus == 3)
+            {
+                return null;
+            }
+
+            var customerId = ReadInt64(reader, "customerID");
+            var customerLogin = ReadString(reader, "customerLogin");
+            var customerType = ReadString(reader, "customerType");
+            var cpId = ReadInt64(reader, "cpID");
+            var normalizedCpLogin = ReadString(reader, "cpLogin", cpLogin);
+            return new LoginUser(customerId, customerLogin, customerType, true, cpId, normalizedCpLogin);
         }
 
         private async Task HandleLoginConfigAsync(HttpContext context)
@@ -5851,6 +6623,11 @@ WHERE LOWER(customerLogin) = LOWER(@login)";
                 !string.IsNullOrWhiteSpace(siteKey) && !string.IsNullOrWhiteSpace(secretKey),
                 siteKey
             )).ExecuteAsync(context);
+        }
+
+        private static bool IsCloudflareTurnstileTestSecret(string value)
+        {
+            return value.Equals("1x0000000000000000000000000000000AA", StringComparison.Ordinal);
         }
 
         private static async Task<TurnstileVerifyResult> VerifyTurnstileAsync(string secretKey, string token, string remoteIp)
@@ -6165,15 +6942,18 @@ WHERE customerID = @customerId", connection))
                 await deleteCommand.ExecuteNonQueryAsync();
             }
 
-            var syncResult = await SyncAccountPasswordTargetsAsync(connection, customerId, newPassword);
+            var syncResult = await SyncAccountPasswordTargetsAsync(connection, customerId, newPassword, null);
 
             await Results.Ok(new AccountActionResponse(true, FormatPasswordSyncMessage("Password reset completed.", syncResult))).ExecuteAsync(context);
         }
 
-        private async Task<PasswordSyncResult> SyncAccountPasswordTargetsAsync(SqlConnection connection, long customerId, string newPassword)
+        private async Task<PasswordSyncResult> SyncAccountPasswordTargetsAsync(SqlConnection connection, long customerId, string newPassword, IReadOnlyCollection<string>? requestedTargets)
         {
             var synced = new List<string>();
             var blocked = new List<string>();
+            var targetSet = requestedTargets == null
+                ? null
+                : new HashSet<string>(requestedTargets.Where(target => !string.IsNullOrWhiteSpace(target)), StringComparer.OrdinalIgnoreCase);
             var accounts = await LoadHostingAccountsAsync(connection, customerId);
             var activeAccounts = accounts
                 .Where(account => account.Status.Equals("Active", StringComparison.OrdinalIgnoreCase))
@@ -6190,42 +6970,72 @@ WHERE customerID = @customerId", connection))
             foreach (var account in activeAccounts)
             {
                 var label = string.IsNullOrWhiteSpace(account.CpLogin) ? $"CP #{account.CpId}" : account.CpLogin;
+                var syncCp = targetSet == null || targetSet.Contains($"cp_{account.CpId}");
+                var syncFtp = targetSet == null || targetSet.Contains($"ftp_{account.CpId}");
+                var syncIis = targetSet == null || targetSet.Contains($"iis_{account.CpId}");
 
-                var cpUpdated = await ExecuteNonQueryAsync(connection, @"
+                if (syncCp)
+                {
+                    var encryptedCpPassword = await TryLegacyEncryptPwdAsync(newPassword);
+                    var cpUpdated = await ExecuteNonQueryAsync(connection, @"
 UPDATE dbo.cp_config
-SET pp1 = @passwordHash
+SET pp1 = @passwordHash,
+    cpPasswordHash = CASE WHEN @encryptedPassword <> '' THEN @encryptedPassword ELSE cpPasswordHash END
 WHERE cpID = @cpId
   AND customerID = @customerId", command =>
                 {
                     command.Parameters.AddWithValue("@passwordHash", passwordHash);
+                    command.Parameters.AddWithValue("@encryptedPassword", encryptedCpPassword);
                     command.Parameters.AddWithValue("@cpId", account.CpId);
                     command.Parameters.AddWithValue("@customerId", customerId);
-                });
+                    });
 
-                if (cpUpdated > 0)
-                {
-                    synced.Add($"{label}: CP login hash updated.");
-                    blocked.Add($"{label}: cpPasswordHash was not rewritten because Classic ASP encryptpwd compatibility is not finished yet.");
-                }
-                else
-                {
-                    blocked.Add($"{label}: CP login hash was not updated because the account row was not found.");
+                    if (cpUpdated > 0)
+                    {
+                        synced.Add($"{label}: CP login hash updated.");
+                        if (string.IsNullOrWhiteSpace(encryptedCpPassword))
+                        {
+                            blocked.Add($"{label}: cpPasswordHash was not rewritten because Classic ASP encryptpwd compatibility is not configured.");
+                        }
+                        else
+                        {
+                            synced.Add($"{label}: cpPasswordHash updated with legacy encryptpwd output.");
+                        }
+                    }
+                    else
+                    {
+                        blocked.Add($"{label}: CP login hash was not updated because the account row was not found.");
+                    }
                 }
 
                 if (IsLinuxHosting(account.WebHostType))
                 {
-                    var linuxResult = await SyncLinuxHostingPasswordAsync(connection, account, newPassword);
-                    AddPasswordSyncCallResult(label, "Linux cPanel password", linuxResult, synced, blocked);
+                    if (syncCp)
+                    {
+                        var linuxResult = await SyncLinuxHostingPasswordAsync(connection, account, newPassword);
+                        AddPasswordSyncCallResult(label, "Linux cPanel password", linuxResult, synced, blocked);
+                    }
                     continue;
                 }
 
-                blocked.Add($"{label}: FTP password DB sync is blocked until Classic ASP encryptpwd/encryptFtpPwd compatibility is finished.");
+                if (syncFtp)
+                {
+                    var ftpSync = await SyncWindowsFtpPasswordAsync(connection, account, newPassword);
+                    if (ftpSync.Success)
+                    {
+                        synced.Add($"{label}: {ftpSync.Message}");
+                    }
+                    else
+                    {
+                        blocked.Add($"{label}: {ftpSync.Message}");
+                    }
+                }
 
-                if (string.IsNullOrWhiteSpace(account.ServerId))
+                if (syncIis && string.IsNullOrWhiteSpace(account.ServerId))
                 {
                     blocked.Add($"{label}: IIS Manager/Web Deploy sync skipped because ServerID is missing.");
                 }
-                else
+                else if (syncIis)
                 {
                     var iisPasswordHash = passwordHash;
                     var iisAdd = await PostLegacyAgentAsync(agent, account.ServerId, "/IIS_api.asp", new Dictionary<string, string>
@@ -6247,30 +7057,131 @@ WHERE cpID = @cpId
                     AddPasswordSyncCallResult(label, "IIS Manager ResetUser", iisReset, synced, blocked);
                 }
 
-                var ssrsServerId = await LoadSsrsServerIdAsync(connection, account.CpId);
-                if (!string.IsNullOrWhiteSpace(ssrsServerId))
+                if (syncIis)
                 {
-                    var ssrsAdd = await PostLegacyAgentAsync(agent, ssrsServerId, "/aspuser.asp", new Dictionary<string, string>
+                    var ssrsServerId = await LoadSsrsServerIdAsync(connection, account.CpId);
+                    if (!string.IsNullOrWhiteSpace(ssrsServerId))
                     {
-                        ["action"] = "LocalUserAdd",
-                        ["UserID"] = account.CpLogin,
-                        ["Password"] = newPassword,
-                        ["cpID"] = account.CpId.ToString(CultureInfo.InvariantCulture)
-                    });
-                    AddPasswordSyncCallResult(label, "SSRS local user add", ssrsAdd, synced, blocked);
+                        var ssrsAdd = await PostLegacyAgentAsync(agent, ssrsServerId, "/aspuser.asp", new Dictionary<string, string>
+                        {
+                            ["action"] = "LocalUserAdd",
+                            ["UserID"] = account.CpLogin,
+                            ["Password"] = newPassword,
+                            ["cpID"] = account.CpId.ToString(CultureInfo.InvariantCulture)
+                        });
+                        AddPasswordSyncCallResult(label, "SSRS local user add", ssrsAdd, synced, blocked);
 
-                    var ssrsReset = await PostLegacyAgentAsync(agent, ssrsServerId, "/aspuser.asp", new Dictionary<string, string>
-                    {
-                        ["action"] = "LocalUserPasswordReset",
-                        ["UserID"] = account.CpLogin,
-                        ["Password"] = newPassword,
-                        ["cpID"] = account.CpId.ToString(CultureInfo.InvariantCulture)
-                    });
-                    AddPasswordSyncCallResult(label, "SSRS local user reset", ssrsReset, synced, blocked);
+                        var ssrsReset = await PostLegacyAgentAsync(agent, ssrsServerId, "/aspuser.asp", new Dictionary<string, string>
+                        {
+                            ["action"] = "LocalUserPasswordReset",
+                            ["UserID"] = account.CpLogin,
+                            ["Password"] = newPassword,
+                            ["cpID"] = account.CpId.ToString(CultureInfo.InvariantCulture)
+                        });
+                        AddPasswordSyncCallResult(label, "SSRS local user reset", ssrsReset, synced, blocked);
+                    }
                 }
             }
 
             return new PasswordSyncResult(synced, blocked);
+        }
+
+        private async Task<LegacyAgentCallResult> SyncWindowsFtpPasswordAsync(SqlConnection connection, HostingAccountSummary account, string newPassword)
+        {
+            var encryptedPassword = await TryLegacyEncryptPwdAsync(newPassword);
+            var encryptedFtpPassword = await TryLegacyEncryptFtpPwdAsync(newPassword);
+            if (string.IsNullOrWhiteSpace(encryptedPassword) || string.IsNullOrWhiteSpace(encryptedFtpPassword))
+            {
+                return new LegacyAgentCallResult(false, "FTP password DB sync blocked because Classic ASP encryptpwd/encryptFTPpwd compatibility is not configured.", "", "", null);
+            }
+
+            var existingRootFtp = await ExecuteScalarAsync<int>(connection, @"
+SELECT COUNT(*)
+FROM dbo.cp_config_FTP
+WHERE cpID = @cpId
+  AND LOWER(ftp_login) = LOWER(@cpLogin)", command =>
+            {
+                command.Parameters.AddWithValue("@cpId", account.CpId);
+                command.Parameters.AddWithValue("@cpLogin", account.CpLogin);
+            });
+
+            if (existingRootFtp <= 0)
+            {
+                var ftpPath = await LoadFtpRootPathAsync(connection, account.CpId, account.CpLogin);
+                var diskQuota = await LoadDiskQuotaMbAsync(connection, account.CpId, account.WebHostType);
+                await ExecuteNonQueryAsync(connection, @"
+INSERT INTO dbo.cp_config_FTP (pp1, cpid, ftp_login, ftp_password, ftp_path, ftp_quota, ftp_permission, cpurl)
+VALUES (@pp1, @cpId, @ftpLogin, @ftpPassword, @ftpPath, @ftpQuota, 'write', @cpUrl)", command =>
+                {
+                    command.Parameters.AddWithValue("@pp1", encryptedFtpPassword);
+                    command.Parameters.AddWithValue("@cpId", account.CpId);
+                    command.Parameters.AddWithValue("@ftpLogin", account.CpLogin);
+                    command.Parameters.AddWithValue("@ftpPassword", encryptedPassword);
+                    command.Parameters.AddWithValue("@ftpPath", ftpPath);
+                    command.Parameters.AddWithValue("@ftpQuota", diskQuota);
+                    command.Parameters.AddWithValue("@cpUrl", account.ServerId);
+                });
+                return new LegacyAgentCallResult(true, $"root FTP user was missing and was recreated in cp_config_FTP with path {ftpPath}.", "", "", null);
+            }
+
+            var updated = await ExecuteNonQueryAsync(connection, @"
+UPDATE dbo.cp_config_FTP
+SET ftp_password = @ftpPassword,
+    pp1 = @pp1
+WHERE cpID = @cpId
+  AND LOWER(ftp_login) = LOWER(@cpLogin)", command =>
+            {
+                command.Parameters.AddWithValue("@ftpPassword", encryptedPassword);
+                command.Parameters.AddWithValue("@pp1", encryptedFtpPassword);
+                command.Parameters.AddWithValue("@cpId", account.CpId);
+                command.Parameters.AddWithValue("@cpLogin", account.CpLogin);
+            });
+
+            return updated > 0
+                ? new LegacyAgentCallResult(true, "root FTP encrypted password fields updated in cp_config_FTP.", "", "", null)
+                : new LegacyAgentCallResult(false, "root FTP row was not updated.", "", "", null);
+        }
+
+        private static async Task<string> LoadFtpRootPathAsync(SqlConnection connection, long cpId, string cpLogin)
+        {
+            var existingPath = await ExecuteScalarAsync<string>(connection, @"
+SELECT TOP 1 ftp_path
+FROM dbo.cp_config_FTP
+WHERE cpID = @cpId
+ORDER BY CASE WHEN LOWER(ftp_login) = LOWER(@cpLogin) THEN 0 ELSE 1 END, ftp_uid", command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cpId);
+                command.Parameters.AddWithValue("@cpLogin", cpLogin);
+            }) ?? "";
+
+            if (!string.IsNullOrWhiteSpace(existingPath))
+            {
+                var normalized = existingPath.Trim().TrimEnd('\\', '/');
+                var marker = $"\\{cpLogin}\\";
+                var markerIndex = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (markerIndex >= 0)
+                {
+                    return normalized[..(markerIndex + marker.Length - 1)];
+                }
+
+                return normalized;
+            }
+
+            return $@"h:\root\home\{cpLogin}";
+        }
+
+        private static async Task<int> LoadDiskQuotaMbAsync(SqlConnection connection, long cpId, string webHostType)
+        {
+            var quota = await ExecuteScalarAsync<int>(connection, @"
+SELECT ISNULL(c.additionalDiskQuota, 0) + ISNULL(pc.webspace, 0)
+FROM dbo.cp_config c
+LEFT JOIN dbo.product_config pc ON pc.product_name = c.WebHostType
+WHERE c.cpID = @cpId", command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cpId);
+            });
+
+            return quota > 0 ? quota : 100;
         }
 
         private async Task<LegacyAgentCallResult> SyncLinuxHostingPasswordAsync(SqlConnection connection, HostingAccountSummary account, string newPassword)
@@ -6463,6 +7374,35 @@ ORDER BY username", command =>
             return "";
         }
 
+        private string GetScheduleTaskConnectionString()
+        {
+            var envValue = Environment.GetEnvironmentVariable("SCHEDULE_TASK_CONNECTION_STRING");
+            if (!string.IsNullOrWhiteSpace(envValue))
+            {
+                return envValue;
+            }
+
+            var configValue = _configuration.GetConnectionString("ScheduleTask");
+            if (!string.IsNullOrWhiteSpace(configValue))
+            {
+                return configValue;
+            }
+
+            return "";
+        }
+
+        private string GetAuditConnectionString()
+        {
+            var envValue = Environment.GetEnvironmentVariable("AUDIT_CONNECTION_STRING");
+            if (!string.IsNullOrWhiteSpace(envValue))
+            {
+                return envValue;
+            }
+
+            var configValue = _configuration.GetConnectionString("Audit");
+            return string.IsNullOrWhiteSpace(configValue) ? "" : configValue;
+        }
+
         private OpenSrsSettings GetOpenSrsSettings()
         {
             var apiUrl = ConfigOrEnv("OpenSrs:ApiUrl", "OPENSRS_API_URL");
@@ -6583,10 +7523,11 @@ ORDER BY username", command =>
             await using var command = new SqlCommand("SELECT TOP 1 CAST(email AS nvarchar(max)) FROM dbo.customer_profile WHERE customerID = @customerId", connection);
             command.Parameters.AddWithValue("@customerId", customerId);
             var value = await command.ExecuteScalarAsync();
-            var email = value == null || value == DBNull.Value ? "" : Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim() ?? "";
+            var rawEmail = value == null || value == DBNull.Value ? "" : Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim() ?? "";
+            var email = await ReadableStoredEmailAsync(rawEmail);
             if (!IsValidEmail(email))
             {
-                return new ReadableCustomerEmailResult(false, "", "Customer email is not readable by the new panel yet. The stored value may still be legacy-encrypted.");
+                return new ReadableCustomerEmailResult(false, "", "Customer email is not readable by the new panel yet.");
             }
 
             return new ReadableCustomerEmailResult(true, email, "Customer email loaded.");
@@ -6602,6 +7543,124 @@ ORDER BY username", command =>
             }
 
             return "";
+        }
+
+        private async Task<string> TryLegacyEncryptPwdAsync(string plainText)
+        {
+            var apiUrl = ConfigOrEnv("LegacyCrypto:EncryptPwdApiUrl", "LEGACY_ENCRYPTPWD_API_URL").Trim();
+            if (!string.IsNullOrWhiteSpace(apiUrl))
+            {
+                var encrypted = await TryLegacyEncryptApiAsync(apiUrl, plainText, "encryptpwd");
+                if (!string.IsNullOrWhiteSpace(encrypted))
+                {
+                    return encrypted;
+                }
+            }
+
+            return TryLegacyEncryptPwd(plainText);
+        }
+
+        private async Task<string> TryLegacyEncryptFtpPwdAsync(string plainText)
+        {
+            var apiUrl = ConfigOrEnv("LegacyCrypto:EncryptFtpPwdApiUrl", "LEGACY_ENCRYPTFTPPWD_API_URL").Trim();
+            if (!string.IsNullOrWhiteSpace(apiUrl))
+            {
+                var encrypted = await TryLegacyEncryptApiAsync(apiUrl, plainText, "encryptFTPpwd");
+                if (!string.IsNullOrWhiteSpace(encrypted))
+                {
+                    return encrypted;
+                }
+            }
+
+            var sharedApiUrl = ConfigOrEnv("LegacyCrypto:EncryptPwdApiUrl", "LEGACY_ENCRYPTPWD_API_URL").Trim();
+            if (!string.IsNullOrWhiteSpace(sharedApiUrl))
+            {
+                var encrypted = await TryLegacyEncryptApiAsync(sharedApiUrl, plainText, "encryptFTPpwd");
+                if (!string.IsNullOrWhiteSpace(encrypted))
+                {
+                    return encrypted;
+                }
+            }
+
+            return "";
+        }
+
+        private async Task<string> TryLegacyImportKey2EncryptAsync(string plainText)
+        {
+            var apiUrl = ConfigOrEnv("LegacyCrypto:ImportKey2ApiUrl", "LEGACY_IMPORTKEY2_API_URL").Trim();
+            if (string.IsNullOrWhiteSpace(apiUrl))
+            {
+                apiUrl = ConfigOrEnv("LegacyCrypto:EncryptPwdApiUrl", "LEGACY_ENCRYPTPWD_API_URL").Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(apiUrl))
+            {
+                return "";
+            }
+
+            return await TryLegacyEncryptApiAsync(apiUrl, plainText, "encryptimportkey2");
+        }
+
+        private async Task<string> LoadReverifyEmailTemplateAsync()
+        {
+            var configuredPath = ConfigOrEnv("EmailTemplates:ReverifyPath", "REVERIFY_EMAIL_TEMPLATE_PATH").Trim();
+            var candidates = new[]
+            {
+                configuredPath,
+                "/Users/erwinyu/Downloads/hosting/AP/marketing_admin/emailtemplates/re-verify.html",
+                "/Users/erwinyu/Downloads/hosting/AP/marketing_admin/emailtemplates/old_html_template/re-verify.html"
+            };
+
+            foreach (var candidate in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate) || !File.Exists(candidate))
+                {
+                    continue;
+                }
+
+                return await File.ReadAllTextAsync(candidate);
+            }
+
+            return @"<html><body>Dear Customer,<br /><br />Please goto the following link to verify your account.<br><br><a href=""https://member5.[BRANDDOMAIN]/account/re-verify_password_reset?guid=[GUID]"">https://member5.[BRANDDOMAIN]/account/re-verify_password_reset?guid=[GUID]</a><br><br>[BRANDDOMAIN] Team</body></html>";
+        }
+
+        private static async Task<string> TryLegacyEncryptApiAsync(string apiUrl, string plainText, string kind)
+        {
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                using var request = new HttpRequestMessage(HttpMethod.Post, apiUrl)
+                {
+                    Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                    {
+                        ["action"] = kind,
+                        ["mode"] = kind,
+                        ["kind"] = kind,
+                        ["value"] = plainText,
+                        ["text"] = plainText,
+                        ["plain"] = plainText,
+                        ["password"] = plainText
+                    })
+                };
+
+                var response = await httpClient.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return "";
+                }
+
+                var text = (await response.Content.ReadAsStringAsync()).Trim();
+                if (string.IsNullOrWhiteSpace(text) || text.Contains('<', StringComparison.Ordinal))
+                {
+                    return "";
+                }
+
+                return text;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return "";
+            }
         }
 
         private async Task<EmailSendResult> UpdateHelpdeskLoginEmailAsync(string username, string email)
@@ -6875,13 +7934,35 @@ Please confirm your {brandDomain} account:
             return string.IsNullOrWhiteSpace(configValue) ? "" : configValue;
         }
 
+        private static string EffectiveHelpdeskLogin(LoginUser user)
+        {
+            return user.IsControlPanelLogin && !string.IsNullOrWhiteSpace(user.CpLogin)
+                ? user.CpLogin
+                : user.Login;
+        }
+
         private static async Task<HelpdeskUserSummary?> LoadHelpdeskUserAsync(SqlConnection connection, string username)
         {
-            await using var command = new SqlCommand("sp_RetrieveUserByUserName", connection)
+            return await LoadHelpdeskUserCompatAsync(connection, username);
+        }
+
+        private static async Task<HelpdeskUserSummary?> FindHelpdeskUserForTicketAsync(SqlConnection connection, string username)
+        {
+            if (string.IsNullOrWhiteSpace(username))
             {
-                CommandType = CommandType.StoredProcedure
-            };
-            command.Parameters.Add("@userName", SqlDbType.NVarChar, 50).Value = username;
+                return null;
+            }
+
+            await using var command = new SqlCommand(@"
+SELECT TOP 1 
+    CAST(userid AS BIGINT) AS UserId,
+    username AS Login,
+    ISNULL(name, username) AS Name,
+    ISNULL(email, '') AS Email
+FROM dbo.[user]
+WHERE LOWER(username) = LOWER(@username)
+ORDER BY userid", connection);
+            command.Parameters.Add("@username", SqlDbType.NVarChar, 100).Value = username;
 
             await using var reader = await command.ExecuteReaderAsync();
             if (!await reader.ReadAsync())
@@ -6890,40 +7971,364 @@ Please confirm your {brandDomain} account:
             }
 
             return new HelpdeskUserSummary(
-                Convert.ToInt64(reader["userid"], CultureInfo.InvariantCulture),
-                Convert.ToString(reader["username"], CultureInfo.InvariantCulture) ?? username,
-                Convert.ToString(reader["name"], CultureInfo.InvariantCulture) ?? username,
-                Convert.ToString(reader["email"], CultureInfo.InvariantCulture) ?? ""
+                ReadInt64(reader, "UserId"),
+                ReadString(reader, "Login", username),
+                ReadString(reader, "Name", username),
+                ReadString(reader, "Email")
             );
         }
 
-        private static async Task<List<HelpdeskTicketSummary>> LoadHelpdeskTicketListAsync(SqlConnection connection, string procedureName, long userId)
+        private static async Task<List<HelpdeskUserSummary>> LoadHelpdeskUsersForScopeAsync(SqlConnection connection, string username)
         {
-            var tickets = new List<HelpdeskTicketSummary>();
-            await using var command = new SqlCommand(procedureName, connection)
+            var login = (username ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(login))
             {
-                CommandType = CommandType.StoredProcedure
-            };
-            command.Parameters.Add("@userID", SqlDbType.Decimal).Value = userId;
+                return [];
+            }
 
+            var isControlPanelLogin = login.Contains('-', StringComparison.Ordinal);
+            var commandText = isControlPanelLogin
+                ? @"
+SELECT CAST(userid AS BIGINT) AS UserId, username AS Login, ISNULL(name, username) AS Name, ISNULL(email, '') AS Email
+FROM dbo.[user]
+WHERE LOWER(username) = LOWER(@login)
+ORDER BY username"
+                : @"
+SELECT CAST(userid AS BIGINT) AS UserId, username AS Login, ISNULL(name, username) AS Name, ISNULL(email, '') AS Email
+FROM dbo.[user]
+WHERE LOWER(username) = LOWER(@login)
+   OR LOWER(username) LIKE LOWER(@hostingPrefix)
+ORDER BY CASE WHEN LOWER(username) = LOWER(@login) THEN 0 ELSE 1 END, username";
+
+            await using var command = new SqlCommand(commandText, connection);
+            command.Parameters.Add("@login", SqlDbType.VarChar, 50).Value = login;
+            if (!isControlPanelLogin)
+            {
+                command.Parameters.Add("@hostingPrefix", SqlDbType.VarChar, 60).Value = $"{login}-%";
+            }
+
+            var users = new List<HelpdeskUserSummary>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                users.Add(new HelpdeskUserSummary(
+                    ReadInt64(reader, "UserId"),
+                    ReadString(reader, "Login", login),
+                    ReadString(reader, "Name", login),
+                    ReadString(reader, "Email")
+                ));
+            }
+
+            return users;
+        }
+
+        private static async Task<HelpdeskUserSummary?> LoadHelpdeskUserCompatAsync(SqlConnection connection, string username)
+        {
+            if (string.IsNullOrWhiteSpace(username))
+            {
+                return null;
+            }
+
+            var userTable = string.Empty;
+            var candidateUsers = new[] { "tblUser", "user", "users", "[user]", "User", "customer" };
+            foreach (var candidate in candidateUsers)
+            {
+                var normalized = candidate.Trim('[', ']');
+                if (await TableExistsAsync(connection, normalized))
+                {
+                    userTable = normalized;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(userTable))
+            {
+                return null;
+            }
+
+            async Task<string?> FindColumnAsync(params string[] columns)
+            {
+                foreach (var column in columns)
+                {
+                    if (await TableColumnExistsAsync(connection, userTable, column))
+                    {
+                        return column;
+                    }
+                }
+
+                return null;
+            }
+
+            var userIdColumn = await FindColumnAsync("userid", "userID", "UserID", "id", "ID", "customerID", "customerId");
+            var userNameColumn = await FindColumnAsync("username", "userName", "user_name", "login", "customer_login");
+            var nameColumn = await FindColumnAsync("name", "fullName", "fullname", "firstName", "realname", "customer_name");
+            var emailColumn = await FindColumnAsync("email", "useremail", "e_mail");
+
+            if (string.IsNullOrWhiteSpace(userIdColumn) || string.IsNullOrWhiteSpace(userNameColumn))
+            {
+                return null;
+            }
+
+            var nameExpression = string.IsNullOrWhiteSpace(nameColumn)
+                ? userNameColumn
+                : $"ISNULL({nameColumn}, {userNameColumn})";
+            var emailExpression = string.IsNullOrWhiteSpace(emailColumn)
+                ? "''"
+                : $"ISNULL({emailColumn}, '')";
+
+            await using var command = new SqlCommand($@"
+SELECT TOP 1
+    {userIdColumn} AS UserId,
+    {userNameColumn} AS Login,
+    {nameExpression} AS Name,
+    {emailExpression} AS Email
+FROM dbo.[{userTable}]
+WHERE LOWER({userNameColumn}) = LOWER(@username)
+ORDER BY {userIdColumn}", connection);
+            command.Parameters.Add("@username", SqlDbType.NVarChar, 100).Value = username;
+
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new HelpdeskUserSummary(
+                ReadInt64(reader, "UserId"),
+                ReadString(reader, "Login", username),
+                ReadString(reader, "Name", username),
+                ReadString(reader, "Email")
+            );
+        }
+
+        private static async Task<List<HelpdeskTicketSummary>> LoadHelpdeskTicketListAsync(SqlConnection connection, long userId, bool isClosed = false)
+        {
+            return await LoadHelpdeskTicketListCompatAsync(connection, userId, isClosed);
+        }
+
+        private static async Task<List<HelpdeskTicketSummary>> LoadHelpdeskTicketListAsync(SqlConnection connection, List<HelpdeskUserSummary> users, bool isClosed)
+        {
+            if (users.Count == 0)
+            {
+                return [];
+            }
+
+            var userIds = users.Select(user => user.UserId).Distinct().ToArray();
+            var parameterNames = userIds.Select((_, index) => $"@userId{index}").ToArray();
+            var closedWhere = isClosed ? "c.closedate IS NOT NULL" : "c.closedate IS NULL";
+            var commandText = $@"
+SELECT TOP 300
+    CAST(c.CallID AS BIGINT) AS callID,
+    c.subject,
+    ISNULL(s.description, CASE WHEN c.closedate IS NULL THEN 'Pending' ELSE 'Closed' END) AS stateName,
+    c.priority,
+    ISNULL(c.replycount, 0) AS replyCount,
+    c.enterdate,
+    c.closedate,
+    u.username,
+    ISNULL(cat.description, '') AS category,
+    ISNULL(sub.description, '') AS subCategory,
+    c.IsWaiting
+FROM dbo.calls c
+INNER JOIN dbo.[user] u ON u.userid = c.userid
+LEFT JOIN dbo.tblState s ON s.StateID = c.StateID
+LEFT JOIN dbo.tblSubCategory sub ON sub.SubCategoryID = c.SubCategoryID
+LEFT JOIN dbo.tblCategory cat ON cat.CategoryID = sub.CategoryID
+WHERE c.userid IN ({string.Join(", ", parameterNames)})
+  AND {closedWhere}
+ORDER BY {(isClosed ? "c.closedate" : "c.enterdate")} DESC";
+
+            await using var command = new SqlCommand(commandText, connection);
+            for (var index = 0; index < userIds.Length; index++)
+            {
+                command.Parameters.Add(parameterNames[index], SqlDbType.Decimal).Value = userIds[index];
+            }
+
+            var tickets = new List<HelpdeskTicketSummary>();
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
                 tickets.Add(new HelpdeskTicketSummary(
                     ReadInt64(reader, "callID"),
+                    ReadString(reader, "username"),
                     ReadString(reader, "subject"),
-                    ReadString(reader, "statename", ReadString(reader, "stateName", ReadString(reader, "stateID"))),
-                    ReadInt32(reader, "customerPriority", ReadInt32(reader, "priority")),
-                    ReadInt32(reader, "replycount"),
+                    ReadString(reader, "stateName"),
+                    ReadInt32(reader, "priority"),
+                    ReadInt32(reader, "replyCount"),
                     ReadDateTime(reader, "enterdate") ?? DateTime.MinValue,
                     ReadDateTime(reader, "closedate"),
-                    ReadString(reader, "category", ReadString(reader, "customerCategory")),
-                    ReadString(reader, "subCategory", ReadString(reader, "customerSubCategory")),
+                    ReadString(reader, "category"),
+                    ReadString(reader, "subCategory"),
                     ReadBool(reader, "IsWaiting")
                 ));
             }
 
             return tickets;
+        }
+
+        private static async Task<List<HelpdeskTicketSummary>> LoadHelpdeskTicketListCompatAsync(SqlConnection connection, long userId, bool isClosed)
+        {
+            var candidateTables = new[] { "tblCall", "Call", "Calls", "tickets", "tblTickets" };
+            var tableName = "";
+            foreach (var candidate in candidateTables)
+            {
+                if (await TableExistsAsync(connection, candidate))
+                {
+                    tableName = candidate;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(tableName))
+            {
+                return [];
+            }
+
+            async Task<string?> FindColumnAsync(params string[] candidates)
+            {
+                foreach (var column in candidates)
+                {
+                    if (await TableColumnExistsAsync(connection, tableName, column))
+                    {
+                        return column;
+                    }
+                }
+
+                return null;
+            }
+
+            var userIdColumn = await FindColumnAsync("userID", "userId", "userid", "UserID", "UserId");
+            var callIdColumn = await FindColumnAsync("callID", "callId", "callid");
+            var subjectColumn = await FindColumnAsync("subject");
+            if (string.IsNullOrWhiteSpace(userIdColumn) || string.IsNullOrWhiteSpace(callIdColumn) || string.IsNullOrWhiteSpace(subjectColumn))
+            {
+                return [];
+            }
+
+            var stateNameColumn = await FindColumnAsync("statename", "stateName", "state");
+            var priorityColumn = await FindColumnAsync("customerPriority", "customerpriority", "priority");
+            var replyCountColumn = await FindColumnAsync("replycount", "replyCount", "reply_count");
+            var enterDateColumn = await FindColumnAsync("enterdate", "EnterDate", "createDate", "createdDate", "createdate");
+            var closeDateColumn = await FindColumnAsync("closedate", "closeDate", "close_date");
+            var categoryColumn = await FindColumnAsync("customerCategory", "category");
+            var subCategoryColumn = await FindColumnAsync("customerSubCategory", "subCategory");
+            var waitingColumn = await FindColumnAsync("IsWaiting", "isWaiting");
+            var orderColumn = string.IsNullOrWhiteSpace(enterDateColumn) ? callIdColumn : enterDateColumn;
+
+            var selectColumns = new List<string>
+            {
+                $"{callIdColumn} AS callID",
+                $"{subjectColumn} AS subject"
+            };
+
+            if (!string.IsNullOrWhiteSpace(stateNameColumn))
+            {
+                selectColumns.Add($"{stateNameColumn} AS stateName");
+            }
+
+            if (!string.IsNullOrWhiteSpace(priorityColumn))
+            {
+                selectColumns.Add($"{priorityColumn} AS priority");
+            }
+
+            if (!string.IsNullOrWhiteSpace(replyCountColumn))
+            {
+                selectColumns.Add($"{replyCountColumn} AS replyCount");
+            }
+
+            if (!string.IsNullOrWhiteSpace(enterDateColumn))
+            {
+                selectColumns.Add($"{enterDateColumn} AS enterDate");
+            }
+
+            if (!string.IsNullOrWhiteSpace(closeDateColumn))
+            {
+                selectColumns.Add($"{closeDateColumn} AS closeDate");
+            }
+
+            if (!string.IsNullOrWhiteSpace(categoryColumn))
+            {
+                selectColumns.Add($"{categoryColumn} AS category");
+            }
+
+            if (!string.IsNullOrWhiteSpace(subCategoryColumn))
+            {
+                selectColumns.Add($"{subCategoryColumn} AS subCategory");
+            }
+
+            if (!string.IsNullOrWhiteSpace(waitingColumn))
+            {
+                selectColumns.Add($"{waitingColumn} AS isWaiting");
+            }
+
+            var whereClauses = new List<string>
+            {
+                $"{userIdColumn} = @userId"
+            };
+
+            if (!string.IsNullOrWhiteSpace(closeDateColumn))
+            {
+                whereClauses.Add(isClosed
+                    ? $"{closeDateColumn} IS NOT NULL"
+                    : $"{closeDateColumn} IS NULL");
+            }
+
+            var commandText = $@"
+SELECT TOP 200 {string.Join(", ", selectColumns)}
+FROM dbo.{tableName}
+WHERE {string.Join(" AND ", whereClauses)}
+ORDER BY {orderColumn} DESC";
+
+            await using var command = new SqlCommand(commandText, connection);
+            command.Parameters.Add("@userId", SqlDbType.Decimal).Value = userId;
+
+            var tickets = new List<HelpdeskTicketSummary>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var rowStateName = ReadString(reader, "stateName");
+                var rowIsClosed = string.IsNullOrWhiteSpace(closeDateColumn)
+                    ? IsHelpdeskTicketClosedState(rowStateName)
+                    : ReadDateTime(reader, "closeDate").HasValue;
+
+                if (isClosed && !rowIsClosed)
+                {
+                    continue;
+                }
+
+                if (!isClosed && rowIsClosed)
+                {
+                    continue;
+                }
+
+                tickets.Add(new HelpdeskTicketSummary(
+                    ReadInt64(reader, "callID"),
+                    "",
+                    ReadString(reader, "subject"),
+                    rowStateName,
+                    ReadInt32(reader, "priority"),
+                    ReadInt32(reader, "replyCount"),
+                    ReadDateTime(reader, "enterDate") ?? DateTime.MinValue,
+                    ReadDateTime(reader, "closeDate"),
+                    ReadString(reader, "category"),
+                    ReadString(reader, "subCategory"),
+                    ReadBool(reader, "isWaiting")
+                ));
+            }
+
+            return tickets;
+        }
+
+        private static bool IsHelpdeskTicketClosedState(string? stateName)
+        {
+            if (string.IsNullOrWhiteSpace(stateName))
+            {
+                return false;
+            }
+
+            var normalized = stateName.ToLowerInvariant();
+            return normalized.Contains("close", StringComparison.Ordinal) || normalized.Contains("resolved", StringComparison.Ordinal)
+                || normalized.Contains("solved", StringComparison.Ordinal) || normalized.Contains("done", StringComparison.Ordinal);
         }
 
         private static async Task<List<HelpdeskCategorySummary>> LoadHelpdeskCategoriesAsync(SqlConnection connection)
@@ -7028,10 +8433,17 @@ ORDER BY I.[Order]", connection);
 
         private static async Task<HelpdeskCategoryRule?> LoadHelpdeskCategoryAsync(SqlConnection connection, int categoryId)
         {
-            await using var command = new SqlCommand("sp_RetrieveCategoryByID", connection)
-            {
-                CommandType = CommandType.StoredProcedure
-            };
+            await using var command = new SqlCommand(@"
+SELECT TOP 1
+    CategoryID,
+    Description,
+    DefaultPriority,
+    IsDefaultPriority,
+    DefaultQueueLevel,
+    IsDefaultQueueLevel
+FROM dbo.tblCategory
+WHERE CategoryID = @CategoryID
+  AND IsDisable = 0", connection);
             command.Parameters.Add("@CategoryID", SqlDbType.Int).Value = categoryId;
 
             await using var reader = await command.ExecuteReaderAsync();
@@ -7089,46 +8501,413 @@ ORDER BY I.[Order]", connection);
 
         private static async Task<long> CreateHelpdeskTicketAsync(SqlConnection connection, long userId, string email, string remoteIp, string url, string subject, string description, int subcategoryId, int priority, int queueLevel, string webServerIp, int serverType)
         {
-            await using var command = new SqlCommand("sp_CreateTicket", connection)
-            {
-                CommandType = CommandType.StoredProcedure
-            };
-            command.Parameters.Add("@userID", SqlDbType.Decimal).Value = userId;
-            command.Parameters.Add("@useremail", SqlDbType.NVarChar, 100).Value = email;
-            command.Parameters.Add("@myIP", SqlDbType.NVarChar, 100).Value = remoteIp;
-            command.Parameters.Add("@URL", SqlDbType.NVarChar, 50).Value = url;
-            command.Parameters.Add("@subject", SqlDbType.NVarChar, 300).Value = subject;
-            command.Parameters.Add("@description", SqlDbType.NVarChar).Value = description;
+            await using var command = new SqlCommand(@"
+INSERT INTO dbo.calls (
+    userid, useremail, myip, url, subject, description, subcategoryID, customerSubCategoryID,
+    priority, customerPriority, replycount, stateID, enterDate, queueLevel, IsLocked, IsWaiting,
+    UserLastAccess, UserActionID, staffID, webServerIP, ServerType
+)
+OUTPUT INSERTED.CallID
+VALUES (
+    @userid, @useremail, @myIP, @URL, @subject, @description, @subcategoryID, @customerSubcategoryID,
+    @priority, @customerPriority, 0, 20, @EnterDate, @queueLevel, 0, 0,
+    @UserLastAccess, 1, NULL, @webServerIP, @ServerType
+);", connection);
+            command.Parameters.Add("@userid", SqlDbType.Decimal).Value = userId;
+            command.Parameters.Add("@useremail", SqlDbType.VarChar, 100).Value = string.IsNullOrWhiteSpace(email) ? "" : email;
+            command.Parameters.Add("@myIP", SqlDbType.VarChar, 50).Value = string.IsNullOrWhiteSpace(remoteIp) ? "0.0.0.0" : remoteIp;
+            command.Parameters.Add("@URL", SqlDbType.VarChar, 200).Value = string.IsNullOrWhiteSpace(url) ? "" : url;
+            command.Parameters.Add("@subject", SqlDbType.NVarChar, 200).Value = subject;
+            command.Parameters.Add("@description", SqlDbType.NText).Value = description;
             command.Parameters.Add("@subcategoryID", SqlDbType.Int).Value = subcategoryId;
             command.Parameters.Add("@customerSubcategoryID", SqlDbType.Int).Value = subcategoryId;
-            command.Parameters.Add("@priority", SqlDbType.Int).Value = priority;
-            command.Parameters.Add("@customerPriority", SqlDbType.Int).Value = priority;
-            command.Parameters.Add("@stateID", SqlDbType.Int).Value = 20;
-            command.Parameters.Add("@QueueLevel", SqlDbType.Int).Value = queueLevel;
-            command.Parameters.Add("@StaffID", SqlDbType.Int).Value = DBNull.Value;
+            command.Parameters.Add("@priority", SqlDbType.SmallInt).Value = priority;
+            command.Parameters.Add("@customerPriority", SqlDbType.SmallInt).Value = priority;
             command.Parameters.Add("@EnterDate", SqlDbType.DateTime).Value = DateTime.Now;
+            command.Parameters.Add("@queueLevel", SqlDbType.Int).Value = queueLevel;
             command.Parameters.Add("@UserLastAccess", SqlDbType.DateTime).Value = DateTime.Now;
-            command.Parameters.Add("@UserActionID", SqlDbType.Int).Value = 1;
-            command.Parameters.Add("@StaffLastAccess", SqlDbType.DateTime).Value = DateTime.Now;
-            command.Parameters.Add("@StaffActionID", SqlDbType.Int).Value = DBNull.Value;
-            command.Parameters.Add("@IsLocked", SqlDbType.Bit).Value = false;
-            command.Parameters.Add("@IsWaiting", SqlDbType.Bit).Value = false;
-            command.Parameters.Add("@webServerIP", SqlDbType.NVarChar, 50).Value = webServerIp;
+            command.Parameters.Add("@webServerIP", SqlDbType.VarChar, 50).Value = webServerIp;
             command.Parameters.Add("@ServerType", SqlDbType.Int).Value = serverType;
-            var result = await command.ExecuteScalarAsync();
-            return result == null || result == DBNull.Value ? 0 : Convert.ToInt64(result, CultureInfo.InvariantCulture);
+
+            var raw = await command.ExecuteScalarAsync();
+            if (raw == null || raw == DBNull.Value)
+            {
+                return 0;
+            }
+
+            if (long.TryParse(Convert.ToString(raw, CultureInfo.InvariantCulture), out var callId))
+            {
+                return callId;
+            }
+
+            return 0;
         }
 
-        private static bool IsMissingCpLoginColumn(SqlException ex)
+        private async Task<List<string>> SaveHelpdeskUploadsAsync(HttpContext context, IReadOnlyList<IFormFile> files)
         {
-            if (ex == null)
+            if (files.Count == 0)
+            {
+                return [];
+            }
+
+            if (files.Count > 5)
+            {
+                throw new InvalidDataException("You can upload up to 5 files per ticket.");
+            }
+
+            var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+                ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".csv"
+            };
+            const long maxFileSize = 5 * 1024 * 1024;
+            var environment = context.RequestServices.GetRequiredService<IWebHostEnvironment>();
+            var uploadRoot = GetHelpdeskUploadRoot(environment);
+            System.IO.Directory.CreateDirectory(uploadRoot);
+
+            var urls = new List<string>();
+            foreach (var file in files)
+            {
+                if (file.Length <= 0)
+                {
+                    continue;
+                }
+
+                if (file.Length > maxFileSize)
+                {
+                    throw new InvalidDataException($"{file.FileName} is larger than 5MB.");
+                }
+
+                var extension = System.IO.Path.GetExtension(file.FileName);
+                if (!allowedExtensions.Contains(extension))
+                {
+                    throw new InvalidDataException($"{file.FileName} is not an allowed file type.");
+                }
+
+                var fileName = $"{RandomAlphaNumeric(20)}{extension.ToLowerInvariant()}";
+                var destination = System.IO.Path.Combine(uploadRoot, fileName);
+                await using (var stream = System.IO.File.Create(destination))
+                {
+                    await file.CopyToAsync(stream);
+                }
+
+                var accessToken = RandomAlphaNumeric(48);
+                await System.IO.File.WriteAllTextAsync($"{destination}.token", accessToken);
+
+                var request = context.Request;
+                urls.Add($"{request.Scheme}://{request.Host}/api/account/helpdesk/attachments/{fileName}?token={accessToken}");
+            }
+
+            return urls;
+        }
+
+        private static string GetHelpdeskUploadRoot(IWebHostEnvironment environment)
+        {
+            return System.IO.Path.Combine(environment.ContentRootPath, "App_Data", "helpdesk_temp");
+        }
+
+        private static string NormalizeHelpdeskAttachmentFileName(string? fileName)
+        {
+            var safeName = System.IO.Path.GetFileName(fileName ?? "").Trim();
+            if (safeName.Length is < 24 or > 32)
+            {
+                return "";
+            }
+
+            var extension = System.IO.Path.GetExtension(safeName);
+            var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+                ".doc", ".docx", ".pdf", ".xls", ".xlsx", ".csv"
+            };
+            if (!allowedExtensions.Contains(extension))
+            {
+                return "";
+            }
+
+            var stem = System.IO.Path.GetFileNameWithoutExtension(safeName);
+            return stem.Length == 20 && stem.All(char.IsLetterOrDigit) ? safeName : "";
+        }
+
+        private static string ResolveHelpdeskAttachmentPath(IWebHostEnvironment environment, string fileName)
+        {
+            var safeName = NormalizeHelpdeskAttachmentFileName(fileName);
+            if (string.IsNullOrWhiteSpace(safeName))
+            {
+                return "";
+            }
+
+            var uploadRoot = GetHelpdeskUploadRoot(environment);
+            var candidate = System.IO.Path.GetFullPath(System.IO.Path.Combine(uploadRoot, safeName));
+            var rootFullPath = System.IO.Path.GetFullPath(uploadRoot);
+            if (!candidate.StartsWith(rootFullPath + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return "";
+            }
+
+            if (System.IO.File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            var webRoot = environment.WebRootPath;
+            if (string.IsNullOrWhiteSpace(webRoot))
+            {
+                webRoot = System.IO.Path.Combine(environment.ContentRootPath, "wwwroot");
+            }
+
+            var legacyRoot = System.IO.Path.Combine(webRoot, "helpdesk_temp");
+            var legacyCandidate = System.IO.Path.GetFullPath(System.IO.Path.Combine(legacyRoot, safeName));
+            var legacyRootFullPath = System.IO.Path.GetFullPath(legacyRoot);
+            return legacyCandidate.StartsWith(legacyRootFullPath + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                ? legacyCandidate
+                : "";
+        }
+
+        private static string GetHelpdeskAttachmentContentType(string fileName)
+        {
+            return System.IO.Path.GetExtension(fileName).ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".bmp" => "image/bmp",
+                ".pdf" => "application/pdf",
+                ".doc" => "application/msword",
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".xls" => "application/vnd.ms-excel",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".csv" => "text/csv",
+                _ => "application/octet-stream"
+            };
+        }
+
+        private static async Task<bool> HelpdeskAttachmentBelongsToUsersAsync(SqlConnection connection, List<HelpdeskUserSummary> users, string fileName)
+        {
+            if (users.Count == 0)
             {
                 return false;
             }
 
-            return ex.Number == 207
-                && (ex.Message.Contains("Invalid column name 'cp_login'", StringComparison.OrdinalIgnoreCase)
-                    || ex.Message.Contains("The multi-part identifier 'cp_login'", StringComparison.OrdinalIgnoreCase));
+            var userIds = users.Select(user => user.UserId).Distinct().ToArray();
+            var parameterNames = userIds.Select((_, index) => $"@userId{index}").ToArray();
+            await using var command = new SqlCommand($@"
+SELECT COUNT(*)
+FROM dbo.calls c
+WHERE c.userid IN ({string.Join(", ", parameterNames)})
+  AND (
+      CAST(c.description AS nvarchar(max)) LIKE @filePattern
+      OR EXISTS (
+          SELECT 1
+          FROM dbo.notes n
+          WHERE n.callid = c.CallID
+            AND CAST(n.comment AS nvarchar(max)) LIKE @filePattern
+      )
+  )", connection);
+            for (var index = 0; index < userIds.Length; index++)
+            {
+                command.Parameters.Add(parameterNames[index], SqlDbType.Decimal).Value = userIds[index];
+            }
+            command.Parameters.Add("@filePattern", SqlDbType.NVarChar, 256).Value = $"%{fileName}%";
+
+            var raw = await command.ExecuteScalarAsync();
+            return Convert.ToInt32(raw ?? 0, CultureInfo.InvariantCulture) > 0;
+        }
+
+        private static async Task<bool> IsValidHelpdeskAttachmentTokenAsync(string filePath, string providedToken)
+        {
+            if (string.IsNullOrWhiteSpace(providedToken) || providedToken.Length < 32 || !providedToken.All(char.IsLetterOrDigit))
+            {
+                return false;
+            }
+
+            var tokenPath = $"{filePath}.token";
+            if (!System.IO.File.Exists(tokenPath))
+            {
+                return false;
+            }
+
+            var expectedToken = (await System.IO.File.ReadAllTextAsync(tokenPath)).Trim();
+            return FixedTimeEquals(providedToken, expectedToken);
+        }
+
+        private static string BuildHelpdeskHtmlBody(string description, IReadOnlyList<string> uploadUrls)
+        {
+            var builder = new StringBuilder();
+            builder.Append(WebUtility.HtmlEncode(description ?? "").Replace("\r\n", "<br>", StringComparison.Ordinal).Replace("\n", "<br>", StringComparison.Ordinal).Replace("\r", "<br>", StringComparison.Ordinal));
+            if (uploadUrls.Count > 0)
+            {
+                builder.Append("<br><br>Attachments:<br>");
+                foreach (var url in uploadUrls)
+                {
+                    var encoded = WebUtility.HtmlEncode(url);
+                    builder.Append(encoded);
+                    builder.Append("<br>");
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        private static async Task<HelpdeskTicketDetail?> LoadHelpdeskTicketDetailAsync(SqlConnection connection, List<HelpdeskUserSummary> users, long callId)
+        {
+            if (users.Count == 0)
+            {
+                return null;
+            }
+
+            var userIds = users.Select(user => user.UserId).Distinct().ToArray();
+            var parameterNames = userIds.Select((_, index) => $"@userId{index}").ToArray();
+            await using var command = new SqlCommand($@"
+SELECT TOP 1
+    CAST(c.CallID AS BIGINT) AS callID,
+    CAST(c.userid AS BIGINT) AS userID,
+    u.username,
+    ISNULL(u.name, u.username) AS userName,
+    ISNULL(u.email, '') AS email,
+    c.url,
+    c.useremail,
+    c.subject,
+    CAST(c.description AS nvarchar(max)) AS description,
+    ISNULL(s.description, CASE WHEN c.closedate IS NULL THEN 'Pending' ELSE 'Closed' END) AS stateName,
+    c.priority,
+    ISNULL(c.replycount, 0) AS replyCount,
+    c.enterdate,
+    c.closedate,
+    ISNULL(cat.description, '') AS category,
+    ISNULL(sub.description, '') AS subCategory,
+    c.IsWaiting
+FROM dbo.calls c
+INNER JOIN dbo.[user] u ON u.userid = c.userid
+LEFT JOIN dbo.tblState s ON s.StateID = c.StateID
+LEFT JOIN dbo.tblSubCategory sub ON sub.SubCategoryID = c.SubCategoryID
+LEFT JOIN dbo.tblCategory cat ON cat.CategoryID = sub.CategoryID
+WHERE c.CallID = @callId
+  AND c.userid IN ({string.Join(", ", parameterNames)})", connection);
+            command.Parameters.Add("@callId", SqlDbType.Decimal).Value = callId;
+            for (var index = 0; index < userIds.Length; index++)
+            {
+                command.Parameters.Add(parameterNames[index], SqlDbType.Decimal).Value = userIds[index];
+            }
+
+            HelpdeskTicketDetail? detail = null;
+            await using (var reader = await command.ExecuteReaderAsync())
+            {
+                if (!await reader.ReadAsync())
+                {
+                    return null;
+                }
+
+                var summary = new HelpdeskTicketSummary(
+                    ReadInt64(reader, "callID"),
+                    ReadString(reader, "username"),
+                    ReadString(reader, "subject"),
+                    ReadString(reader, "stateName"),
+                    ReadInt32(reader, "priority"),
+                    ReadInt32(reader, "replyCount"),
+                    ReadDateTime(reader, "enterdate") ?? DateTime.MinValue,
+                    ReadDateTime(reader, "closedate"),
+                    ReadString(reader, "category"),
+                    ReadString(reader, "subCategory"),
+                    ReadBool(reader, "IsWaiting")
+                );
+                var user = new HelpdeskUserSummary(
+                    ReadInt64(reader, "userID"),
+                    ReadString(reader, "username"),
+                    ReadString(reader, "userName"),
+                    ReadString(reader, "email")
+                );
+                detail = new HelpdeskTicketDetail(
+                    summary,
+                    user,
+                    ReadString(reader, "url"),
+                    ReadString(reader, "useremail"),
+                    ReadString(reader, "description"),
+                    []
+                );
+            }
+
+            var notes = await LoadHelpdeskTicketNotesAsync(connection, callId);
+            return detail with { Notes = notes };
+        }
+
+        private static async Task<List<HelpdeskTicketNote>> LoadHelpdeskTicketNotesAsync(SqlConnection connection, long callId)
+        {
+            await using var command = new SqlCommand(@"
+SELECT
+    CAST(n.Noteid AS BIGINT) AS noteId,
+    CAST(ISNULL(n.userid, 0) AS BIGINT) AS userId,
+    CAST(ISNULL(n.staffid, 0) AS BIGINT) AS staffId,
+    ISNULL(u.name, ISNULL(st.name, 'Support')) AS authorName,
+    CAST(n.comment AS nvarchar(max)) AS comment,
+    CAST(n.commentforStaff AS nvarchar(max)) AS commentForStaff,
+    n.enterdate,
+    n.myip
+FROM dbo.notes n
+LEFT JOIN dbo.[user] u ON u.userid = n.userid
+LEFT JOIN dbo.staff st ON st.staffid = n.staffid
+WHERE n.callid = @callId
+ORDER BY n.Noteid", connection);
+            command.Parameters.Add("@callId", SqlDbType.Decimal).Value = callId;
+
+            var notes = new List<HelpdeskTicketNote>();
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var staffId = ReadInt64(reader, "staffId");
+                notes.Add(new HelpdeskTicketNote(
+                    ReadInt64(reader, "noteId"),
+                    staffId > 0 ? "staff" : "user",
+                    ReadString(reader, "authorName"),
+                    ReadString(reader, "comment"),
+                    ReadString(reader, "commentForStaff"),
+                    ReadDateTime(reader, "enterdate") ?? DateTime.MinValue,
+                    ReadString(reader, "myip")
+                ));
+            }
+
+            return notes;
+        }
+
+        private static async Task<HelpdeskTicketNote> CreateHelpdeskReplyAsync(SqlConnection connection, long callId, long userId, string body, string remoteIp)
+        {
+            await using var command = new SqlCommand(@"
+INSERT INTO dbo.notes (callid, enterdate, comment, isPrivate, myip, StaffID, UserID, commentforStaff, laststaffid)
+OUTPUT INSERTED.Noteid
+VALUES (@callId, @enterDate, @comment, '0', @myIp, NULL, @userId, @comment, NULL);
+
+UPDATE dbo.calls
+SET replycount = ISNULL(replycount, 0) + 1,
+    UserLastAccess = @enterDate,
+    UserActionID = 1,
+    IsWaiting = 0
+WHERE CallID = @callId;", connection);
+            var now = DateTime.Now;
+            command.Parameters.Add("@callId", SqlDbType.Decimal).Value = callId;
+            command.Parameters.Add("@enterDate", SqlDbType.DateTime).Value = now;
+            command.Parameters.Add("@comment", SqlDbType.NText).Value = body;
+            command.Parameters.Add("@myIp", SqlDbType.VarChar, 50).Value = string.IsNullOrWhiteSpace(remoteIp) ? "0.0.0.0" : remoteIp;
+            command.Parameters.Add("@userId", SqlDbType.Decimal).Value = userId;
+
+            var raw = await command.ExecuteScalarAsync();
+            var noteId = raw == null || raw == DBNull.Value ? 0 : Convert.ToInt64(raw, CultureInfo.InvariantCulture);
+            return new HelpdeskTicketNote(noteId, "user", "", body, body, now, remoteIp);
+        }
+
+        private static async Task CloseHelpdeskTicketAsync(SqlConnection connection, long callId)
+        {
+            await using var command = new SqlCommand(@"
+UPDATE dbo.calls
+SET closedate = GETDATE(),
+    stateID = 0,
+    UserLastAccess = GETDATE(),
+    UserActionID = 3,
+    IsWaiting = 0
+WHERE CallID = @callId
+  AND closedate IS NULL;", connection);
+            command.Parameters.Add("@callId", SqlDbType.Decimal).Value = callId;
+            await command.ExecuteNonQueryAsync();
         }
 
         private static bool IsTicketQueueCompatibilityIssue(SqlException ex)
@@ -7140,7 +8919,6 @@ ORDER BY I.[Order]", connection);
 
             return ex.Number == 207
                 || ex.Number == 2812
-                || ex.Message.Contains("sp_AssignTicket", StringComparison.OrdinalIgnoreCase)
                 || ex.Message.Contains("invalid column name", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -7159,77 +8937,83 @@ ORDER BY I.[Order]", connection);
             int serverType)
         {
             var candidateTables = new[] { "tblCall", "Call", "Calls", "tickets", "tblTickets" };
-            var tableName = "";
             foreach (var candidate in candidateTables)
             {
-                if (await TableExistsAsync(connection, candidate))
+                if (!await TableExistsAsync(connection, candidate))
                 {
-                    tableName = candidate;
-                    break;
+                    continue;
                 }
-            }
-
-            if (string.IsNullOrWhiteSpace(tableName))
-            {
-                throw new InvalidOperationException("Helpdesk compatibility fallback: no call table was found.");
-            }
-
-            var columns = new List<string>();
-            var parameters = new List<string>();
-            await using var command = new SqlCommand
-            {
-                Connection = connection,
-                CommandText = string.Empty
-            };
-
-            async Task AddIfExistsAsync(string column, string parameterName, object value, SqlDbType dbType, int size = 0)
-            {
-                if (await TableColumnExistsAsync(connection, tableName, column))
+                try
                 {
-                    columns.Add(column);
-                    parameters.Add($"@{parameterName}");
-                    var p = size > 0
-                        ? command.Parameters.Add(parameterName, dbType, size)
-                        : command.Parameters.Add(parameterName, dbType);
-                    p.Value = value ?? DBNull.Value;
-                }
-            }
+                    var tableName = candidate;
+                    var columns = new List<string>();
+                    var parameters = new List<string>();
+                    await using var command = new SqlCommand { Connection = connection };
 
-            await AddIfExistsAsync("userid", "userId", userId, SqlDbType.Decimal);
-            await AddIfExistsAsync("useremail", "userEmail", email, SqlDbType.NVarChar, 100);
-            await AddIfExistsAsync("myIP", "myIp", remoteIp, SqlDbType.NVarChar, 100);
-            await AddIfExistsAsync("URL", "url", url, SqlDbType.NVarChar, 50);
-            await AddIfExistsAsync("subject", "subject", subject, SqlDbType.NVarChar, 300);
-            await AddIfExistsAsync("description", "description", description, SqlDbType.NVarChar);
-            await AddIfExistsAsync("subcategoryID", "subcategoryId", subcategoryId, SqlDbType.Int);
-            await AddIfExistsAsync("customerSubcategoryID", "customerSubcategoryId", subcategoryId, SqlDbType.Int);
-            await AddIfExistsAsync("priority", "priority", priority, SqlDbType.Int);
-            await AddIfExistsAsync("customerPriority", "customerPriority", priority, SqlDbType.Int);
-            await AddIfExistsAsync("stateID", "stateId", 20, SqlDbType.Int);
-            await AddIfExistsAsync("QueueLevel", "queueLevel", queueLevel, SqlDbType.Int);
-            await AddIfExistsAsync("StaffID", "staffId", DBNull.Value, SqlDbType.Int);
-            await AddIfExistsAsync("EnterDate", "enterDate", DateTime.Now, SqlDbType.DateTime);
-            await AddIfExistsAsync("UserLastAccess", "userLastAccess", DateTime.Now, SqlDbType.DateTime);
-            await AddIfExistsAsync("UserActionID", "userActionId", 1, SqlDbType.Int);
-            await AddIfExistsAsync("StaffLastAccess", "staffLastAccess", DateTime.Now, SqlDbType.DateTime);
-            await AddIfExistsAsync("StaffActionID", "staffActionId", DBNull.Value, SqlDbType.Int);
-            await AddIfExistsAsync("IsLocked", "isLocked", false, SqlDbType.Bit);
-            await AddIfExistsAsync("IsWaiting", "isWaiting", false, SqlDbType.Bit);
-            await AddIfExistsAsync("webServerIP", "webServerIp", webServerIp, SqlDbType.NVarChar, 50);
-            await AddIfExistsAsync("ServerType", "serverType", serverType, SqlDbType.Int);
+                    async Task AddIfExistsAsync(string column, string parameterName, object value, SqlDbType dbType, int size = 0)
+                    {
+                        if (await TableColumnExistsAsync(connection, tableName, column))
+                        {
+                            columns.Add(column);
+                            parameters.Add($"@{parameterName}");
+                            var p = size > 0
+                                ? command.Parameters.Add(parameterName, dbType, size)
+                                : command.Parameters.Add(parameterName, dbType);
+                            p.Value = value ?? DBNull.Value;
+                        }
+                    }
 
-            if (columns.Count == 0)
-            {
-                throw new InvalidOperationException($"Helpdesk compatibility fallback found no writable columns on {tableName}.");
-            }
+                    await AddIfExistsAsync("userid", "userId", userId, SqlDbType.Decimal);
+                    await AddIfExistsAsync("useremail", "userEmail", email, SqlDbType.NVarChar, 100);
+                    await AddIfExistsAsync("myIP", "myIp", remoteIp, SqlDbType.NVarChar, 100);
+                    await AddIfExistsAsync("URL", "url", url, SqlDbType.NVarChar, 50);
+                    await AddIfExistsAsync("subject", "subject", subject, SqlDbType.NVarChar, 300);
+                    await AddIfExistsAsync("description", "description", description, SqlDbType.NVarChar);
+                    await AddIfExistsAsync("subcategoryID", "subcategoryId", subcategoryId, SqlDbType.Int);
+                    await AddIfExistsAsync("customerSubcategoryID", "customerSubcategoryId", subcategoryId, SqlDbType.Int);
+                    await AddIfExistsAsync("priority", "priority", priority, SqlDbType.Int);
+                    await AddIfExistsAsync("customerPriority", "customerPriority", priority, SqlDbType.Int);
+                    await AddIfExistsAsync("stateID", "stateId", 20, SqlDbType.Int);
+                    await AddIfExistsAsync("QueueLevel", "queueLevel", queueLevel, SqlDbType.Int);
+                    await AddIfExistsAsync("StaffID", "staffId", DBNull.Value, SqlDbType.Int);
+                    await AddIfExistsAsync("EnterDate", "enterDate", DateTime.Now, SqlDbType.DateTime);
+                    await AddIfExistsAsync("UserLastAccess", "userLastAccess", DateTime.Now, SqlDbType.DateTime);
+                    await AddIfExistsAsync("UserActionID", "userActionId", 1, SqlDbType.Int);
+                    await AddIfExistsAsync("StaffLastAccess", "staffLastAccess", DateTime.Now, SqlDbType.DateTime);
+                    await AddIfExistsAsync("StaffActionID", "staffActionId", DBNull.Value, SqlDbType.Int);
+                    await AddIfExistsAsync("IsLocked", "isLocked", false, SqlDbType.Bit);
+                    await AddIfExistsAsync("IsWaiting", "isWaiting", false, SqlDbType.Bit);
+                    await AddIfExistsAsync("webServerIP", "webServerIp", webServerIp, SqlDbType.NVarChar, 50);
+                    await AddIfExistsAsync("ServerType", "serverType", serverType, SqlDbType.Int);
 
-            command.CommandText = $@"
+                    if (columns.Count == 0)
+                    {
+                        throw new InvalidOperationException($"Helpdesk compatibility fallback found no writable columns on {tableName}.");
+                    }
+
+                    command.CommandText = $@"
 INSERT INTO dbo.{tableName} ({string.Join(", ", columns)})
 VALUES ({string.Join(", ", parameters)});
 SELECT CAST(SCOPE_IDENTITY() AS BIGINT);";
 
-            var raw = await command.ExecuteScalarAsync();
-            return raw == null || raw == DBNull.Value ? 0 : Convert.ToInt64(raw, CultureInfo.InvariantCulture);
+                    var raw = await command.ExecuteScalarAsync();
+                    if (raw == null || raw == DBNull.Value)
+                    {
+                        continue;
+                    }
+
+                    if (long.TryParse(Convert.ToString(raw, CultureInfo.InvariantCulture), out var parsed))
+                    {
+                        return parsed;
+                    }
+                }
+                catch (SqlException ex) when (ex.Number == 207 || ex.Message.Contains("invalid column name", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+            }
+
+            throw new InvalidOperationException("Helpdesk compatibility fallback: unable to create ticket on any known helpdesk call table.");
         }
 
         private static async Task WriteHelpdeskCompatLogAsync(SqlConnection connection, long callId, string message)
@@ -7253,29 +9037,214 @@ SELECT CAST(SCOPE_IDENTITY() AS BIGINT);";
 
         private static async Task WriteHelpdeskUserLogAsync(SqlConnection connection, long callId, long userId, int actionId)
         {
-            await using var command = new SqlCommand("sp_UserLogAction", connection)
+            var tableName = "";
+            var logCandidates = new[] { "tblLogAction", "tblLog", "logAction", "log" };
+            foreach (var candidate in logCandidates)
             {
-                CommandType = CommandType.StoredProcedure
-            };
-            command.Parameters.Add("@CallID", SqlDbType.Decimal).Value = callId;
-            command.Parameters.Add("@ActionID", SqlDbType.Int).Value = actionId;
-            command.Parameters.Add("@AccessBy", SqlDbType.Decimal).Value = userId;
+                if (await TableExistsAsync(connection, candidate))
+                {
+                    tableName = candidate;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(tableName))
+            {
+                return;
+            }
+
+            async Task<bool> ColumnExists(string column) => await TableColumnExistsAsync(connection, tableName, column);
+
+            var callIdColumn = await ColumnExists("CallID") ? "CallID"
+                : await ColumnExists("callID") ? "callID"
+                : await ColumnExists("CallId") ? "CallId"
+                : await ColumnExists("callId") ? "callId"
+                : string.Empty;
+            var actionIdColumn = await ColumnExists("ActionID") ? "ActionID"
+                : await ColumnExists("actionID") ? "actionID"
+                : await ColumnExists("ActionId") ? "ActionId"
+                : await ColumnExists("actionId") ? "actionId"
+                : await ColumnExists("Action_ID") ? "Action_ID"
+                : string.Empty;
+            var accessByColumn = await ColumnExists("AccessBy") ? "AccessBy"
+                : await ColumnExists("accessBy") ? "accessBy"
+                : await ColumnExists("UserID") ? "UserID"
+                : await ColumnExists("userID") ? "userID"
+                : await ColumnExists("accessById") ? "accessById"
+                : string.Empty;
+            var dateColumn = await ColumnExists("EnterDate") ? "EnterDate"
+                : await ColumnExists("enterDate") ? "enterDate"
+                : await ColumnExists("CreatedDate") ? "CreatedDate"
+                : await ColumnExists("createDate") ? "createDate"
+                : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(callIdColumn) || string.IsNullOrWhiteSpace(actionIdColumn))
+            {
+                return;
+            }
+
+            var insertColumns = new List<string>();
+            var insertValues = new List<string>();
+
+            insertColumns.Add(callIdColumn);
+            insertValues.Add("@callId");
+            insertColumns.Add(actionIdColumn);
+            insertValues.Add("@actionId");
+
+            if (!string.IsNullOrWhiteSpace(accessByColumn))
+            {
+                insertColumns.Add(accessByColumn);
+                insertValues.Add("@userId");
+            }
+
+            if (string.IsNullOrWhiteSpace(dateColumn))
+            {
+                dateColumn = await ColumnExists("EnterDate")
+                    ? "EnterDate"
+                    : await ColumnExists("enterDate")
+                        ? "enterDate"
+                        : await ColumnExists("CreatedDate")
+                            ? "CreatedDate"
+                            : await ColumnExists("createDate")
+                                ? "createDate"
+                                : await ColumnExists("CreatedOn")
+                                    ? "CreatedOn"
+                                    : await ColumnExists("createDate")
+                                        ? "createDate"
+                                        : string.Empty;
+            }
+
+            if (!string.IsNullOrWhiteSpace(dateColumn))
+            {
+                insertColumns.Add(dateColumn);
+                insertValues.Add("GETDATE()");
+            }
+
+            var sql = $"INSERT INTO dbo.{tableName} ({string.Join(", ", insertColumns)}) VALUES ({string.Join(", ", insertValues)})";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.Add("@callId", SqlDbType.BigInt).Value = callId;
+            command.Parameters.Add("@actionId", SqlDbType.Int).Value = actionId;
+            if (!string.IsNullOrWhiteSpace(accessByColumn))
+            {
+                command.Parameters.Add("@userId", SqlDbType.BigInt).Value = userId;
+            }
+
             await command.ExecuteNonQueryAsync();
         }
 
         private static async Task AutoAssignHelpdeskTicketAsync(SqlConnection connection, long callId, int queueLevel)
         {
-            var staff = new List<(int StaffId, int TicketCount, int QueueLevel)>();
-            await using (var countCommand = new SqlCommand("sp_StaffTicketCounts", connection) { CommandType = CommandType.StoredProcedure })
-            await using (var reader = await countCommand.ExecuteReaderAsync())
+            var callTableName = "";
+            var callCandidates = new[] { "tblCall", "Call", "Calls", "tickets", "tblTickets" };
+            foreach (var candidate in callCandidates)
             {
-                while (await reader.ReadAsync())
+                if (await TableExistsAsync(connection, candidate))
                 {
-                    var staffQueueLevel = ReadInt32(reader, "queuelevel");
-                    if (staffQueueLevel >= queueLevel)
+                    callTableName = candidate;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(callTableName))
+            {
+                return;
+            }
+
+            var staffTableName = "";
+            var staffCandidates = new[] { "tblStaff", "Staff", "tblStaffs", "tbl_supportstaff", "supportstaff" };
+            foreach (var candidate in staffCandidates)
+            {
+                if (await TableExistsAsync(connection, candidate))
+                {
+                    staffTableName = candidate;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(staffTableName))
+            {
+                return;
+            }
+
+            async Task<string?> FindColumnAsync(string table, params string[] columns)
+            {
+                foreach (var column in columns)
+                {
+                    if (await TableColumnExistsAsync(connection, table, column))
                     {
-                        staff.Add((ReadInt32(reader, "staffID"), ReadInt32(reader, "total"), staffQueueLevel));
+                        return column;
                     }
+                }
+
+                return null;
+            }
+
+            var staffIdColumn = await FindColumnAsync(staffTableName, "staffID", "staffId", "StaffID", "StaffId", "ID", "id");
+            var staffQueueLevelColumn = await FindColumnAsync(staffTableName, "QueueLevel", "queuelevel", "Queue", "queuelevel");
+            if (string.IsNullOrWhiteSpace(staffIdColumn))
+            {
+                return;
+            }
+
+            var staffDisabledColumn = await FindColumnAsync(staffTableName, "isDisable", "IsDisable", "disabled", "Disabled", "isdisabled");
+            var staffActiveColumn = await FindColumnAsync(staffTableName, "IsActive", "isActive", "active", "Active");
+
+            var callStaffColumn = await FindColumnAsync(callTableName, "staffID", "staffId", "StaffID", "StaffId", "AssignStaff", "assignStaff");
+            var closeDateColumn = await FindColumnAsync(callTableName, "closeDate", "closedate", "CloseDate", "closeDateTime");
+            var stateColumn = await FindColumnAsync(callTableName, "state", "stateName", "statename", "stateID", "stateId");
+            var callIdColumn = await FindColumnAsync(callTableName, "callID", "callId", "callid");
+
+            if (string.IsNullOrWhiteSpace(callStaffColumn) || string.IsNullOrWhiteSpace(callIdColumn))
+            {
+                return;
+            }
+
+            var isClosedExpr = closeDateColumn is null
+                ? (stateColumn is null
+                    ? "1 = 1"
+                    : $"{stateColumn} NOT LIKE N'%closed%' AND {stateColumn} NOT LIKE N'%resolved%' AND {stateColumn} NOT LIKE N'%solved%'")
+                : $"{closeDateColumn} IS NULL";
+
+            var staff = new List<(int StaffId, int TicketCount)>();
+            var staffSelectColumns = new List<string> { $"s.{staffIdColumn}" };
+            if (!string.IsNullOrWhiteSpace(staffQueueLevelColumn))
+            {
+                staffSelectColumns.Add($"s.{staffQueueLevelColumn}");
+            }
+
+            var staffWhere = "WHERE 1 = 1";
+            if (!string.IsNullOrWhiteSpace(staffQueueLevelColumn))
+            {
+                staffWhere += $" AND s.{staffQueueLevelColumn} >= @queueLevel";
+            }
+
+            if (!string.IsNullOrWhiteSpace(staffDisabledColumn))
+            {
+                staffWhere += $" AND ({staffDisabledColumn} = 0)";
+            }
+
+            if (!string.IsNullOrWhiteSpace(staffActiveColumn))
+            {
+                staffWhere += $" AND ({staffActiveColumn} = 1)";
+            }
+
+            var staffQuery = $@"
+SELECT {string.Join(", ", staffSelectColumns)}
+FROM dbo.{staffTableName} s
+{staffWhere}
+ORDER BY s.{staffIdColumn}";
+
+            await using var staffCommand = new SqlCommand(staffQuery, connection);
+            if (!string.IsNullOrWhiteSpace(staffQueueLevelColumn))
+            {
+                staffCommand.Parameters.Add("@queueLevel", SqlDbType.Int).Value = queueLevel;
+            }
+            await using (var staffReader = await staffCommand.ExecuteReaderAsync())
+            {
+                while (await staffReader.ReadAsync())
+                {
+                    staff.Add((ReadInt32(staffReader, staffIdColumn), 0));
                 }
             }
 
@@ -7284,18 +9253,43 @@ SELECT CAST(SCOPE_IDENTITY() AS BIGINT);";
                 return;
             }
 
-            var min = staff.Min(item => item.TicketCount);
-            var candidates = staff.Where(item => item.TicketCount == min).ToList();
-            var chosen = candidates[RandomNumberGenerator.GetInt32(candidates.Count)];
-
-            await using var assignCommand = new SqlCommand("sp_AssignTicket", connection)
+            foreach (var item in staff)
             {
-                CommandType = CommandType.StoredProcedure
-            };
-            assignCommand.Parameters.Add("@QueueLevel", SqlDbType.Int).Value = queueLevel;
-            assignCommand.Parameters.Add("@CallID", SqlDbType.Int).Value = callId;
-            assignCommand.Parameters.Add("@AssignStaff", SqlDbType.Int).Value = 9;
-            assignCommand.Parameters.Add("@StaffID", SqlDbType.Int).Value = chosen.StaffId;
+                var countQuery = $@"
+SELECT COUNT(*)
+FROM dbo.{callTableName}
+WHERE {callStaffColumn} = @staffId
+  AND {isClosedExpr}";
+
+                await using var countCommand = new SqlCommand(countQuery, connection);
+                countCommand.Parameters.Add("@staffId", SqlDbType.Int).Value = item.StaffId;
+                var countRaw = await countCommand.ExecuteScalarAsync();
+                var count = countRaw == null || countRaw == DBNull.Value ? 0 : Convert.ToInt32(countRaw, CultureInfo.InvariantCulture);
+                staff[staff.FindIndex(i => i.StaffId == item.StaffId)] = (item.StaffId, count);
+            }
+
+            var minLoad = staff.Min(item => item.TicketCount);
+            var candidateStaff = staff.Where(item => item.TicketCount == minLoad).ToList();
+            if (candidateStaff.Count == 0)
+            {
+                return;
+            }
+
+            if (staff.Count == 0)
+            {
+                return;
+            }
+
+            var chosen = candidateStaff[RandomNumberGenerator.GetInt32(candidateStaff.Count)];
+            var setClauses = new List<string> { $"{callStaffColumn} = @assignStaff" };
+            var assignQuery = $@"
+UPDATE dbo.{callTableName}
+SET {string.Join(", ", setClauses)}
+WHERE {callIdColumn} = @callId";
+
+            await using var assignCommand = new SqlCommand(assignQuery, connection);
+            assignCommand.Parameters.Add("@callId", SqlDbType.BigInt).Value = callId;
+            assignCommand.Parameters.Add("@assignStaff", SqlDbType.Int).Value = chosen.StaffId;
             await assignCommand.ExecuteNonQueryAsync();
         }
 
@@ -7334,10 +9328,15 @@ ORDER BY config.cpid", connection);
             var customerIdText = context.Session.GetString("customerID");
             var customerLogin = context.Session.GetString("customerLogin");
             var customerType = context.Session.GetString("customerType");
+            var loginScope = context.Session.GetString("loginScope");
+            var cpIdText = context.Session.GetString("cpID");
+            var cpLogin = context.Session.GetString("cpLogin") ?? "";
 
             if (long.TryParse(customerIdText, out var customerId) && !string.IsNullOrWhiteSpace(customerLogin) && !string.IsNullOrWhiteSpace(customerType))
             {
-                return new LoginUser(customerId, customerLogin, customerType);
+                var isCpLogin = string.Equals(loginScope, "cp", StringComparison.OrdinalIgnoreCase);
+                var cpId = long.TryParse(cpIdText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedCpId) ? parsedCpId : 0;
+                return new LoginUser(customerId, customerLogin, customerType, isCpLogin, cpId, cpLogin);
             }
 
             var persistentUser = ReadPersistentSessionCookie(context);
@@ -7349,13 +9348,24 @@ ORDER BY config.cpid", connection);
             context.Session.SetString("customerID", persistentUser.CustomerId.ToString(CultureInfo.InvariantCulture));
             context.Session.SetString("customerLogin", persistentUser.Login);
             context.Session.SetString("customerType", persistentUser.CustomerType);
+            context.Session.SetString("loginScope", persistentUser.IsControlPanelLogin ? "cp" : "account");
+            if (persistentUser.IsControlPanelLogin)
+            {
+                context.Session.SetString("cpID", persistentUser.CpId.ToString(CultureInfo.InvariantCulture));
+                context.Session.SetString("cpLogin", persistentUser.CpLogin);
+            }
+            else
+            {
+                context.Session.Remove("cpID");
+                context.Session.Remove("cpLogin");
+            }
             return persistentUser;
         }
 
         private static void SetPersistentSessionCookie(HttpContext context, LoginUser user)
         {
             var issuedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var payload = $"{user.CustomerId}|{Base64UrlEncode(user.Login)}|{Base64UrlEncode(user.CustomerType)}|{issuedAt}";
+            var payload = $"{user.CustomerId}|{Base64UrlEncode(user.Login)}|{Base64UrlEncode(user.CustomerType)}|{issuedAt}|{(user.IsControlPanelLogin ? "cp" : "account")}|{user.CpId}|{Base64UrlEncode(user.CpLogin)}";
             var signature = SignPersistentSessionPayload(context, payload);
             var cookieValue = $"{Base64UrlEncode(payload)}.{signature}";
 
@@ -7395,7 +9405,7 @@ ORDER BY config.cpid", connection);
             }
 
             var payloadParts = payload.Split('|');
-            if (payloadParts.Length != 4 ||
+            if ((payloadParts.Length != 4 && payloadParts.Length != 7) ||
                 !long.TryParse(payloadParts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var customerId) ||
                 !long.TryParse(payloadParts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var issuedAt))
             {
@@ -7410,9 +9420,14 @@ ORDER BY config.cpid", connection);
 
             var login = Base64UrlDecode(payloadParts[1]);
             var customerType = Base64UrlDecode(payloadParts[2]);
+            var isCpLogin = payloadParts.Length == 7 && string.Equals(payloadParts[4], "cp", StringComparison.OrdinalIgnoreCase);
+            var cpId = payloadParts.Length == 7 && long.TryParse(payloadParts[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedCpId)
+                ? parsedCpId
+                : 0;
+            var cpLogin = payloadParts.Length == 7 ? Base64UrlDecode(payloadParts[6]) : "";
             return string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(customerType)
                 ? null
-                : new LoginUser(customerId, login, customerType);
+                : new LoginUser(customerId, login, customerType, isCpLogin, cpId, cpLogin);
         }
 
         private static string SignPersistentSessionPayload(HttpContext context, string payload)
@@ -7962,17 +9977,19 @@ WHERE id = @registerInfoId
 <!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
 <OPS_envelope>
   <header>
-    <version>0.9</version>
+    <version>9.0</version>
   </header>
   <body>
     <data_block>
       <dt_assoc>
         <item key=""protocol"">XCP</item>
-        <item key=""action"">CHECK_TRANSFER</item>
+        <item key=""action"">check_transfer</item>
         <item key=""object"">domain</item>
         <item key=""attributes"">
           <dt_assoc>
             <item key=""domain"">{WebUtility.HtmlEncode(domainName)}</item>
+            <item key=""check_status"">1</item>
+            <item key=""get_request_address"">1</item>
           </dt_assoc>
         </item>
       </dt_assoc>
@@ -8173,7 +10190,7 @@ WHERE id = @registerInfoId
                 }
 
                 var authCode = ReadOpenSrsItemValue(response, "domain_auth_info");
-return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? result.Message : $"  Auth Code: {authCode}");
+                return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? result.Message : $"  Auth Code: {authCode}");
             }
             finally
             {
@@ -8182,6 +10199,9 @@ return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? resul
         }
 
         private static async Task<OpenSrsActionResult> UpdateDomainContactWithOpenSrsAsync(
+            SqlConnection connection,
+            long customerId,
+            int registerInfoId,
             HttpClient httpClient,
             OpenSrsSettings openSrs,
             string domainName,
@@ -8190,6 +10210,12 @@ return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? resul
             string remoteIp)
         {
             var contact = ParseContactFields(contactText);
+            var contactType = NormalizeDomainContactType(contact.TryGetValue("contact_type", out var rawContactType) ? rawContactType : "");
+            if (string.IsNullOrWhiteSpace(contactType))
+            {
+                return new OpenSrsActionResult(false, "Contact update needs a contact type.");
+            }
+
             foreach (var required in new[] { "first_name", "last_name", "email", "address1", "city", "country", "postal_code", "phone" })
             {
                 if (!contact.ContainsKey(required) || string.IsNullOrWhiteSpace(contact[required]))
@@ -8206,9 +10232,15 @@ return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? resul
 
             try
             {
-                var xml = BuildOpenSrsContactXml(cookieResult.Cookie, contact, remoteIp);
+                var xml = BuildOpenSrsContactXml(cookieResult.Cookie, contact, contactType, domainName, remoteIp);
                 var response = await PostOpenSrsXmlAsync(httpClient, openSrs, xml);
-                return OpenSrsResultFromXml(response, $"Contact updated for {domainName}.");
+                var result = OpenSrsResultFromXml(response, $"Contact updated for {domainName}.");
+                if (result.Success)
+                {
+                    await UpdateDomainRegisterInfoContactAsync(connection, customerId, registerInfoId, contactType, contact);
+                }
+
+                return result;
             }
             finally
             {
@@ -8577,6 +10609,76 @@ return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? resul
             return fields;
         }
 
+        private static string NormalizeDomainContactType(string value)
+        {
+            var normalized = (value ?? "").Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "registrant" => "owner",
+                "owner" => "owner",
+                "admin" => "admin",
+                "billing" => "billing",
+                "technical" => "tech",
+                "tech" => "tech",
+                _ => ""
+            };
+        }
+
+        private static async Task UpdateDomainRegisterInfoContactAsync(
+            SqlConnection connection,
+            long customerId,
+            int registerInfoId,
+            string contactType,
+            Dictionary<string, string> contact)
+        {
+            var suffix = contactType switch
+            {
+                "owner" => "",
+                "admin" => "a",
+                "billing" => "b",
+                "tech" => "t",
+                _ => throw new InvalidOperationException("Unknown domain contact type.")
+            };
+
+            var fieldMap = new[]
+            {
+                ("firstname", "first_name"),
+                ("lastname", "last_name"),
+                ("phone", "phone"),
+                ("fax", "fax"),
+                ("email", "email"),
+                ("organization", "org_name"),
+                ("street", "address1"),
+                ("street1", "address2"),
+                ("city", "city"),
+                ("state", "state"),
+                ("country", "country"),
+                ("zip", "postal_code"),
+                ("province", "state")
+            };
+
+            static string ColumnName(string baseName, string suffix) => string.IsNullOrEmpty(suffix) ? baseName : $"{baseName}{suffix}";
+            static string ContactValue(Dictionary<string, string> contact, string key) => contact.TryGetValue(key, out var value) ? value.Trim() : "";
+
+            var assignments = string.Join(", ", fieldMap.Select((item, index) => $"{ColumnName(item.Item1, suffix)} = @p{index}"));
+            var sql = $@"
+UPDATE domaincontroller.dbo.DomainRegisterInfo
+SET {assignments}
+WHERE id = @registerInfoId
+  AND sponsorid = @customerId";
+
+            await using var command = new SqlCommand(sql, connection);
+            for (var index = 0; index < fieldMap.Length; index++)
+            {
+                command.Parameters.AddWithValue($"@p{index}", ContactValue(contact, fieldMap[index].Item2));
+            }
+
+            command.Parameters.AddWithValue("@registerInfoId", registerInfoId);
+            command.Parameters.AddWithValue("@customerId", customerId);
+
+            await command.ExecuteNonQueryAsync();
+        }
+
         private static List<string> ParseForwardingEmails(string forwardingText)
         {
             var emails = new List<string>();
@@ -8746,9 +10848,11 @@ return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? resul
   </body>
 </OPS_envelope>";
 
-        private static string BuildOpenSrsContactXml(string cookie, Dictionary<string, string> contact, string remoteIp)
+        private static string BuildOpenSrsContactXml(string cookie, Dictionary<string, string> contact, string contactType, string domainName, string remoteIp)
         {
             string ContactValue(string key) => WebUtility.HtmlEncode(contact.TryGetValue(key, out var value) ? value : "");
+            var encodedContactType = WebUtility.HtmlEncode(contactType);
+            var encodedDomainUrl = WebUtility.HtmlEncode($"http://www.{domainName}");
 
             return $@"<?xml version='1.0' encoding='UTF-8' standalone='no'?>
 <!DOCTYPE OPS_envelope SYSTEM 'ops.dtd'>
@@ -8768,12 +10872,9 @@ return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? resul
               <dt_assoc>
                 <item key=""also_apply_to"">
                   <dt_array>
-                    <item key=""0"">owner</item>
-                    <item key=""1"">billing</item>
-                    <item key=""2"">tech</item>
                   </dt_array>
                 </item>
-                <item key=""admin"">
+                <item key=""{encodedContactType}"">
                   <dt_assoc>
                     <item key=""first_name"">{ContactValue("first_name")}</item>
                     <item key=""last_name"">{ContactValue("last_name")}</item>
@@ -8788,7 +10889,7 @@ return new OpenSrsActionResult(true, string.IsNullOrWhiteSpace(authCode) ? resul
                     <item key=""phone"">{ContactValue("phone")}</item>
                     <item key=""fax"">{ContactValue("fax")}</item>
                     <item key=""email"">{ContactValue("email")}</item>
-                    <item key=""url"">{ContactValue("url")}</item>
+                    <item key=""url"">{encodedDomainUrl}</item>
                   </dt_assoc>
                 </item>
               </dt_assoc>
@@ -10738,7 +12839,8 @@ WHERE customerID = @customerId";
             }
 
             var twoFactor = await LoadTwoFactorStatusAsync(connection, customerId);
-            return new AccountSettingsDashboard(profile, twoFactor);
+            var hostingAccounts = await LoadHostingAccountsAsync(connection, customerId);
+            return new AccountSettingsDashboard(profile, twoFactor, hostingAccounts);
         }
 
         private static async Task<AccountTwoFactorSummary> LoadTwoFactorStatusAsync(SqlConnection connection, long customerId)
@@ -10844,17 +12946,87 @@ WHERE customerID = @customerId";
             return "Stored securely";
         }
 
+        private async Task<string> ReadableTwoFactorSecretAsync(string value)
+        {
+            var trimmed = (value ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                return "";
+            }
+
+            if (LooksLikeTotpSecret(trimmed))
+            {
+                return trimmed;
+            }
+
+            var modernKey = ConfigOrEnv("Crypto:ModernKey", "CONTROL_PANEL_CRYPTO_KEY").Trim();
+            if (!string.IsNullOrWhiteSpace(modernKey))
+            {
+                var decrypted = CryptoHelper.Decrypt(modernKey, trimmed);
+                if (LooksLikeTotpSecret(decrypted))
+                {
+                    return decrypted.Trim();
+                }
+            }
+
+            var compatibilitySalt = ConfigOrEnv("Crypto:Pbkdf2CompatibilitySalt", "PBKDF2_COMPATIBILITY_SALT").Trim();
+            if (!string.IsNullOrWhiteSpace(modernKey) && !string.IsNullOrWhiteSpace(compatibilitySalt))
+            {
+                var decrypted = CryptoHelper.DecryptPbkdf2AesCbcHex(modernKey, trimmed, compatibilitySalt);
+                if (LooksLikeTotpSecret(decrypted))
+                {
+                    return decrypted.Trim();
+                }
+            }
+
+            var legacyDecryptUrl = ConfigOrEnv("LegacyCrypto:DecryptPwdApiUrl", "LEGACY_DECRYPTPWD_API_URL").Trim();
+            if (!string.IsNullOrWhiteSpace(legacyDecryptUrl))
+            {
+                var decrypted = await TryLegacyDecryptPwdApiAsync(legacyDecryptUrl, trimmed);
+                if (LooksLikeTotpSecret(decrypted))
+                {
+                    return decrypted.Trim();
+                }
+            }
+
+            return "";
+        }
+
+        private static bool LooksLikeTotpSecret(string value)
+        {
+            var trimmed = (value ?? "").Trim();
+            return trimmed.Length is >= 8 and <= 128
+                && trimmed.All(character => char.IsLetterOrDigit(character) || character == '=');
+        }
+
         private static async Task<string> TryLegacyDecryptPwdApiAsync(string apiUrl, string encryptedValue)
         {
             try
             {
-                var separator = apiUrl.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-                var url = $"{apiUrl}{separator}pwd_hash={Uri.EscapeDataString(encryptedValue)}";
                 using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-                var response = await httpClient.GetAsync(url);
+                using var request = new HttpRequestMessage(HttpMethod.Post, apiUrl)
+                {
+                    Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                    {
+                        ["action"] = "decryptpwd",
+                        ["mode"] = "decryptpwd",
+                        ["kind"] = "decryptpwd",
+                        ["value"] = encryptedValue,
+                        ["pwd"] = encryptedValue,
+                        ["pwd_hash"] = encryptedValue
+                    })
+                };
+
+                var response = await httpClient.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
-                    return "";
+                    var separator = apiUrl.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+                    var url = $"{apiUrl}{separator}pwd_hash={Uri.EscapeDataString(encryptedValue)}";
+                    response = await httpClient.GetAsync(url);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        return "";
+                    }
                 }
 
                 var text = (await response.Content.ReadAsStringAsync()).Trim();
@@ -12332,7 +14504,7 @@ WHERE site_Uid = @siteUid AND cpID = @cpId",
                     warnings.Add(checkCall.Message);
                 }
 
-                warnings.Add("Enable/disable still needs Persits-compatible decryptpwd for cpPasswordHash because the classic action hashes the decrypted hosting password before calling SetIISManagerUser.");
+                warnings.Add("Enable/disable still needs the exact active password-source helper before calling SetIISManagerUser. The standalone decryptpwd bridge is configured, but latest getCpPasswordHashByCpID keeps its DB lookup inside if 1 = 2.");
             }
 
             if (normalizedKey is "site-guard" or "force-https" or "ip-deny" or "cdn" or "domain-manager")
@@ -12396,8 +14568,43 @@ WHERE s.site_Uid = @siteUid",
 
             if (normalizedKey is "schedule-tasks")
             {
-                warnings.Add("Scheduled tasks use the legacy scheduletask connection; live task inventory needs that connection before this drawer can read task rows.");
-                functionData["scheduledTasks"] = new List<Dictionary<string, object?>>();
+                var scheduleConnectionString = GetScheduleTaskConnectionString();
+                if (string.IsNullOrWhiteSpace(scheduleConnectionString))
+                {
+                    warnings.Add("Scheduled tasks use the legacy scheduleTask database; set SCHEDULE_TASK_CONNECTION_STRING before this drawer can read task rows.");
+                    functionData["scheduledTasks"] = new List<Dictionary<string, object?>>();
+                }
+                else
+                {
+                    try
+                    {
+                        await using var scheduleConnection = new SqlConnection(scheduleConnectionString);
+                        await scheduleConnection.OpenAsync();
+                        functionData["scheduledTasks"] = await TryLoadFunctionRowsAsync(
+                            scheduleConnection,
+                            warnings,
+                            "scheduled tasks",
+                            @"
+SELECT id, cpid, enterdate, url, everynummin, lastrun, laststatus, timeout, certaintime, certainday, certainmin, ISNULL(wintask, 0) AS wintask
+FROM dbo.tasks
+WHERE cpid = @cpId
+ORDER BY ISNULL(wintask, 0), id DESC",
+                            command => command.Parameters.AddWithValue("@cpId", site.CpId));
+                    }
+                    catch (SqlException ex)
+                    {
+                        warnings.Add($"Unable to open scheduled-task database: {ex.Message}");
+                        functionData["scheduledTasks"] = new List<Dictionary<string, object?>>();
+                    }
+                }
+
+                var taskQuota = await LoadScheduleTaskQuotaAsync(connection, site.CpId);
+                var windowsTaskQuota = await LoadAddonQuotaAsync(connection, site.CpId, "AdditionalMassSMTP");
+                functionData["scheduledTaskQuota"] = new Dictionary<string, object?>
+                {
+                    ["scheduleTaskQuota"] = taskQuota,
+                    ["windowsTaskQuota"] = windowsTaskQuota
+                };
             }
 
             if (normalizedKey is "outgoing-port")
@@ -12580,8 +14787,8 @@ ORDER BY adddate DESC, ipid DESC",
             if (normalizedKey == "ftp-access")
             {
                 return new HostingSiteFunctionMutationResponse(
-                    false,
-                    "FTP Access is paused until Persits-compatible encryptpwd/encryptFTPpwd output is implemented. The latest active ASP writes cp_config_FTP directly and ignores disabled /ftp_api.asp code inside if 1 = 2 blocks.",
+                    true,
+                    "FTP Access uses the live FTP Manager flow. Create FTP users or update FTP passwords from the FTP section, which writes cp_config_FTP with the standalone Classic ASP encryptpwd/encryptFTPpwd bridge.",
                     new
                     {
                         site.SiteName,
@@ -12655,10 +14862,7 @@ ORDER BY adddate DESC, ipid DESC",
 
             if (normalizedKey == "schedule-tasks")
             {
-                return new HostingSiteFunctionMutationResponse(
-                    false,
-                    "Schedule Tasks are paused until the exact scheduletask connection string is available.",
-                    new { legacySources = new[] { "/Users/erwinyu/Downloads/hosting/cp8/cp/task.asp", "/Users/erwinyu/Downloads/hosting/cp8/cp/task_action.asp", "/Users/erwinyu/Downloads/hosting/cp8/cp/taskremove.asp" } });
+                return await RunScheduleTaskMutationAsync(connection, site, action, fields);
             }
 
             if (normalizedKey is "core-mode" or "detail-error" or "site-guard")
@@ -13576,6 +15780,242 @@ VALUES (@cpId, @ip, @port, GETDATE(), @ruleName)", connection);
             return new HostingSiteFunctionMutationResponse(true, "Outgoing port rule added.", addCall);
         }
 
+        private async Task<HostingSiteFunctionMutationResponse> RunScheduleTaskMutationAsync(SqlConnection ehbConnection, OwnedHostingSite site, string action, Dictionary<string, string> fields)
+        {
+            var scheduleConnectionString = GetScheduleTaskConnectionString();
+            if (string.IsNullOrWhiteSpace(scheduleConnectionString))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Schedule Task database is not configured. Set SCHEDULE_TASK_CONNECTION_STRING.", null);
+            }
+
+            var normalizedAction = NormalizeWebsiteAction(action);
+            await using var scheduleConnection = new SqlConnection(scheduleConnectionString);
+            await scheduleConnection.OpenAsync();
+
+            if (normalizedAction is "delete" or "remove")
+            {
+                if (!long.TryParse(FieldValue(fields, "id", FieldValue(fields, "taskId", "0")), NumberStyles.Integer, CultureInfo.InvariantCulture, out var deleteTaskId) || deleteTaskId <= 0)
+                {
+                    return new HostingSiteFunctionMutationResponse(false, "Schedule Task delete needs a valid task id.", null);
+                }
+
+                await using var loadCommand = new SqlCommand("SELECT TOP 1 id, ISNULL(wintask, 0) AS wintask FROM dbo.tasks WHERE id = @id AND cpid = @cpId", scheduleConnection);
+                loadCommand.Parameters.AddWithValue("@id", deleteTaskId);
+                loadCommand.Parameters.AddWithValue("@cpId", site.CpId);
+                await using var reader = await loadCommand.ExecuteReaderAsync();
+                if (!await reader.ReadAsync())
+                {
+                    return new HostingSiteFunctionMutationResponse(false, "Schedule Task was not found for this hosting plan.", null);
+                }
+
+                var isWindowsTask = Convert.ToBoolean(reader.GetValue(1), CultureInfo.InvariantCulture);
+                await reader.CloseAsync();
+
+                LegacyAgentCallResult? windowsDelete = null;
+                if (isWindowsTask)
+                {
+                    var customerId = await LoadCustomerIdByCpIdAsync(ehbConnection, site.CpId);
+                    windowsDelete = await PostLegacyRemoteCommandAsync(
+                        GetLegacyAgentSettings(),
+                        GetLegacyRemoteCommandSettings(),
+                        "208.98.36.176",
+                        customerId,
+                        $@"cmd /c schtasks.exe /Delete /TN ""{site.CpLogin}-{deleteTaskId}"" /F");
+                    if (!windowsDelete.Success)
+                    {
+                        return new HostingSiteFunctionMutationResponse(false, windowsDelete.Message, windowsDelete);
+                    }
+                }
+
+                await using var deleteCommand = new SqlCommand("DELETE FROM dbo.tasks WHERE id = @id AND cpid = @cpId", scheduleConnection);
+                deleteCommand.Parameters.AddWithValue("@id", deleteTaskId);
+                deleteCommand.Parameters.AddWithValue("@cpId", site.CpId);
+                await deleteCommand.ExecuteNonQueryAsync();
+                return new HostingSiteFunctionMutationResponse(true, "Schedule Task removed.", new { taskId = deleteTaskId, windowsDelete });
+            }
+
+            if (normalizedAction is not ("create" or "add"))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Schedule Tasks support only add/create and delete/remove actions.", null);
+            }
+
+            var url = NormalizeScheduleTaskUrl(FieldValue(fields, "url", ""));
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "Enter a valid HTTP or HTTPS URL for the task.", null);
+            }
+
+            var timeout = ClampInt(FieldValue(fields, "timeout", "20"), 20, 300, 20);
+            var taskType = FieldValue(fields, "taskType", FieldValue(fields, "task_type", "sharedtask"));
+            var isWindowsTaskToCreate = taskType.Equals("wintask", StringComparison.OrdinalIgnoreCase) || taskType.Equals("windows", StringComparison.OrdinalIgnoreCase);
+            var existingCount = await CountScheduleTasksAsync(scheduleConnection, site.CpId, isWindowsTaskToCreate);
+            var quota = isWindowsTaskToCreate
+                ? await LoadAddonQuotaAsync(ehbConnection, site.CpId, "AdditionalMassSMTP")
+                : await LoadScheduleTaskQuotaAsync(ehbConnection, site.CpId);
+            if (quota <= 0)
+            {
+                return new HostingSiteFunctionMutationResponse(false, isWindowsTaskToCreate ? "No Dedicated Windows Task quota is available." : "No Schedule Task quota is available.", null);
+            }
+
+            if (existingCount >= quota)
+            {
+                return new HostingSiteFunctionMutationResponse(false, $"Task quota reached ({existingCount} / {quota}).", null);
+            }
+
+            var mode = FieldValue(fields, "mode", FieldValue(fields, "type", "interval"));
+            long taskId;
+            if (mode.Equals("s", StringComparison.OrdinalIgnoreCase) || mode.Equals("specific", StringComparison.OrdinalIgnoreCase))
+            {
+                var hour = ClampInt(FieldValue(fields, "certainTime", FieldValue(fields, "ctime", "0")), 0, 23, 0);
+                var minute = ClampInt(FieldValue(fields, "certainMin", "0"), 0, 59, 0);
+                var day = FieldValue(fields, "certainDay", FieldValue(fields, "cday", "-1"));
+                if (!IsSafeScheduleDay(day))
+                {
+                    return new HostingSiteFunctionMutationResponse(false, "Choose a valid task day value.", null);
+                }
+
+                taskId = await InsertSpecificScheduleTaskAsync(scheduleConnection, site.CpId, url, timeout, hour, minute, day, isWindowsTaskToCreate);
+            }
+            else
+            {
+                var everyMinutes = ClampInt(FieldValue(fields, "everyMinutes", FieldValue(fields, "emin", "30")), 5, 1440, 30);
+                taskId = await InsertIntervalScheduleTaskAsync(scheduleConnection, site.CpId, url, timeout, everyMinutes, isWindowsTaskToCreate);
+
+                if (isWindowsTaskToCreate)
+                {
+                    var customerId = await LoadCustomerIdByCpIdAsync(ehbConnection, site.CpId);
+                    var command = $@"cmd /c schtasks /create /tn ""{site.CpLogin}-{taskId}"" /tr ""powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\hosting\SCHEDULER\win_task.ps1 -taskID {taskId}"" /sc minute /mo {everyMinutes} /ru System";
+                    var windowsCreate = await PostLegacyRemoteCommandAsync(GetLegacyAgentSettings(), GetLegacyRemoteCommandSettings(), "208.98.36.176", customerId, command);
+                    if (!windowsCreate.Success)
+                    {
+                        await using var rollbackCommand = new SqlCommand("DELETE FROM dbo.tasks WHERE id = @id AND cpid = @cpId", scheduleConnection);
+                        rollbackCommand.Parameters.AddWithValue("@id", taskId);
+                        rollbackCommand.Parameters.AddWithValue("@cpId", site.CpId);
+                        await rollbackCommand.ExecuteNonQueryAsync();
+                        return new HostingSiteFunctionMutationResponse(false, windowsCreate.Message, windowsCreate);
+                    }
+
+                    return new HostingSiteFunctionMutationResponse(true, "Dedicated Windows Task created.", new { taskId, url, timeout, windowsCreate });
+                }
+            }
+
+            return new HostingSiteFunctionMutationResponse(true, "Schedule Task created.", new { taskId, url, timeout, isWindowsTask = isWindowsTaskToCreate });
+        }
+
+        private static string NormalizeScheduleTaskUrl(string value)
+        {
+            var url = (value ?? "").Trim().Replace(" ", "", StringComparison.Ordinal).Replace(";", "", StringComparison.Ordinal).Replace(",", "", StringComparison.Ordinal);
+            if (string.IsNullOrWhiteSpace(url) || url.Length > 500)
+            {
+                return "";
+            }
+
+            if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                url = $"http://{url}";
+            }
+
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) || parsed.Scheme is not ("http" or "https") || string.IsNullOrWhiteSpace(parsed.Host))
+            {
+                return "";
+            }
+
+            return parsed.ToString();
+        }
+
+        private static bool IsSafeScheduleDay(string value)
+        {
+            var day = (value ?? "").Trim();
+            if (day == "-1")
+            {
+                return true;
+            }
+
+            return int.TryParse(day, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) && number is >= 0 and <= 6;
+        }
+
+        private static async Task<int> CountScheduleTasksAsync(SqlConnection connection, long cpId, bool windowsTask)
+        {
+            await using var command = new SqlCommand("SELECT COUNT(1) FROM dbo.tasks WHERE cpid = @cpId AND ISNULL(wintask, 0) = @windowsTask", connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            command.Parameters.AddWithValue("@windowsTask", windowsTask ? 1 : 0);
+            return Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<long> InsertIntervalScheduleTaskAsync(SqlConnection connection, long cpId, string url, int timeout, int everyMinutes, bool windowsTask)
+        {
+            await using var command = new SqlCommand(@"
+INSERT INTO dbo.tasks (cpid, enterdate, url, everynummin, lastrun, timeout, wintask)
+OUTPUT INSERTED.id
+VALUES (@cpId, GETDATE(), @url, @everyMinutes, DATEADD(hour, DATEDIFF(hour, 0, GETDATE()), 0), @timeout, @windowsTask)", connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            command.Parameters.AddWithValue("@url", url);
+            command.Parameters.AddWithValue("@everyMinutes", everyMinutes);
+            command.Parameters.AddWithValue("@timeout", timeout);
+            command.Parameters.AddWithValue("@windowsTask", windowsTask ? 1 : 0);
+            return Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<long> InsertSpecificScheduleTaskAsync(SqlConnection connection, long cpId, string url, int timeout, int hour, int minute, string day, bool windowsTask)
+        {
+            await using var command = new SqlCommand(@"
+INSERT INTO dbo.tasks (cpid, enterdate, url, everynummin, lastrun, certainTime, Certainday, timeout, certainMin, wintask)
+OUTPUT INSERTED.id
+VALUES (@cpId, GETDATE(), @url, 60, '1/1/1999', @hour, @day, @timeout, @minute, @windowsTask)", connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            command.Parameters.AddWithValue("@url", url);
+            command.Parameters.AddWithValue("@hour", hour);
+            command.Parameters.AddWithValue("@day", day);
+            command.Parameters.AddWithValue("@timeout", timeout);
+            command.Parameters.AddWithValue("@minute", minute);
+            command.Parameters.AddWithValue("@windowsTask", windowsTask ? 1 : 0);
+            return Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<int> LoadAddonQuotaAsync(SqlConnection connection, long cpId, string columnName)
+        {
+            if (!IsKnownCpConfigQuotaColumn(columnName))
+            {
+                return 0;
+            }
+
+            await using var command = new SqlCommand($"SELECT ISNULL({columnName}, 0) FROM dbo.cp_config WHERE cpID = @cpId", connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        }
+
+        private static bool IsKnownCpConfigQuotaColumn(string columnName) =>
+            columnName is "AdditionalScheduleTask" or "AdditionalMassSMTP";
+
+        private static async Task<int> LoadScheduleTaskQuotaAsync(SqlConnection connection, long cpId)
+        {
+            try
+            {
+                await using var command = new SqlCommand(@"
+SELECT TOP 1 ISNULL(c.AdditionalScheduleTask, 0) + ISNULL(pc.TaskQuota, 0)
+FROM dbo.cp_config c
+LEFT JOIN dbo.customer_profile profile ON profile.customerID = c.customerID
+OUTER APPLY (
+    SELECT TOP 1 pc.TaskQuota
+    FROM dbo.product_config pc
+    INNER JOIN oms.dbo.product p ON pc.fk_oms_product = p.product_id
+    WHERE pc.product_name = c.WebHostType
+      AND (pc.product_type = profile.customer_type OR pc.product_type = 'individual')
+      AND (p.active = 1 OR p.active = 0)
+    ORDER BY CASE WHEN pc.product_type = profile.customer_type THEN 0 ELSE 1 END
+) pc
+WHERE c.cpID = @cpId", connection);
+                command.Parameters.AddWithValue("@cpId", cpId);
+                var value = await command.ExecuteScalarAsync();
+                return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            }
+            catch (SqlException)
+            {
+                return 0;
+            }
+        }
+
         private static async Task<List<Dictionary<string, object?>>> TryLoadFunctionRowsAsync(SqlConnection connection, List<string> warnings, string label, string sql, Action<SqlCommand> addParameters)
         {
             var rows = new List<Dictionary<string, object?>>();
@@ -14229,7 +16669,7 @@ ORDER BY s.site_Uid, ISNULL(d.isDefault, 0) DESC, d.create_date, d.domain_Uid";
         private async Task<HostingDashboardSummary> LoadHostingDashboardAsync(SqlConnection connection, long customerId, long requestedCpId = 0)
         {
             const string cpSql = @"
-SELECT TOP 1 cpID, cpLogin, WebHostType, ServerID, status, firstDomain, AdditionalRAM
+SELECT TOP 1 cpID, cpLogin, WebHostType, ServerID, status, firstDomain
 FROM dbo.cp_config
 WHERE customerID = @customerId
   AND ISNULL(hideit, 0) = 0
@@ -14243,7 +16683,6 @@ ORDER BY CASE WHEN status = 1 THEN 0 ELSE 1 END, cpID";
             var serverId = "";
             var status = "Unknown";
             var primaryDomain = "";
-            var additionalRam = 0;
 
             await using (var command = new SqlCommand(cpSql, connection))
             {
@@ -14258,7 +16697,6 @@ ORDER BY CASE WHEN status = 1 THEN 0 ELSE 1 END, cpID";
                     serverId = reader.IsDBNull(3) ? "" : reader.GetString(3).Trim();
                     status = StatusLabel(reader.IsDBNull(4) ? -1 : reader.GetInt32(4));
                     primaryDomain = reader.IsDBNull(5) ? "" : reader.GetString(5).Trim();
-                    additionalRam = reader.IsDBNull(6) ? 0 : reader.GetInt32(6);
                 }
             }
 
@@ -14273,8 +16711,8 @@ ORDER BY CASE WHEN status = 1 THEN 0 ELSE 1 END, cpID";
                     "",
                     GetDefaultDnsServers(),
                     GetDefaultHostingIp(),
-                    3072,
-                    333,
+                    0,
+                    0,
                     0,
                     0,
                     0,
@@ -14292,15 +16730,42 @@ WHERE s.cpID = @cpId", cpId);
             var mssqlCount = await LoadCountAsync(connection, "SELECT COUNT(*) FROM dbo.cp_config_MSSQLs WHERE cpID = @cpId", cpId);
             var mysqlCount = await LoadCountAsync(connection, "SELECT COUNT(*) FROM dbo.cp_config_MySQLs WHERE cpID = @cpId", cpId);
             var staticIp = await LoadStringAsync(connection, "SELECT TOP 1 staticIP FROM dbo.cp_config_StaticIP WHERE cpID = @cpId AND staticIP NOT LIKE '%999%' ORDER BY uid DESC", cpId);
+            var ramQuotaMb = await LoadRamQuotaMbAsync(connection, cpId);
+            var usedRamMb = await LoadRamUsedMbAsync(connection, cpId);
+            var bandwidthUsage = "-";
+            var diskUsage = "-";
+            var fileUsage = "0";
+            var auditConnectionString = GetAuditConnectionString();
+            if (!string.IsNullOrWhiteSpace(auditConnectionString))
+            {
+                try
+                {
+                    await using var auditConnection = new SqlConnection(auditConnectionString);
+                    await auditConnection.OpenAsync();
+                    bandwidthUsage = await LoadBandwidthUsageTextAsync(auditConnection, cpId);
+                    fileUsage = FormatFileCount(await LoadAuditLongAsync(auditConnection, "SELECT filecount FROM dbo.cpFileCount WHERE cpLogin = @cpLogin", cpLogin));
+                    diskUsage = FormatMegabytes(await LoadAuditNullableDoubleAsync(auditConnection, "SELECT diskcount FROM dbo.cpDiskCount WHERE cpLogin = @cpLogin", cpLogin));
+                }
+                catch (SqlException)
+                {
+                    bandwidthUsage = "-";
+                    diskUsage = "-";
+                    fileUsage = "0";
+                }
+            }
 
-            var ramQuotaMb = 3072 + Math.Max(additionalRam, 0);
-            var usedRamMb = 333;
+            var realtimeDiskUsage = await LoadServerDiskUsageTextAsync(serverId, cpLogin);
+            if (!string.IsNullOrWhiteSpace(realtimeDiskUsage))
+            {
+                diskUsage = realtimeDiskUsage;
+            }
+
             var metrics = new List<HostingDashboardMetric>
             {
                 new("Ram Quota", $"{ramQuotaMb} MB", ramQuotaMb),
-                new("Bandwidth Usage", "107 GB", null),
-                new("Disk Usage", "85.85 GB", null),
-                new("File Usage", "248K", null),
+                new("Bandwidth Usage", bandwidthUsage, null),
+                new("Disk Usage", diskUsage, null),
+                new("File Usage", fileUsage, null),
                 new("Websites", siteCount.ToString(CultureInfo.InvariantCulture), siteCount),
                 new("Domains", domainCount.ToString(CultureInfo.InvariantCulture), domainCount),
                 new("FTP Users", ftpCount.ToString(CultureInfo.InvariantCulture), ftpCount),
@@ -14339,6 +16804,121 @@ WHERE s.cpID = @cpId", cpId);
             command.Parameters.AddWithValue("@cpId", cpId);
             var value = await command.ExecuteScalarAsync();
             return value == null || value == DBNull.Value ? "" : Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim() ?? "";
+        }
+
+        private static async Task<int> LoadRamQuotaMbAsync(SqlConnection connection, long cpId)
+        {
+            const string sql = @"
+SELECT TOP 1
+       ISNULL(cp.AdditionalRAM, 0) AS AdditionalRam,
+       ISNULL(pc.ram, 128) AS PlanRam
+FROM dbo.cp_config cp
+INNER JOIN dbo.customer_profile c ON c.customerID = cp.customerID
+LEFT JOIN dbo.product_config pc ON pc.product_name = cp.WebHostType
+    AND pc.product_type = c.customer_type
+LEFT JOIN oms.dbo.product p ON p.product_id = pc.fk_oms_product
+WHERE cp.cpID = @cpId
+  AND (p.product_id IS NULL OR p.active IN (0, 1))
+ORDER BY CASE WHEN pc.product_type = c.customer_type THEN 0 ELSE 1 END";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            await using var reader = await command.ExecuteReaderAsync();
+            return await reader.ReadAsync()
+                ? ReadInt32(reader, 0) + ReadInt32(reader, 1, 128)
+                : 0;
+        }
+
+        private static async Task<int> LoadRamUsedMbAsync(SqlConnection connection, long cpId)
+        {
+            await using var command = new SqlCommand("SELECT SUM(privateMemory) FROM dbo.cp_config_Pools WHERE cpID = @cpId", connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<string> LoadBandwidthUsageTextAsync(SqlConnection auditConnection, long cpId)
+        {
+            var yesterday = DateTime.Today.AddDays(-1);
+            const string sql = @"
+SELECT SUM(scbytes + csbytes)
+FROM dbo.iisBWfromIISLog
+WHERE [YEAR] = @year
+  AND [MONTH] = @month
+  AND cpID = @cpId";
+
+            await using var command = new SqlCommand(sql, auditConnection);
+            command.Parameters.AddWithValue("@year", int.Parse(yesterday.ToString("yy", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("@month", yesterday.Month);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            var value = await command.ExecuteScalarAsync();
+            if (value == null || value == DBNull.Value)
+            {
+                return "-";
+            }
+
+            var mb = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            return mb <= 0 ? "-" : FormatMegabytes(mb);
+        }
+
+        private static async Task<long> LoadAuditLongAsync(SqlConnection auditConnection, string sql, string cpLogin)
+        {
+            await using var command = new SqlCommand(sql, auditConnection);
+            command.Parameters.AddWithValue("@cpLogin", cpLogin);
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? 0 : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+
+        private static async Task<double?> LoadAuditNullableDoubleAsync(SqlConnection auditConnection, string sql, string cpLogin)
+        {
+            await using var command = new SqlCommand(sql, auditConnection);
+            command.Parameters.AddWithValue("@cpLogin", cpLogin);
+            var value = await command.ExecuteScalarAsync();
+            return value == null || value == DBNull.Value ? null : Convert.ToDouble(value, CultureInfo.InvariantCulture);
+        }
+
+        private async Task<string> LoadServerDiskUsageTextAsync(string serverId, string cpLogin)
+        {
+            if (string.IsNullOrWhiteSpace(serverId) || string.IsNullOrWhiteSpace(cpLogin))
+            {
+                return "";
+            }
+
+            var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), serverId, "/fsrm_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "quotausagemb",
+                ["path"] = $@"{GetHostingHomeRoot()}\{cpLogin}"
+            });
+            if (!call.Success || string.IsNullOrWhiteSpace(call.Body))
+            {
+                return "";
+            }
+
+            var text = WebUtility.HtmlDecode(call.Body).Trim();
+            var numeric = text.Replace("MB", "", StringComparison.OrdinalIgnoreCase).Trim();
+            return double.TryParse(numeric, NumberStyles.Float, CultureInfo.InvariantCulture, out var mb) && mb >= 0
+                ? FormatMegabytes(mb)
+                : "";
+        }
+
+        private static string FormatMegabytes(double? value)
+        {
+            if (!value.HasValue || value.Value < 0)
+            {
+                return "-";
+            }
+
+            var mb = value.Value;
+            return mb > 1000
+                ? $"{mb / 1024d:N2} GB"
+                : $"{mb:N0} MB";
+        }
+
+        private static string FormatFileCount(long value)
+        {
+            return value > 1000
+                ? $"{Math.Round(value / 1000d, MidpointRounding.AwayFromZero):0}K"
+                : value.ToString("N0", CultureInfo.InvariantCulture);
         }
 
         private async Task<HostingDatabasesDashboard> LoadHostingDatabasesAsync(SqlConnection connection, long customerId, long requestedCpId = 0)
@@ -15680,9 +18260,30 @@ WHERE cpid = CONVERT(varchar(50), @cpId)
                 return new HostingProvisionResponse(false, "FTP login already exists for this hosting plan.", "ftp", null);
             }
 
+            var encryptedPassword = await TryLegacyEncryptPwdAsync(password);
+            var encryptedFtpPassword = await TryLegacyEncryptFtpPwdAsync(password);
+            if (string.IsNullOrWhiteSpace(encryptedPassword) || string.IsNullOrWhiteSpace(encryptedFtpPassword))
+            {
+                return new HostingProvisionResponse(false, "FTP user was validated, but the legacy encryptpwd/encryptFTPpwd API did not return a value.", "ftp", null);
+            }
+
+            await ExecuteNonQueryAsync(connection, @"
+INSERT INTO dbo.cp_config_FTP (pp1, cpid, ftp_login, ftp_password, ftp_path, ftp_quota, ftp_permission, cpurl)
+VALUES (@pp1, @cpId, @ftpLogin, @ftpPassword, @ftpPath, @ftpQuota, @permission, @cpUrl)", command =>
+            {
+                command.Parameters.AddWithValue("@pp1", encryptedFtpPassword);
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                command.Parameters.AddWithValue("@ftpLogin", login);
+                command.Parameters.AddWithValue("@ftpPassword", encryptedPassword);
+                command.Parameters.AddWithValue("@ftpPath", pathResult.Path);
+                command.Parameters.AddWithValue("@ftpQuota", quotaMb);
+                command.Parameters.AddWithValue("@permission", permission);
+                command.Parameters.AddWithValue("@cpUrl", cp.ServerId);
+            });
+
             return new HostingProvisionResponse(
-                false,
-                "FTP create now follows the active Classic ASP path and does not call /ftp_api.asp. It is blocked until Persits-compatible encryptpwd/encryptFTPpwd output is implemented for cp_config_FTP.ftp_password and pp1.",
+                true,
+                "FTP user created in cp_config_FTP using the active Classic ASP createFTPSingle flow.",
                 "ftp",
                 new
                 {
@@ -15692,7 +18293,6 @@ WHERE cpid = CONVERT(varchar(50), @cpId)
                     permission,
                     legacySource = "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:createFTPSingle"
                 });
-
         }
 
         private async Task<HostingProvisionResponse> UpdateHostingFtpUserAsync(SqlConnection connection, SelectedHostingCp cp, string routeLogin, HostingFtpUserMutationRequest request)
@@ -15734,11 +18334,29 @@ WHERE cpid = CONVERT(varchar(50), @cpId)
                 return new HostingProvisionResponse(false, "No FTP changes were submitted.", "ftp", null);
             }
 
-            return new HostingProvisionResponse(
-                false,
-                "FTP password update follows the active Classic ASP DB-only path, but is blocked until Persits-compatible encryptpwd/encryptFTPpwd output is implemented.",
-                "ftp",
-                new { user.Login, legacySource = "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:updateFtpUserPassword" });
+            var encryptedPassword = await TryLegacyEncryptPwdAsync(password);
+            var encryptedFtpPassword = await TryLegacyEncryptFtpPwdAsync(password);
+            if (string.IsNullOrWhiteSpace(encryptedPassword) || string.IsNullOrWhiteSpace(encryptedFtpPassword))
+            {
+                return new HostingProvisionResponse(false, "FTP password was validated, but the legacy encryptpwd/encryptFTPpwd API did not return a value.", "ftp", null);
+            }
+
+            var updated = await ExecuteNonQueryAsync(connection, @"
+UPDATE dbo.cp_config_FTP
+SET ftp_password = @ftpPassword,
+    pp1 = @pp1
+WHERE cpID = @cpId
+  AND LOWER(ftp_login) = LOWER(@ftpLogin)", command =>
+            {
+                command.Parameters.AddWithValue("@ftpPassword", encryptedPassword);
+                command.Parameters.AddWithValue("@pp1", encryptedFtpPassword);
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                command.Parameters.AddWithValue("@ftpLogin", user.Login);
+            });
+
+            return updated > 0
+                ? new HostingProvisionResponse(true, "FTP password updated in cp_config_FTP using the active Classic ASP updateFtpUserPassword flow.", "ftp", new { user.Login, legacySource = "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:updateFtpUserPassword" })
+                : new HostingProvisionResponse(false, "FTP user was not updated.", "ftp", new { user.Login });
         }
 
         private async Task<HostingProvisionResponse> SetHostingFtpUserStatusAsync(SqlConnection connection, SelectedHostingCp cp, string routeLogin, HostingFtpUserMutationRequest request)
@@ -16032,7 +18650,6 @@ WHERE cpID = @cpId
                 return new HostingProvisionResponse(false, folderCall.Message, "site", folderCall.Metadata);
             }
 
-            var siteUid = await InsertHostingSiteAsync(connection, cp.CpId, siteName, displayName, siteIndex, sitePath);
             var iisCall = await PostLegacyAgentAsync(agent, serverId, "/iis_api.asp", new Dictionary<string, string>
             {
                 ["action"] = "IIS_Member_Domain_Add",
@@ -16046,9 +18663,10 @@ WHERE cpID = @cpId
 
             if (!iisCall.Success)
             {
-                return new HostingProvisionResponse(false, $"Website row was created, but IIS rejected the site binding: {iisCall.Message}", "site", new { siteUid, siteName, domain, sitePath, iisId, serverId, folderCall = folderCall.Preview, iisCall = iisCall.Preview });
+                return new HostingProvisionResponse(false, $"IIS rejected the site binding before any website row was created: {iisCall.Message}", "site", new { siteName, domain, sitePath, iisId, serverId, folderCall = folderCall.Preview, iisCall = iisCall.Preview });
             }
 
+            var siteUid = await InsertHostingSiteAsync(connection, cp.CpId, siteName, displayName, siteIndex, sitePath);
             var domainUid = await InsertHostingDomainAsync(connection, siteUid, domain);
             var tempUrlIp = await LoadServerTempUrlIpAsync(connection, serverId);
 
@@ -18294,6 +20912,8 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record LoginConfigResponse(bool TurnstileEnabled, string SiteKey);
         private sealed record TurnstileVerifyResult(bool Success, string Message);
         private sealed record LoginFailureWindow(int Count, DateTime FirstFailureUtc, DateTime LastAlertUtc);
+        private sealed record LoginTwoFactorCheck(bool Required, string Secret, string Message);
+        private sealed record TwoFactorLoginVerifyRequest(string OneCode);
         private sealed record SmtpEndpoint(string Host, int Port);
         private sealed record EmailSendResult(bool Success, string Message);
         private sealed record ReadableCustomerEmailResult(bool Success, string Email, string Message);
@@ -18307,8 +20927,8 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
                 && !string.IsNullOrWhiteSpace(Username)
                 && !string.IsNullOrWhiteSpace(PrivateKey);
         }
-        private sealed record LoginUser(long CustomerId, string Login, string CustomerType);
-        private sealed record LoginResponse(bool Success, string Message, LoginUser? User);
+        private sealed record LoginUser(long CustomerId, string Login, string CustomerType, bool IsControlPanelLogin = false, long CpId = 0, string CpLogin = "");
+        private sealed record LoginResponse(bool Success, string Message, LoginUser? User, bool RequiresTwoFactor = false, string Login = "");
         private sealed record AccountServiceStatusResponse(bool Success, string Message, AccountServiceStatus? Services);
         private sealed record AccountServiceStatus(ExternalServiceStatus OpenSrs, ExternalServiceStatus Dns);
         private sealed record ExternalServiceStatus(string Name, bool Configured, string Message, string State);
@@ -18418,16 +21038,21 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record AccountHelpdeskResponse(bool Success, string Message, AccountHelpdeskDashboard? Dashboard);
         private sealed record AccountHelpdeskFormResponse(bool Success, string Message, AccountHelpdeskForm? Form);
         private sealed record AccountHelpdeskTicketCreateResponse(bool Success, string Message, HelpdeskTicketSummary? Ticket);
+        private sealed record AccountHelpdeskTicketDetailResponse(bool Success, string Message, HelpdeskTicketDetail? Ticket);
+        private sealed record AccountHelpdeskTicketReplyResponse(bool Success, string Message, HelpdeskTicketDetail? Ticket);
         private sealed record AccountHelpdeskDashboard(HelpdeskUserSummary User, List<HelpdeskTicketSummary> OpenTickets, List<HelpdeskTicketSummary> ClosedTickets);
         private sealed record AccountHelpdeskForm(List<HelpdeskCategorySummary> Categories, string DefaultEmail, string DefaultEmailMessage);
         private sealed record HelpdeskUserSummary(long UserId, string Username, string Name, string Email);
-        private sealed record HelpdeskTicketSummary(long CallId, string Subject, string State, int Priority, int ReplyCount, DateTime EnterDate, DateTime? CloseDate, string Category, string SubCategory, bool IsWaiting);
+        private sealed record HelpdeskTicketSummary(long CallId, string Username, string Subject, string State, int Priority, int ReplyCount, DateTime EnterDate, DateTime? CloseDate, string Category, string SubCategory, bool IsWaiting);
+        private sealed record HelpdeskTicketDetail(HelpdeskTicketSummary Summary, HelpdeskUserSummary User, string Url, string UserEmail, string Description, List<HelpdeskTicketNote> Notes);
+        private sealed record HelpdeskTicketNote(long NoteId, string AuthorType, string AuthorName, string Comment, string CommentForStaff, DateTime EnterDate, string IpAddress);
         private sealed record HelpdeskCategorySummary(int CategoryId, string Description, string ToolTip, List<HelpdeskSubCategorySummary> Subcategories);
         private sealed record HelpdeskSubCategorySummary(int SubCategoryId, int CategoryId, string Description, string ToolTip, List<HelpdeskFieldSummary> Fields);
         private sealed record HelpdeskFieldSummary(string Name, string Label, int ControlTypeId, List<string> Texts, List<string> Values, string SelectedIndex, int Width, int Height, string Alignment, string Orientation);
         private sealed record HelpdeskCategoryRule(int CategoryId, string Description, int DefaultPriority, bool IsDefaultPriority, int DefaultQueueLevel, bool IsDefaultQueueLevel);
         private sealed record HelpdeskTicketCreateRequest(int CategoryId, int SubCategoryId, int Priority, string Subject, string Email, string Url, string Description, string Attachment, Dictionary<string, string>? Fields);
-        private sealed record AccountSettingsDashboard(AccountSettingsProfile Profile, AccountTwoFactorSummary TwoFactor);
+        private sealed record HelpdeskTicketReplyRequest(string Description);
+        private sealed record AccountSettingsDashboard(AccountSettingsProfile Profile, AccountTwoFactorSummary TwoFactor, List<HostingAccountSummary> HostingAccounts);
         private sealed record AccountSettingsProfile(
             long CustomerId,
             string Login,
@@ -18457,7 +21082,7 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             string BillingPostcode);
         private sealed record AccountTwoFactorSummary(bool HasSecret, bool IsEnabled, DateOnly? EnterDate);
         private sealed record TwoFactorConfirmRequest(string OneCode);
-        private sealed record AccountPasswordChangeRequest(string CurrentPassword, string NewPassword, string ConfirmPassword);
+        private sealed record AccountPasswordChangeRequest(string CurrentPassword, string NewPassword, string ConfirmPassword, List<string>? SyncTargets);
         private sealed record AccountEmailChangeRequest(string Email);
         private sealed record AccountProfileUpdateRequest(
             string Name,
@@ -18477,6 +21102,8 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             string BillingArea,
             string BillingAddress,
             string BillingPostcode);
+        private sealed record AccountMobileVerificationSendRequest(string CountryCode, string MobileNumber);
+        private sealed record AccountMobileVerificationConfirmRequest(string CountryCode, string MobileNumber, string Pin);
         private sealed record AccountDomainSummary(int Id, string DomainName, int ClientProductId, string Status, DateOnly? StartDate, DateOnly? ExpirationDate, int? DaysLeft, string RegisterStatus, int RegisterInfoId, DateOnly? AddDate, DateOnly? ProductNextDueDate, string ProductStatus, bool WhoisPrivacySupported, bool WhoisPrivacyPurchased, DateOnly? WhoisPrivacyTurnOnDate, int GracePeriodDays, bool CanRenew, bool CanManage, string RenewUrl, string DnsUrl, string SettingsUrl, string TransferActionLabel, string TransferActionUrl);
         private sealed record DomainProfileDetail(int Id, string DomainName, int RegisterInfoId, string RegisterStatus, DateOnly? ExpirationDate, int? DaysLeft, bool WhoisPrivacySupported, bool WhoisPrivacyPurchased, DateOnly? WhoisPrivacyTurnOnDate, int GracePeriodDays, DomainContactDetail Registrant, DomainContactDetail Admin, DomainContactDetail Billing, DomainContactDetail Technical);
         private sealed record DomainContactDetail(string FirstName, string LastName, string Organization, string Email, string Phone, string Fax, string Address1, string Address2, string City, string State, string Province, string Country, string PostalCode);

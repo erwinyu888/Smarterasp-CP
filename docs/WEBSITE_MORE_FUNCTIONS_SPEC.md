@@ -574,8 +574,8 @@ Legacy:
 Behavior:
 
 - List FTP users scoped to site path.
-- Create FTP user with quota/path/permission once exact Persits-compatible password encryption is available.
-- Update password once exact Persits-compatible password encryption is available.
+- Create FTP user with quota/path/permission through `cp_config_FTP` using the standalone Classic ASP `encryptpwd` and `encryptFTPpwd` bridge.
+- Update password through `cp_config_FTP` using the standalone Classic ASP `encryptpwd` and `encryptFTPpwd` bridge.
 - Path/permission/quota update, enable/disable, and permission reset remain disabled because the latest implementation is inside `if 1 = 2` blocks.
 - Delete removes the `cp_config_FTP` row.
 - Root FTP user has extra protection.
@@ -1047,17 +1047,18 @@ Behavior:
 - Validate URL, timeout, interval, day/time.
 - Enforce quotas.
 - Remove/update tasks.
+- Current rebuild status: shared Schedule Task inventory/create/delete is live through `SCHEDULE_TASK_CONNECTION_STRING` and was tested against `cpID=10373089` with disposable task `56749` on 2026-06-14.
+- Dedicated Windows Task remains supported in code with the classic `schtasks` remote command path, but should only be live-tested after disposable Windows Task quota is confirmed.
 
 API:
 
-- `GET /api/hosting/tasks`
-- `POST /api/hosting/tasks`
-- `PUT /api/hosting/tasks/{taskId}`
-- `DELETE /api/hosting/tasks/{taskId}`
+- `GET /api/hosting/sites/{siteUid}/functions/schedule-tasks?cpId={cpId}`
+- `POST /api/hosting/sites/{siteUid}/functions/schedule-tasks` with `action=create|delete`.
 
 Speed:
 
-- Use DB insert transaction, then queue/execute Windows scheduler creation asynchronously.
+- Shared tasks are direct DB reads/writes against the legacy `tasks` table.
+- Windows tasks insert the DB row, execute the classic scheduler command, and roll back the DB row if scheduler creation fails.
 
 ## Implementation Phases
 
