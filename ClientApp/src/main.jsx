@@ -14,6 +14,12 @@ const authRedirectExemptPaths = [
 ];
 
 const cloudflareTurnstileTestSiteKey = "1x00000000000000000000AA";
+const chatbaseChatbotId = "qWoqKCVt6Tnryaeqcq6vA";
+const chatbaseDomain = "www.chatbase.co";
+const olarkSiteId = "8133-389-10-5171";
+const liveChatFallbackUrl = "https://member3.smarterasp.net/account/chat";
+const liveChatSessionKey = "controlpanel-live-chat-opened";
+let liveChatOpenedInMemory = false;
 
 function fetchUrlPath(input) {
   const rawUrl = typeof input === "string" ? input : input?.url;
@@ -56,15 +62,31 @@ const sections = [
 const controlPanelSections = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "websites", label: "Websites", icon: "website" },
-  { id: "databases", label: "Databases", icon: "database" },
-  { id: "emails", label: "Emails", icon: "mail" },
+  { id: "databases", label: "Databases", icon: "database", children: [
+    { id: "mssql", label: "MSSQL", icon: "database" },
+    { id: "mysql", label: "MySQL", icon: "database" },
+    { id: "sql-reporting", label: "SQL Reporting", icon: "database" },
+    { id: "advanced-customer-backup", label: "Advance Customer Backup", icon: "backup" },
+    { id: "postgresql", label: "PostgreSQL", icon: "database", disabled: true }
+  ] },
+  { id: "emails", label: "Emails", icon: "mail", children: [
+    { id: "email", label: "Email", icon: "mail" },
+    { id: "corporate-email", label: "Corporate Email", icon: "mail" }
+  ] },
   { id: "files", label: "Files", icon: "folder" },
   { id: "apps", label: "Apps", icon: "apps" },
   { id: "ftp", label: "FTP", icon: "ftp" },
   { id: "cdn", label: "CDN", icon: "cdn" },
   { id: "dns", label: "DNS", icon: "dns" },
   { id: "ssl", label: "SSL", icon: "ssl" },
-  { id: "advance", label: "Advance", icon: "advance" }
+  { id: "advance", label: "Advance", icon: "advance", children: [
+    { id: "schedule-tasks", label: "Schedule Tasks", icon: "tasks" },
+    { id: "outgoing-port", label: "Outgoing Port", icon: "outgoing" },
+    { id: "control-panel-users", label: "Control Panel User(s)", icon: "settings" },
+    { id: "webconfig-encrypt", label: "Webconfig Encrypt", icon: "ssl" },
+    { id: "work-queue", label: "Work Queue", icon: "work-queue" },
+    { id: "remote-site-backup", label: "Remote Site Backup", icon: "backup" }
+  ] }
 ];
 
 const websiteActions = [
@@ -158,47 +180,43 @@ function iconForAction(label) {
 
 const websiteMoreFunctionColumns = [
   {
-    title: "Settings",
+    title: "Website Configuration",
     items: [
       { label: "Site Name", icon: "site-name" },
       { label: "Mapped Path", icon: "folder" },
-      { label: "ASP.NET Version", icon: "aspnet" },
-      { label: ".NET Core Mode", icon: "core" },
-      { label: "Node.js App", icon: "node" },
-      { label: "PHP Version", icon: "php" },
-      { label: "PHP Settings", icon: "checklist" },
-      { label: "Detail Error Message Display", icon: "warning" },
       { label: "Site On/Off", icon: "power" },
+      { label: "Domain Manager", icon: "globe" },
+      { label: "Default Doc", icon: "default-doc" },
+      { label: "Mime Type", icon: "mime" },
+      { label: "Custom Errors", icon: "warning" },
+      { label: "Detail Error Message Display", icon: "warning" },
       { label: "Delete Website", icon: "trash" }
     ]
   },
   {
-    title: "Basic",
+    title: "Application & Runtime",
     items: [
-      { label: "Domain Manager", icon: "globe" },
-      { label: "Visitor Stats", icon: "stats" },
-      { label: "FTP Access", icon: "ftp" },
-      { label: "VS Webdeploy", icon: "deploy" },
-      { label: "Github Deploy", icon: "git" },
-      { label: "SMTP Sample Code", icon: "mail" },
-      { label: "IP Deny", icon: "shield" },
-      { label: "IIS Log Manager", icon: "logs" },
-      { label: "Application Pool 🔥", icon: "server" },
-      { label: "Outgoing Port", icon: "outgoing" }
+      { label: "ASP.NET Version", icon: "aspnet" },
+      { label: ".NET Core Mode", icon: "core" },
+      { label: "PHP Version", icon: "php" },
+      { label: "PHP Settings", icon: "checklist" },
+      { label: "Node.js App", icon: "node" },
+      { label: "Create .Net App", icon: "apps" },
+      { label: "Virtual Dir", icon: "virtual-dir" },
+      { label: "ScriptMap", icon: "scriptmap" },
+      { label: "SMTP Sample Code", icon: "mail" }
     ]
   },
   {
-    title: "Advanced Features",
+    title: "Security & Access",
     items: [
-      { label: "Create .Net App", icon: "apps" },
-      { label: "Create Virtual Dir", icon: "virtual-dir" },
+      { label: "IP Deny", icon: "shield" },
       { label: "Force HTTPS", icon: "force-https" },
-      { label: "Default Doc", icon: "default-doc" },
-      { label: "Custom Errors", icon: "warning" },
-      { label: "Mime Type", icon: "mime" },
-      { label: "ScriptMap", icon: "scriptmap" },
-      { label: "Remote IIS Manager", icon: "remote-iis" },
       { label: "Site Guard", icon: "shield" },
+      { label: "Outgoing Port", icon: "outgoing" },
+      { label: "IIS Log Manager", icon: "logs" },
+      { label: "Visitor Stats", icon: "stats" },
+      { label: "Remote IIS Manager", icon: "remote-iis" },
       { label: "Schedule Tasks", icon: "tasks" }
     ]
   }
@@ -216,7 +234,6 @@ websiteMoreFunctionKeyByLabel["Node.js App"] = "nodejs-app";
 websiteMoreFunctionKeyByLabel["Create .Net App"] = "create-net-app";
 websiteMoreFunctionKeyByLabel["Create Virtual Dir"] = "virtual-dir";
 websiteMoreFunctionKeyByLabel["ScriptMap"] = "script-map";
-websiteMoreFunctionKeyByLabel["Application Pool 🔥"] = "application-pool";
 websiteMoreFunctionKeyByLabel["Detail Error Message Display"] = "detail-error";
 
 const websites = [
@@ -401,6 +418,11 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    document.documentElement.classList.toggle("auth-route", route === "login");
+    return () => document.documentElement.classList.remove("auth-route");
+  }, [route]);
+
+  useEffect(() => {
     const handleRouteChange = () => setRoute(appRouteFromPath(window.location.pathname));
     window.addEventListener("popstate", handleRouteChange);
     return () => window.removeEventListener("popstate", handleRouteChange);
@@ -489,6 +511,7 @@ function App() {
 
   const handleLogin = (user, event) => {
     event?.preventDefault();
+    resetChatWidgetsForNewLogin();
     setTwoFactorLogin("");
     setCurrentUser(user);
     if (user?.isControlPanelLogin) {
@@ -510,6 +533,7 @@ function App() {
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => { });
+    resetChatWidgetsForNewLogin();
     setCurrentUser(null);
     window.history.pushState({}, "", "/");
     setRoute("login");
@@ -526,14 +550,41 @@ function App() {
     );
   }
 
-  if ((route === "panel" || route === "panel_cp") && !currentUser) return null;
+  if ((route === "panel" || route === "panel_cp" || route === "cp-renew-promotion" || route === "cp-renew") && !currentUser) return null;
 
   if (route === "panel_cp") {
-    return <HostingControlPanel theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onLogout={handleLogout} onToggleTheme={toggleTheme} />;
+    return (
+      <>
+        <HostingControlPanel theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onLogout={handleLogout} onToggleTheme={toggleTheme} />
+        <ChatbaseChatbot />
+      </>
+    );
   }
 
   if (route === "checkout") {
     return <CheckoutHandoff theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} />;
+  }
+
+  if (route === "cp-renew-promotion") {
+    return (
+      <>
+        <AccountPanelShell theme={theme} currentUser={currentUser} activeTitle="Product Renew" onLogout={handleLogout} onToggleTheme={toggleTheme}>
+          <CpRenewPromotionPage theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} embedded />
+        </AccountPanelShell>
+        <ChatbaseChatbot forceVisible />
+      </>
+    );
+  }
+
+  if (route === "cp-renew") {
+    return (
+      <>
+        <AccountPanelShell theme={theme} currentUser={currentUser} activeTitle="Product Renew" onLogout={handleLogout} onToggleTheme={toggleTheme}>
+          <CpRenewPage theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} embedded />
+        </AccountPanelShell>
+        <ChatbaseChatbot forceVisible />
+      </>
+    );
   }
 
   if (route === "invoice") {
@@ -563,13 +614,278 @@ function App() {
   }
 
   return route === "panel"
-    ? <Panel theme={theme} currentUser={currentUser} onLogout={handleLogout} onManageHosting={goToControlPanel} onToggleTheme={toggleTheme} />
+    ? (
+      <>
+        <Panel theme={theme} currentUser={currentUser} onLogout={handleLogout} onManageHosting={goToControlPanel} onToggleTheme={toggleTheme} />
+        <ChatbaseChatbot />
+      </>
+    )
     : <Login onLogin={handleLogin} onTwoFactorRequired={handleTwoFactorRequired} theme={theme} onToggleTheme={toggleTheme} onForgotPassword={goToPasswordResetRequest} />;
+}
+
+function ChatbaseChatbot({ forceVisible = false }) {
+  const [isHidden, setIsHidden] = useState(() => !forceVisible && getLiveChatSessionFlag());
+
+  useEffect(() => {
+    if (forceVisible) {
+      document.documentElement.classList.remove("ai-chat-hidden");
+      for (const selector of ["#chatbase-message-bubbles", "#chatbase-bubble-button", "#chatbase-bubble-window"]) {
+        const element = document.querySelector(selector);
+        if (element instanceof HTMLElement) {
+          element.style.display = "";
+        }
+      }
+      return;
+    }
+
+    document.documentElement.classList.toggle("ai-chat-hidden", isHidden);
+  }, [forceVisible, isHidden]);
+
+  useEffect(() => {
+    if (forceVisible) {
+      setIsHidden(false);
+      return undefined;
+    }
+
+    const handleLiveChatOpened = () => setIsHidden(true);
+    window.addEventListener("controlpanel:live-chat-opened", handleLiveChatOpened);
+    return () => {
+      window.removeEventListener("controlpanel:live-chat-opened", handleLiveChatOpened);
+      document.documentElement.classList.remove("ai-chat-hidden");
+    };
+  }, [forceVisible]);
+
+  useEffect(() => {
+    if (!forceVisible && isHidden) return;
+
+    window.embeddedChatbotConfig = {
+      chatbotId: chatbaseChatbotId,
+      domain: chatbaseDomain
+    };
+
+    const existingScript = document.querySelector(`script[data-chatbase-chatbot="${chatbaseChatbotId}"]`);
+    if (existingScript) return;
+
+    const script = document.createElement("script");
+    script.src = "https://www.chatbase.co/embed.min.js";
+    script.defer = true;
+    script.setAttribute("chatbotId", chatbaseChatbotId);
+    script.setAttribute("domain", chatbaseDomain);
+    script.setAttribute("data-chatbase-chatbot", chatbaseChatbotId);
+    document.body.appendChild(script);
+  }, [isHidden]);
+
+  return null;
+}
+
+function ensureOlarkLiveChat() {
+  if (typeof window.olark === "function") {
+    return Promise.resolve();
+  }
+
+  const queueState = { s: [], t: [+new Date()], c: {}, l: "static.olark.com/jsclient/loader.js" };
+  const olarkQueue = function olarkQueue() {
+    queueState.s.push(arguments);
+    queueState.t.push(+new Date());
+  };
+  olarkQueue._ = queueState;
+  olarkQueue.extend = function extendOlark(name, value) {
+    olarkQueue("extend", name, value);
+  };
+  olarkQueue.identify = function identifyOlark(siteId) {
+    olarkQueue("identify", queueState.i = siteId);
+  };
+  olarkQueue.configure = function configureOlark(name, value) {
+    olarkQueue("configure", name, value);
+    queueState.c[name] = value;
+  };
+  window.olark = olarkQueue;
+  window.olark.configure("system.hb_position", "left");
+  window.olark.identify(olarkSiteId);
+
+  const existingScript = document.querySelector("script[data-olark-loader='true']");
+  if (existingScript) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const script = document.createElement("script");
+    const firstScript = document.getElementsByTagName("script")[0];
+    script.async = true;
+    script.src = "https://static.olark.com/jsclient/loader.js";
+    script.setAttribute("data-olark-loader", "true");
+    script.addEventListener("load", () => resolve(), { once: true });
+    script.addEventListener("error", () => resolve(), { once: true });
+    firstScript.parentNode.insertBefore(script, firstScript);
+  });
+}
+
+async function openOlarkLiveChat() {
+  setLiveChatSessionFlag();
+  window.dispatchEvent(new CustomEvent("controlpanel:live-chat-opened"));
+  await ensureOlarkLiveChat();
+  injectOlarkCompactLauncherStyle();
+
+  if (typeof window.olark === "function") {
+    window.olark.configure?.("system.hb_position", "left");
+    window.olark("api.box.expand");
+  }
+
+  window.setTimeout(() => {
+    injectOlarkCompactLauncherStyle();
+    positionOlarkLauncherLeft();
+    const launchButton = document.querySelector(".olark-launch-button");
+    if (launchButton instanceof HTMLButtonElement) {
+      launchButton.click();
+    }
+  }, 350);
+
+  window.setTimeout(positionOlarkLauncherLeft, 900);
+  window.setTimeout(positionOlarkLauncherLeft, 1800);
+
+  window.setTimeout(() => {
+    if (document.querySelector("#olark-container")) return;
+    window.open(liveChatFallbackUrl, "_blank", "noopener,noreferrer");
+  }, 2000);
+}
+
+function positionOlarkLauncherLeft() {
+  const wrapper = document.querySelector(".olark-launch-button-wrapper");
+  if (wrapper instanceof HTMLElement) {
+    wrapper.style.setProperty("left", "22px", "important");
+    wrapper.style.setProperty("right", "auto", "important");
+    wrapper.style.setProperty("bottom", "22px", "important");
+  }
+
+  const launchButton = document.querySelector(".olark-launch-button");
+  if (launchButton instanceof HTMLElement) {
+    launchButton.style.setProperty("align-items", "center", "important");
+    launchButton.style.setProperty("border-radius", "999px", "important");
+    launchButton.style.setProperty("display", "flex", "important");
+    launchButton.style.setProperty("height", "52px", "important");
+    launchButton.style.setProperty("justify-content", "center", "important");
+    launchButton.style.setProperty("left", "0", "important");
+    launchButton.style.setProperty("min-height", "52px", "important");
+    launchButton.style.setProperty("min-width", "52px", "important");
+    launchButton.style.setProperty("overflow", "hidden", "important");
+    launchButton.style.setProperty("padding", "0", "important");
+    launchButton.style.setProperty("right", "auto", "important");
+    launchButton.style.setProperty("width", "52px", "important");
+  }
+}
+
+function injectOlarkCompactLauncherStyle() {
+  const styleId = "controlpanel-olark-compact-launcher";
+  if (document.getElementById(styleId)) return;
+
+  const style = document.createElement("style");
+  style.id = styleId;
+  style.textContent = `
+    .olark-launch-button-wrapper {
+      bottom: 22px !important;
+      left: 22px !important;
+      right: auto !important;
+    }
+    .olark-launch-button {
+      align-items: center !important;
+      background: #0f172a !important;
+      border: 1px solid rgba(147, 197, 253, 0.55) !important;
+      border-radius: 999px !important;
+      bottom: 22px !important;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.42) !important;
+      display: flex !important;
+      height: 52px !important;
+      justify-content: center !important;
+      min-height: 52px !important;
+      min-width: 52px !important;
+      overflow: hidden !important;
+      padding: 0 !important;
+      left: 22px !important;
+      right: auto !important;
+      width: 52px !important;
+    }
+    .olark-launch-button::before {
+      background-color: #ffffff;
+      content: "";
+      display: block;
+      height: 22px;
+      width: 22px;
+      -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.6 8.6 0 0 1-7.7 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.6A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 1 1 21 11.5Z' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M8 11h.01M12 11h.01M16 11h.01' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+      mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.6 8.6 0 0 1-7.7 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.6A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 1 1 21 11.5Z' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M8 11h.01M12 11h.01M16 11h.01' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+    }
+    .olark-launch-button svg,
+    .olark-launch-button img,
+    .olark-launch-button span,
+    .olark-launch-button div,
+    .olark-launch-button p {
+      display: none !important;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function restoreAiChatForNewLogin() {
+  clearLiveChatSessionFlag();
+  document.documentElement.classList.remove("ai-chat-hidden");
+  for (const selector of ["#chatbase-message-bubbles", "#chatbase-bubble-button", "#chatbase-bubble-window"]) {
+    const element = document.querySelector(selector);
+    if (element instanceof HTMLElement) {
+      element.style.display = "";
+    }
+  }
+}
+
+function hideOlarkWidget() {
+  const olarkContainer = document.querySelector("#olark-container");
+  if (olarkContainer instanceof HTMLElement) {
+    olarkContainer.style.display = "none";
+  }
+  const olarkWrapper = document.querySelector("#olark-wrapper");
+  if (olarkWrapper instanceof HTMLElement) {
+    olarkWrapper.style.display = "none";
+  }
+  const olarkLaunch = document.querySelector(".olark-launch-button");
+  if (olarkLaunch instanceof HTMLElement) {
+    olarkLaunch.style.display = "none";
+  }
+}
+
+function resetChatWidgetsForNewLogin() {
+  restoreAiChatForNewLogin();
+  hideOlarkWidget();
+}
+
+function getLiveChatSessionFlag() {
+  try {
+    return window.sessionStorage?.getItem(liveChatSessionKey) === "1" || liveChatOpenedInMemory;
+  } catch {
+    return liveChatOpenedInMemory;
+  }
+}
+
+function setLiveChatSessionFlag() {
+  liveChatOpenedInMemory = true;
+  try {
+    window.sessionStorage?.setItem(liveChatSessionKey, "1");
+  } catch {
+    // Some embedded browsers disable sessionStorage; the in-memory flag still covers this login.
+  }
+}
+
+function clearLiveChatSessionFlag() {
+  liveChatOpenedInMemory = false;
+  try {
+    window.sessionStorage?.removeItem(liveChatSessionKey);
+  } catch {
+    // Ignore storage restrictions.
+  }
 }
 
 function appRouteFromPath(pathname) {
   if (pathname === "/panel") return "panel";
   if (pathname === "/panel_cp") return "panel_cp";
+  if (pathname === "/account/cp_renew_promotion") return "cp-renew-promotion";
+  if (pathname === "/account/cp_renew") return "cp-renew";
   if (pathname === "/account/printreceipt" || pathname === "/invoice") return "invoice";
   if (pathname.startsWith("/checkout")) return "checkout";
   if (pathname === "/account/emailchangeverify") return "email-verify";
@@ -1612,10 +1928,10 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
             <MenuIcon name="support" />
             <span>Support</span>
           </p>
-          <a href="https://member3.smarterasp.net/account/chat">
+          <button type="button" onClick={openOlarkLiveChat}>
             <MenuIcon name="chat" />
             <span>24/7 Live Chat</span>
-          </a>
+          </button>
           <a href="#knowledge-base">
             <MenuIcon name="book" />
             <span>Knowledge Base</span>
@@ -1674,6 +1990,179 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
           onManageHosting={onManageHosting}
           onReloadDashboard={loadDashboard}
         />
+      </main>
+    </div>
+  );
+}
+
+function AccountPanelShell({ theme, currentUser, activeTitle = "Account Panel", onLogout, onToggleTheme, children }) {
+  const [dashboard, setDashboard] = useState(null);
+  const [accountStats, setAccountStats] = useState({
+    domains: null,
+    vpn: null,
+    addons: null,
+    billingRenewals: null,
+    balance: null
+  });
+  const [helpdeskStatus, setHelpdeskStatus] = useState("unknown");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const realHostingCount = dashboard?.hostingAccounts?.filter((account) => account.status === "Active").length;
+  const renderedSections = sections.map((section) => {
+    if (section.id === "hosting" && realHostingCount !== undefined) return { ...section, stat: String(realHostingCount) };
+    if (section.id === "domain" && accountStats.domains !== null) return { ...section, stat: String(accountStats.domains) };
+    if (section.id === "vpn" && accountStats.vpn !== null) return { ...section, stat: String(accountStats.vpn) };
+    if (section.id === "addon" && accountStats.addons !== null) return { ...section, stat: String(accountStats.addons) };
+    if (section.id === "billing" && accountStats.billingRenewals !== null) return { ...section, stat: String(accountStats.billingRenewals), statTone: "warning" };
+    return section;
+  });
+  const sidebarBrandName = (dashboard?.customer?.brandDomain || "smarterasp.net").toUpperCase();
+  const accountFunds = accountStats.balance === null ? "$0.00" : formatUsdFull(accountStats.balance);
+  const headerAccountLogin = dashboard?.customer?.login ?? currentUser?.login ?? "";
+  const headerCustomerId = dashboard?.customer?.customerId ?? currentUser?.customerId ?? "";
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadShellData() {
+      const [dashboardResult, domainResult, vpnResult, addonResult, billingResult, helpdeskResult] = await Promise.allSettled([
+        fetch("/api/account/dashboard").then((response) => response.json()),
+        fetch("/api/account/domains").then((response) => response.json()),
+        fetch("/api/account/vpn").then((response) => response.json()),
+        fetch("/api/account/addons").then((response) => response.json()),
+        fetch("/api/account/billing").then((response) => response.json()),
+        fetch("/api/account/helpdesk").then((response) => response.json())
+      ]);
+      if (!isMounted) return;
+
+      if (dashboardResult.status === "fulfilled" && dashboardResult.value?.success) {
+        setDashboard(dashboardResult.value.dashboard);
+      }
+
+      setAccountStats({
+        domains: domainResult.status === "fulfilled" && domainResult.value?.success ? domainResult.value.domains?.length ?? 0 : null,
+        vpn: vpnResult.status === "fulfilled" && vpnResult.value?.success ? vpnResult.value.dashboard?.used ?? 0 : null,
+        addons: addonResult.status === "fulfilled" && addonResult.value?.success ? addonResult.value.dashboard?.activeAddons?.length ?? 0 : null,
+        billingRenewals: billingResult.status === "fulfilled" && billingResult.value?.success ? billingResult.value.dashboard?.renewalNotices?.length ?? 0 : null,
+        balance: billingResult.status === "fulfilled" && billingResult.value?.success ? billingResult.value.dashboard?.balance?.amount ?? null : null
+      });
+
+      if (helpdeskResult.status === "fulfilled" && helpdeskResult.value?.success) {
+        const latestOpenTicket = helpdeskResult.value.dashboard?.openTickets?.[0];
+        setHelpdeskStatus(latestOpenTicket ? helpdeskStatusInfo(latestOpenTicket).tone : "none");
+      }
+    }
+
+    loadShellData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  function goToAccountSection(sectionId) {
+    window.location.href = `/panel?section=${encodeURIComponent(sectionId)}`;
+  }
+
+  return (
+    <div className={isMobileMenuOpen ? "app-shell mobile-menu-open" : "app-shell"}>
+      <button className="mobile-menu-button" type="button" onClick={() => setIsMobileMenuOpen(true)} aria-label="Open menu">
+        <MenuIcon name="menu" />
+        <span>{activeTitle}</span>
+      </button>
+      <button className="mobile-menu-overlay" type="button" onClick={() => setIsMobileMenuOpen(false)} aria-label="Close menu" />
+      <aside className="sidebar">
+        <button className="mobile-menu-close" type="button" onClick={() => setIsMobileMenuOpen(false)} aria-label="Close menu">
+          <MenuIcon name="x" />
+        </button>
+        <div className="sidebar-top">
+          <a className="brand project-brand" href="/panel">
+            <span className="brand-server-icon" aria-hidden="true">
+              <MenuIcon name="server" />
+            </span>
+            <span className="brand-name">{sidebarBrandName}</span>
+          </a>
+        </div>
+        <nav className="side-nav" aria-label="Account panel sections">
+          {renderedSections.map((section) => (
+            <button
+              className={[
+                "nav-item",
+                section.id === "hosting" ? "active" : "",
+                section.tone === "order" ? "new-order-item" : ""
+              ].filter(Boolean).join(" ")}
+              key={section.id}
+              type="button"
+              onClick={() => goToAccountSection(section.id)}
+            >
+              <span className="nav-label">
+                <MenuIcon name={section.icon} />
+                <span>{section.label}</span>
+              </span>
+              {section.stat && (
+                <strong className={[
+                  "nav-stat",
+                  section.statTone === "warning" ? "warning" : "",
+                  section.tone === "order" ? "order" : ""
+                ].filter(Boolean).join(" ")}>
+                  {section.stat}
+                </strong>
+              )}
+            </button>
+          ))}
+        </nav>
+        <div className="support-links" aria-label="Support links">
+          <p className="support-title">
+            <MenuIcon name="support" />
+            <span>Support</span>
+          </p>
+          <button type="button" onClick={openOlarkLiveChat}>
+            <MenuIcon name="chat" />
+            <span>24/7 Live Chat</span>
+          </button>
+          <button type="button" onClick={() => goToAccountSection("knowledge-base")}>
+            <MenuIcon name="book" />
+            <span>Knowledge Base</span>
+          </button>
+          <button type="button" onClick={() => goToAccountSection("helpdesk")}>
+            <MenuIcon name="ticket" />
+            <span>24/7 Helpdesk</span>
+            <span
+              aria-hidden="true"
+              className={[
+                "support-status-dot",
+                helpdeskStatus === "staff" ? "red" : "",
+                helpdeskStatus === "waiting" ? "grey" : ""
+              ].filter(Boolean).join(" ")}
+            />
+          </button>
+        </div>
+        <div className="reward-card" aria-label="Account balance">
+          <ProfileAvatar username={currentUser?.login ?? "Account"} />
+          <div>
+            <strong>{(currentUser?.login ?? "Account").toUpperCase()}</strong>
+            <span>Funds {accountFunds}</span>
+          </div>
+        </div>
+      </aside>
+
+      <main className="workspace">
+        <div className="workspace-header">
+          <div>
+            <p className="kicker">Account Panel</p>
+            <div className="workspace-title-row">
+              <h1>{activeTitle}</h1>
+            </div>
+          </div>
+          <div className="workspace-actions">
+            {headerAccountLogin ? (
+              <span className="workspace-account-label">
+                {headerAccountLogin}{headerCustomerId ? ` (ID: ${headerCustomerId})` : ""}
+              </span>
+            ) : null}
+            <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+            <button className="secondary-button compact" type="button" onClick={onLogout}>Logout</button>
+          </div>
+        </div>
+        {children}
       </main>
     </div>
   );
@@ -1743,10 +2232,19 @@ async function writeTextToClipboard(text) {
 
 function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onToggleTheme }) {
   const initialSection = useMemo(() => {
-    const allowedSections = [...controlPanelSections.map((section) => section.id), "helpdesk"];
+    const allowedSections = [
+      ...controlPanelSections.map((section) => section.id),
+      ...controlPanelSections.flatMap((section) => section.children?.map((child) => child.id) ?? []),
+      "helpdesk"
+    ];
     return activeSectionFromUrl(allowedSections, "dashboard", "hosting-panel-section");
   }, []);
   const [activeSection, setActiveSection] = useState(initialSection);
+  const databaseSectionIds = ["databases", "mssql", "mysql", "sql-reporting", "advanced-customer-backup", "postgresql"];
+  const [isDatabaseMenuOpen, setIsDatabaseMenuOpen] = useState(databaseSectionIds.includes(initialSection));
+  const emailSectionIds = ["emails", "email", "corporate-email"];
+  const [isEmailMenuOpen, setIsEmailMenuOpen] = useState(emailSectionIds.includes(initialSection));
+  const [isAdvanceMenuOpen, setIsAdvanceMenuOpen] = useState(["advance", "schedule-tasks", "outgoing-port", "control-panel-users", "webconfig-encrypt", "work-queue", "remote-site-backup"].includes(initialSection));
   const [hostingPlanOptions, setHostingPlanOptions] = useState([]);
   const [selectedCpId, setSelectedCpId] = useState(0);
   const [isHostingPlanMenuOpen, setIsHostingPlanMenuOpen] = useState(false);
@@ -1758,7 +2256,23 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
   const activeTitle = useMemo(
     () => activeSection === "helpdesk"
       ? "24/7 Helpdesk"
-      : controlPanelSections.find((section) => section.id === activeSection)?.label ?? "Dashboard",
+      : activeSection === "mssql"
+        ? "MSSQL"
+      : activeSection === "mysql"
+        ? "MySQL"
+        : activeSection === "sql-reporting"
+          ? "SQL Reporting"
+          : activeSection === "advanced-customer-backup"
+            ? "Advance Customer Backup"
+        : activeSection === "postgresql"
+          ? "PostgreSQL"
+        : activeSection === "email"
+          ? "Email"
+          : activeSection === "corporate-email"
+            ? "Corporate Email"
+      : controlPanelSections.find((section) => section.id === activeSection)?.label
+        ?? controlPanelSections.flatMap((section) => section.children ?? []).find((section) => section.id === activeSection)?.label
+        ?? "Dashboard",
     [activeSection]
   );
   const isControlPanelLogin = Boolean(currentUser?.isControlPanelLogin);
@@ -1927,39 +2441,117 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
               </span>
             </button>
           )}
-          {controlPanelSections.map((section) => (
-            <button
-              className={section.id === activeSection ? "nav-item active" : "nav-item"}
-              key={section.id}
-              type="button"
-              onClick={() => {
-                if (section.id === "files") {
-                  setFileManagerContext({ path: "", fromWebsites: false });
-                }
-                setActiveSection(section.id);
-              }}
-            >
-              <span className="nav-label">
-                <MenuIcon name={section.icon} />
-                <span>{section.label}</span>
-              </span>
-              {["websites", "databases"].includes(section.id) && sectionCounts[section.id] !== null && (
-                <span className="nav-stat badge-counter" aria-label={`${section.label} count`}>
-                  {sectionCounts[section.id]}
-                </span>
-              )}
-            </button>
-          ))}
+          {controlPanelSections.map((section) => {
+            const isDatabaseSection = section.id === "databases";
+            const isDatabaseActive = isDatabaseSection && databaseSectionIds.includes(activeSection);
+            const isEmailSection = section.id === "emails";
+            const isEmailActive = isEmailSection && emailSectionIds.includes(activeSection);
+            const isAdvanceSection = section.id === "advance";
+            const isAdvanceActive = isAdvanceSection && ["advance", "schedule-tasks", "outgoing-port", "control-panel-users", "webconfig-encrypt", "work-queue", "remote-site-backup"].includes(activeSection);
+            return (
+              <div className={(isDatabaseSection || isEmailSection || isAdvanceSection) ? "nav-group" : ""} key={section.id}>
+                <button
+                  className={(section.id === activeSection || isDatabaseActive || isEmailActive || isAdvanceActive) ? "nav-item active" : "nav-item"}
+                  type="button"
+                  onClick={() => {
+                    if (isDatabaseSection) {
+                      setIsDatabaseMenuOpen((open) => !open);
+                      return;
+                    }
+                    if (isEmailSection) {
+                      setIsEmailMenuOpen((open) => !open);
+                      return;
+                    }
+                    if (isAdvanceSection) {
+                      setIsAdvanceMenuOpen((open) => !open);
+                      return;
+                    }
+                    if (section.id === "files") {
+                      setFileManagerContext({ path: "", fromWebsites: false });
+                    }
+                    setActiveSection(section.id);
+                  }}
+                >
+                  <span className="nav-label">
+                    <MenuIcon name={section.icon} />
+                    <span>{section.label}</span>
+                  </span>
+                  {isDatabaseSection || isEmailSection || isAdvanceSection ? (
+                    <MenuIcon name="chevron-down" />
+                  ) : ["websites"].includes(section.id) && sectionCounts[section.id] !== null ? (
+                    <span className="nav-stat badge-counter" aria-label={`${section.label} count`}>
+                      {sectionCounts[section.id]}
+                    </span>
+                  ) : null}
+                </button>
+                {isDatabaseSection && isDatabaseMenuOpen && (
+                  <div className="nav-submenu" aria-label="Database engines">
+                    {section.children.map((child) => (
+                      <button
+                        className={activeSection === child.id ? "nav-subitem active" : "nav-subitem"}
+                        disabled={Boolean(child.disabled)}
+                        key={child.id}
+                        type="button"
+                        onClick={() => {
+                          if (!child.disabled) setActiveSection(child.id);
+                        }}
+                      >
+                        <span className="nav-label">
+                          <MenuIcon name={child.icon} />
+                          <span>{child.label}</span>
+                        </span>
+                        {child.id === "postgresql" && <span className="nav-stat muted">Soon</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {isEmailSection && isEmailMenuOpen && (
+                  <div className="nav-submenu" aria-label="Email services">
+                    {section.children.map((child) => (
+                      <button
+                        className={activeSection === child.id ? "nav-subitem active" : "nav-subitem"}
+                        key={child.id}
+                        type="button"
+                        onClick={() => setActiveSection(child.id)}
+                      >
+                        <span className="nav-label">
+                          <MenuIcon name={child.icon} />
+                          <span>{child.label}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {isAdvanceSection && isAdvanceMenuOpen && (
+                  <div className="nav-submenu" aria-label="Advanced tools">
+                    {section.children.map((child) => (
+                      <button
+                        className={activeSection === child.id ? "nav-subitem active" : "nav-subitem"}
+                        key={child.id}
+                        type="button"
+                        onClick={() => setActiveSection(child.id)}
+                      >
+                        <span className="nav-label">
+                          <MenuIcon name={child.icon} />
+                          <span>{child.label}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
         <div className="support-links" aria-label="Support links">
           <p className="support-title">
             <MenuIcon name="support" />
             <span>Support</span>
           </p>
-          <a href="https://member3.smarterasp.net/account/chat">
+          <button type="button" onClick={openOlarkLiveChat}>
             <MenuIcon name="chat" />
             <span>24/7 Live Chat</span>
-          </a>
+          </button>
           <a href="http://localhost:5056/panel#knowledge-base">
             <MenuIcon name="book" />
             <span>Knowledge Base</span>
@@ -1968,13 +2560,6 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
             <MenuIcon name="ticket" />
             <span>24/7 Helpdesk</span>
           </button>
-        </div>
-        <div className="reward-card" aria-label="Account balance">
-          <ProfileAvatar username={displayLogin} />
-          <div>
-            <strong>{displayLogin.toUpperCase()}</strong>
-            <span>Funds {accountFunds ?? "--"}</span>
-          </div>
         </div>
       </aside>
 
@@ -1990,10 +2575,17 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
             <button className="secondary-button compact" type="button" onClick={onLogout}>Logout</button>
           </div>
         </div>
-        {activeSection === "dashboard" && <HostingDashboard cpId={selectedCpId} />}
+        {activeSection === "dashboard" && <HostingDashboard cpId={selectedCpId} currentUser={currentUser} />}
         {activeSection === "websites" && <WebsitesSection cpId={selectedCpId} currentUser={currentUser} onChangeSection={setActiveSection} onOpenFileManager={openFileManagerAtPath} />}
-        {activeSection === "databases" && <DatabasesSection cpId={selectedCpId} />}
-        {activeSection === "emails" && <EmailsSection cpId={selectedCpId} />}
+        {activeSection === "databases" && <DatabasesSection cpId={selectedCpId} engine="All" />}
+        {activeSection === "mssql" && <DatabasesSection cpId={selectedCpId} engine="MSSQL" />}
+        {activeSection === "mysql" && <DatabasesSection cpId={selectedCpId} engine="MySQL" />}
+        {activeSection === "sql-reporting" && <SqlReportingSection cpId={selectedCpId} />}
+        {activeSection === "advanced-customer-backup" && <AdvancedCustomerBackupSection cpId={selectedCpId} />}
+        {activeSection === "postgresql" && <HostingCpPlaceholder title="PostgreSQL" />}
+        {activeSection === "emails" && <EmailsSection cpId={selectedCpId} mode="all" />}
+        {activeSection === "email" && <EmailsSection cpId={selectedCpId} mode="hosted" />}
+        {activeSection === "corporate-email" && <EmailsSection cpId={selectedCpId} mode="corporate" />}
         {activeSection === "files" && (
           <FilesSection
             cpId={selectedCpId}
@@ -2009,7 +2601,34 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
         {activeSection === "ssl" && <DomainServicesSection mode="ssl" cpId={selectedCpId} />}
         {activeSection === "advance" && <AdvanceSection cpId={selectedCpId} />}
         {activeSection === "helpdesk" && <HelpdeskSection />}
-        {!["dashboard", "websites", "databases", "emails", "files", "apps", "ftp", "dns", "cdn", "ssl", "advance", "helpdesk"].includes(activeSection) && <HostingCpPlaceholder title={activeTitle} />}
+        {![
+          "dashboard",
+          "websites",
+          "databases",
+          "mssql",
+          "mysql",
+          "sql-reporting",
+          "advanced-customer-backup",
+          "postgresql",
+          "emails",
+          "email",
+          "corporate-email",
+          "files",
+          "apps",
+          "ftp",
+          "dns",
+          "cdn",
+          "ssl",
+          "advance",
+          "schedule-tasks",
+          "outgoing-port",
+          "control-panel-users",
+          "webconfig-encrypt",
+          "work-queue",
+          "remote-site-backup",
+          "helpdesk"
+        ].includes(activeSection) && <HostingCpPlaceholder title={activeTitle} />}
+        {["schedule-tasks", "outgoing-port", "control-panel-users", "webconfig-encrypt", "work-queue", "remote-site-backup"].includes(activeSection) && <HostingCpPlaceholder title={activeTitle} />}
       </main>
     </div>
   );
@@ -2140,7 +2759,7 @@ async function provisionHosting(path, cpId, payload) {
   return result;
 }
 
-function HostingDashboard({ cpId }) {
+function HostingDashboard({ cpId, currentUser }) {
   const [dashboard, setDashboard] = useState(null);
   const [securityDashboard, setSecurityDashboard] = useState(null);
   const [poolDrawer, setPoolDrawer] = useState(null);
@@ -2423,6 +3042,7 @@ function HostingDashboard({ cpId }) {
         <HostingPoolDrawer
           mode={poolDrawer}
           cpId={cpId}
+          currentUser={currentUser}
           dashboard={dashboard}
           runtime={poolRuntime}
           isLoading={isLoadingPools}
@@ -2477,14 +3097,21 @@ function UsageMetricIcon({ label }) {
   );
 }
 
-function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunning, message, actionDetails, onClose, onRefresh, onRunAction }) {
+function HostingPoolDrawer({ mode, cpId, currentUser, dashboard, runtime, isLoading, isRunning, message, actionDetails, onClose, onRefresh, onRunAction }) {
   const pools = runtime?.pools ?? [];
   const cpLogin = runtime?.cpLogin || dashboard?.cpLogin || "";
   const [ramEditorPool, setRamEditorPool] = useState(null);
+  const [accountUserWarning, setAccountUserWarning] = useState("");
   const defaultPool = pools.find((pool) => String(pool.title || "").toLowerCase().includes(String(cpLogin).toLowerCase())) || pools[0] || null;
-  const ramLink = String(dashboard?.webHostType || "").includes("V68")
-    ? `/account/upgrade_plan?cpid=${encodeURIComponent(cpId)}`
-    : "/account/addon_purchase_special?cat=ram";
+
+  function openAccountAddonSection(itemLabel = "this add-on") {
+    if (currentUser?.isControlPanelLogin) {
+      setAccountUserWarning(`You are currently signed in with a hosting control panel login. Please sign in with the main account login to purchase or manage ${itemLabel}.`);
+      return;
+    }
+
+    window.location.href = "/panel?section=addon";
+  }
 
   return (
     <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
@@ -2520,7 +3147,7 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
               <div><dt>RAM Quota</dt><dd>{dashboard?.ramQuotaMb ?? 0} MB</dd></div>
               <div><dt>Plan</dt><dd>{dashboard?.webHostType || "-"}</dd></div>
             </dl>
-            <a className="primary-button compact drawer-full-button" href={ramLink}>Continue to RAM Order</a>
+            <button className="primary-button compact drawer-full-button" type="button" onClick={() => openAccountAddonSection("RAM")}>Continue to RAM Order</button>
           </article>
         ) : (
           <>
@@ -2550,8 +3177,8 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
             {mode === "manage" && (
               <div className="pool-manager-shell">
                 <div className="pool-manager-toolbar">
-                  <a className="secondary-button compact" href="/account/addon_purchase_special?cat=pool">+ Pool</a>
-                  <a className="primary-button compact" href={ramLink}>+ Ram</a>
+                  <button className="secondary-button compact" type="button" onClick={() => openAccountAddonSection("additional application pools")}>+ Pool</button>
+                  <button className="primary-button compact" type="button" onClick={() => openAccountAddonSection("RAM")}>+ Ram</button>
                 </div>
                 {!pools.length && !isLoading && <p className="runtime-empty">No application pool rows found.</p>}
                 {!!pools.length && (
@@ -2590,6 +3217,19 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
             )}
           </>
         )}
+        {accountUserWarning && (
+          <div className="modal-backdrop inline-modal-backdrop" role="presentation" onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setAccountUserWarning("");
+          }}>
+            <section className="panel-card confirm-modal" role="dialog" aria-modal="true" aria-labelledby="account-user-required-title">
+              <h2 id="account-user-required-title">Account Login Required</h2>
+              <p>{accountUserWarning}</p>
+              <div className="confirm-actions">
+                <button className="primary-button compact" type="button" onClick={() => setAccountUserWarning("")}>OK</button>
+              </div>
+            </section>
+          </div>
+        )}
       </aside>
     </div>
   );
@@ -2603,13 +3243,14 @@ function PoolManagerRow({ pool, isRunning, onRunAction, onEditRam }) {
   const websiteCount = details["Website Count"] || (websites ? String(websites.split(",").length) : "0");
   const privateMemory = String(details["Private Memory"] || pool.subtitle || "").replace(/private memory/i, "").trim() || "-";
 
-  function submitSelectedAction() {
-    if (!selectedAction) return;
-    if (selectedAction === "ram") {
+  function handleActionChange(value) {
+    setSelectedAction(value);
+    if (!value) return;
+    if (value === "ram") {
       onEditRam(pool);
       return;
     }
-    onRunAction(selectedAction, pool);
+    onRunAction(value, pool);
   }
 
   return (
@@ -2633,7 +3274,7 @@ function PoolManagerRow({ pool, isRunning, onRunAction, onEditRam }) {
       </td>
       <td>
         <div className="pool-table-actions">
-          <select value={selectedAction} onChange={(event) => setSelectedAction(event.target.value)} disabled={isRunning}>
+          <select value={selectedAction} onChange={(event) => handleActionChange(event.target.value)} disabled={isRunning}>
             <option value="">Action</option>
             <option value="recycle">Restart Pool</option>
             <option value="stop">Stop Pool</option>
@@ -2652,9 +3293,7 @@ function PoolManagerRow({ pool, isRunning, onRunAction, onEditRam }) {
             <option value="delete">Delete Pool</option>
             <option value="ram">Update RAM</option>
           </select>
-          <button className="primary-button compact icon-only-button" type="button" disabled={isRunning || !selectedAction} onClick={submitSelectedAction} title="Run action" aria-label="Run action">
-            {isRunning ? <LoadingIcon label="Running pool action" /> : <MenuIcon name="check" />}
-          </button>
+          {isRunning && selectedAction && <LoadingIcon label="Running pool action" />}
         </div>
       </td>
     </tr>
@@ -2665,8 +3304,6 @@ function PoolRamEditor({ pool, dashboard, isRunning, onClose, onSave }) {
   const details = pool.details ?? {};
   const poolName = details["Pool Name"] || pool.title || "-";
   const currentQuota = Number(String(details["Private Memory"] || "").replace(/[^\d.]/g, "")) || 1024;
-  const usageMb = Number(dashboard?.ramUsedMb ?? 0);
-  const usagePercent = currentQuota > 0 ? (usageMb / currentQuota) * 100 : 0;
   const hasNoMax = String(dashboard?.webHostType || "").startsWith("W2") || String(dashboard?.webHostType || "").includes("V68");
   const maxQuota = hasNoMax ? 40960 : currentQuota;
   const [memory, setMemory] = useState(String(currentQuota || 1024));
@@ -2702,7 +3339,6 @@ function PoolRamEditor({ pool, dashboard, isRunning, onClose, onSave }) {
           </button>
         </header>
         <p><strong>Pool Name</strong>: {poolName}</p>
-        <p><strong>Ram Usage Report</strong>: {usagePercent.toFixed(2)}% ({usageMb.toFixed(2)} / {currentQuota} MB)</p>
         <label>
           <strong>New Quota in MB:</strong>
           <input
@@ -2795,6 +3431,12 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
   const [isWebsiteFolderPickerOpen, setIsWebsiteFolderPickerOpen] = useState(false);
   const [isLoadingWebsiteFolders, setIsLoadingWebsiteFolders] = useState(false);
   const [websiteFolderError, setWebsiteFolderError] = useState("");
+  const [poolDrawer, setPoolDrawer] = useState(null);
+  const [poolRuntime, setPoolRuntime] = useState(null);
+  const [poolMessage, setPoolMessage] = useState("");
+  const [poolActionDetails, setPoolActionDetails] = useState(null);
+  const [isLoadingPools, setIsLoadingPools] = useState(false);
+  const [isRunningPoolAction, setIsRunningPoolAction] = useState(false);
 
   function websiteCacheKey() {
     return `cp-websites-cache:${cpId || "none"}`;
@@ -3096,6 +3738,18 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
   async function openWebsiteFunction(action, site = null) {
     const selected = site ?? selectedSite;
     const key = websiteMoreFunctionKeyByLabel[action] ?? action;
+    if (key === "aspnet-version") {
+      setActiveWebsiteFunction(null);
+      setMoreFunctionsSite(null);
+      openPoolDrawer("manage");
+      return;
+    }
+    if (key === "schedule-tasks") {
+      setActiveWebsiteFunction(null);
+      setMoreFunctionsSite(null);
+      onChangeSection?.("schedule-tasks");
+      return;
+    }
     if (!selected?.siteUid || !key) {
       queueWebsiteTest(action, selected);
       return;
@@ -3116,12 +3770,72 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
       }
 
       const fields = Object.fromEntries((result.function?.fields ?? []).map((field) => [field, defaultWebsiteFunctionField(field, selected)]));
+      if (key === "default-doc" && result.function?.data?.defaultDocs) {
+        fields.documents = result.function.data.defaultDocs;
+      }
       setWebsiteFunctionFields(fields);
       setActiveWebsiteFunction({ site: selected, label: result.function?.label ?? action, key, details: result.function });
     } catch {
       setWebsiteFunctionError("Unable to reach website function API.");
     } finally {
       setIsLoadingWebsiteFunction(false);
+    }
+  }
+
+  async function loadPoolRuntime() {
+    setIsLoadingPools(true);
+    setPoolMessage("");
+    setPoolActionDetails(null);
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/runtime", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setPoolMessage(result?.message ?? "Unable to load application pools.");
+        return;
+      }
+
+      setPoolRuntime(result.dashboard);
+    } catch {
+      setPoolMessage("Unable to reach application pool service.");
+    } finally {
+      setIsLoadingPools(false);
+    }
+  }
+
+  function openPoolDrawer(mode) {
+    setPoolDrawer(mode);
+    setPoolMessage("");
+    setPoolActionDetails(null);
+    if (mode !== "ram") {
+      loadPoolRuntime();
+    }
+  }
+
+  async function runPoolAction(action, pool = null, fields = {}) {
+    setIsRunningPoolAction(true);
+    setPoolMessage("");
+    setPoolActionDetails(null);
+    try {
+      const response = await fetch("/api/hosting/pools/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId,
+          poolId: Number(pool?.details?.["Pool ID"] || pool?.poolId || 0),
+          action,
+          fields
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setPoolMessage(result?.message ?? "Application pool action finished.");
+      setPoolActionDetails(result?.details ?? result?.agent ?? null);
+      if (response.ok && result?.success) {
+        await loadPoolRuntime();
+      }
+    } catch {
+      setPoolMessage("Unable to reach application pool service.");
+    } finally {
+      setIsRunningPoolAction(false);
     }
   }
 
@@ -3151,26 +3865,31 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
 
   function openWebsiteFolderPicker() {
     setIsWebsiteFolderPickerOpen(true);
-    browseWebsiteFunctionFolders(websiteFunctionFields.target || activeWebsiteFunction?.site?.sitePath || "/");
+    const path = activeWebsiteFunction?.key === "virtual-dir"
+      ? websiteFunctionFields.physicalPath || activeWebsiteFunction?.site?.sitePath || "/"
+      : websiteFunctionFields.target || activeWebsiteFunction?.site?.sitePath || "/";
+    browseWebsiteFunctionFolders(path);
   }
 
   function chooseWebsiteFunctionFolder(path) {
+    const fieldName = activeWebsiteFunction?.key === "virtual-dir" ? "physicalPath" : "target";
     setWebsiteFunctionFields((current) => ({
       ...current,
-      target: normalizeFtpPickerPath(path, sitesDashboard?.cpLogin)
+      [fieldName]: normalizeFtpPickerPath(path, sitesDashboard?.cpLogin)
     }));
     setIsWebsiteFolderPickerOpen(false);
   }
 
-  async function submitWebsiteFunction(action = "") {
+  async function submitWebsiteFunction(action = "", extraFields = {}) {
     if (!activeWebsiteFunction?.site?.siteUid || !activeWebsiteFunction?.key) return;
     setWebsiteFunctionMessage("");
     setWebsiteFunctionError("");
     setWebsiteFunctionBusyAction(action || "save");
     try {
+      const mergedFields = { ...websiteFunctionFields, ...extraFields };
       const submitFields = activeWebsiteFunction.key === "detail-error"
-        ? { ...websiteFunctionFields, enabled: action === "disable" ? "false" : "true" }
-        : websiteFunctionFields;
+        ? { ...mergedFields, enabled: action === "disable" ? "false" : "true" }
+        : mergedFields;
       const response = await fetch(`/api/hosting/sites/${activeWebsiteFunction.site.siteUid}/functions/${activeWebsiteFunction.key}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3220,6 +3939,212 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
               }
             } : current.details
           } : current);
+        }
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "mime-type") {
+        const rawExtension = String((submitFields.extension ?? extraFields.extension ?? "")).trim();
+        const extensionWithoutDot = rawExtension.replace(/^\.+/, "");
+        const nextExtension = extensionWithoutDot ? `.${extensionWithoutDot}` : "";
+        const nextMimeType = String(submitFields.mimeType ?? extraFields.mimeType ?? "").trim();
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              mimeMaps: action === "remove" || action === "delete"
+                ? (current.details.data?.mimeMaps ?? []).filter((row) => String(row.extension ?? "").toLowerCase() !== nextExtension.toLowerCase())
+                : [
+                    ...(current.details.data?.mimeMaps ?? []).filter((row) => String(row.extension ?? "").toLowerCase() !== nextExtension.toLowerCase()),
+                    { extension: nextExtension, mimeType: nextMimeType }
+                  ]
+            }
+          } : current.details
+        } : current);
+        if (action !== "remove" && action !== "delete") {
+          setWebsiteFunctionFields((current) => ({ ...current, extension: "", mimeType: "" }));
+        }
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "script-map") {
+        const rawExtension = String((submitFields.extension ?? extraFields.extension ?? "")).trim();
+        const extensionWithoutDot = rawExtension.replace(/^\.+/, "");
+        const nextExtension = extensionWithoutDot ? `.${extensionWithoutDot}` : "";
+        const nextTagName = String(submitFields.tagName ?? extraFields.tagName ?? `Custom-${nextExtension.replace(/^\./, "")}`).trim();
+        const scriptTypeIndex = String(submitFields.scriptTypeIndex ?? extraFields.scriptTypeIndex ?? "85");
+        const selectedScript = [
+          { value: "85", label: "PHP 8.5.x" },
+          { value: "83", label: "PHP 8.3.x" },
+          { value: "82", label: "PHP 8.2.x" },
+          { value: "14", label: "PHP 8.1.x" },
+          { value: "13", label: "PHP 8.0.x" },
+          { value: "12", label: "PHP 7.4.x" },
+          { value: "11", label: "PHP 7.3.x" },
+          { value: "10", label: "PHP 7.2.x" },
+          { value: "9", label: "PHP 7.0.x" },
+          { value: "8", label: "PHP 5.6.x" },
+          { value: "7", label: "Perl" },
+          { value: "6", label: "Python" }
+        ].find((option) => option.value === scriptTypeIndex);
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              scriptMaps: action === "remove" || action === "delete"
+                ? (current.details.data?.scriptMaps ?? []).filter((row) => (
+                    String(row.tagName ?? "").toLowerCase() !== nextTagName.toLowerCase()
+                    && String(row.extension ?? "").toLowerCase() !== nextExtension.toLowerCase()
+                  ))
+                : [
+                    ...(current.details.data?.scriptMaps ?? []).filter((row) => String(row.extension ?? "").toLowerCase() !== nextExtension.toLowerCase()),
+                    { tagName: nextTagName, extension: nextExtension, scriptTypeIndex, processor: selectedScript?.label ?? "Custom Script" }
+                  ]
+            }
+          } : current.details
+        } : current);
+        if (action !== "remove" && action !== "delete") {
+          setWebsiteFunctionFields((current) => ({ ...current, extension: "" }));
+        }
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "custom-errors") {
+        const statusCode = String(submitFields.errorType ?? submitFields.statusCode ?? extraFields.errorType ?? "404");
+        const isReset = action === "reset" || action === "default";
+        const nextPath = isReset
+          ? statusCode === "404" ? "C:\\hosting\\public\\404-3.htm" : `C:\\inetpub\\custerr\\en-US\\${statusCode}.htm`
+          : `/${String(submitFields.filepath ?? submitFields.path ?? "").replace(/^\/+/, "")}`;
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              errorPages: (current.details.data?.errorPages ?? []).map((row) => (
+                String(row.statusCode) === statusCode ? { ...row, path: nextPath } : row
+              ))
+            }
+          } : current.details
+        } : current);
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "force-https") {
+        const ruleName = String(submitFields.ruleName ?? extraFields.ruleName ?? "httpTohttps").trim() || "httpTohttps";
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              runtime: action === "delete" || action === "remove" || action === "disable"
+                ? (current.details.data?.runtime ?? []).filter((row) => String(row.id ?? row.rulename ?? "").toLowerCase() !== ruleName.toLowerCase())
+                : [
+                    ...(current.details.data?.runtime ?? []).filter((row) => String(row.id ?? row.rulename ?? "").toLowerCase() !== ruleName.toLowerCase()),
+                    { row_type: "Redirect", id: ruleName, title: "http", status: "https", servername: ruleName }
+                  ]
+            }
+          } : current.details
+        } : current);
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "site-guard") {
+        const enabled = action === "enable" || action === "on" || String(submitFields.enabled ?? extraFields.enabled ?? "").toLowerCase() === "true";
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              site: {
+                ...(current.details.data?.site ?? {}),
+                webknight: enabled
+              },
+              security: (current.details.data?.security ?? []).map((row) => (
+                String(row.site_Uid ?? row.site_uid ?? "") === String(activeWebsiteFunction.site?.siteUid ?? "")
+                  ? { ...row, webknight: enabled }
+                  : row
+              ))
+            }
+          } : current.details
+        } : current);
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "outgoing-port") {
+        const ipid = String(submitFields.ipid ?? extraFields.ipid ?? "");
+        const ip = String(submitFields.ip ?? extraFields.ip ?? "");
+        const port = String(submitFields.port ?? extraFields.port ?? "");
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              outgoingPorts: action === "delete" || action === "remove"
+                ? (current.details.data?.outgoingPorts ?? []).filter((row) => String(row.ipid ?? row.id ?? "") !== ipid)
+                : [
+                    ...(current.details.data?.outgoingPorts ?? []),
+                    { ipid: Date.now(), remoteip: ip, port, adddate: new Date().toLocaleString(), rulename: `CP${activeWebsiteFunction.site?.cpId ?? ""}${ip.replaceAll(".", "")}${port}` }
+                  ]
+            }
+          } : current.details
+        } : current);
+        if (action !== "delete" && action !== "remove") {
+          setWebsiteFunctionFields((current) => ({ ...current, ip: "", port: "1433" }));
+        }
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "create-net-app") {
+        const appPath = `/${String(submitFields.appPath ?? extraFields.appPath ?? "").replace(/^\/+/, "")}`;
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              iisApps: action === "delete" || action === "remove"
+                ? (current.details.data?.iisApps ?? []).filter((row) => String(row.appPath ?? "").toLowerCase() !== appPath.toLowerCase())
+                : [
+                    ...(current.details.data?.iisApps ?? []).filter((row) => String(row.appPath ?? "").toLowerCase() !== appPath.toLowerCase()),
+                    { appPath }
+                  ]
+            }
+          } : current.details
+        } : current);
+        if (action !== "delete" && action !== "remove") {
+          setWebsiteFunctionFields((current) => ({ ...current, appPath: "" }));
+        }
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "virtual-dir") {
+        const name = String(submitFields.vdirname ?? submitFields.virtualPath ?? extraFields.vdirname ?? extraFields.virtualPath ?? "").trim();
+        const path = String(submitFields.physicalPath ?? submitFields.vdpath ?? extraFields.physicalPath ?? extraFields.vdpath ?? "").trim();
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              virtualDirs: action === "delete" || action === "remove"
+                ? (current.details.data?.virtualDirs ?? []).filter((row) => String(row.name ?? "").toLowerCase() !== name.toLowerCase())
+                : [
+                    ...(current.details.data?.virtualDirs ?? []).filter((row) => String(row.name ?? "").toLowerCase() !== name.toLowerCase()),
+                    { name, path }
+                  ]
+            }
+          } : current.details
+        } : current);
+        if (action !== "delete" && action !== "remove") {
+          setWebsiteFunctionFields((current) => ({ ...current, vdirname: "", virtualPath: "", physicalPath: "" }));
         }
         return;
       }
@@ -3644,6 +4569,7 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
         <WebsiteFunctionDrawer
           activeFunction={activeWebsiteFunction}
           fields={websiteFunctionFields}
+          siteOptions={siteRecords}
           error={websiteFunctionError}
           isLoading={isLoadingWebsiteFunction}
           busyAction={websiteFunctionBusyAction}
@@ -3720,6 +4646,22 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
             setMoreFunctionsSite(null);
             openWebsiteFunction(action, moreFunctionsSite);
           }}
+        />
+      )}
+      {poolDrawer && (
+        <HostingPoolDrawer
+          mode={poolDrawer}
+          cpId={cpId}
+          currentUser={currentUser}
+          dashboard={sitesDashboard}
+          runtime={poolRuntime}
+          isLoading={isLoadingPools}
+          isRunning={isRunningPoolAction}
+          message={poolMessage}
+          actionDetails={poolActionDetails}
+          onClose={() => setPoolDrawer(null)}
+          onRefresh={loadPoolRuntime}
+          onRunAction={runPoolAction}
         />
       )}
 
@@ -4520,12 +5462,12 @@ function WebsiteCards({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
             <span>Mapped Domains</span>
             <div>
               {site.mappedDomains.map((domain) => (
-                <a href={domain.url} key={domain.label}>
+                <a href={domain.url} key={domain.label} target="_blank" rel="noreferrer">
                   <span>{domain.label}</span>
                   {domain.ssl && <span className="ssl-domain-badge">SSL</span>}
                 </a>
               ))}
-              <button className="add-domain-chip" type="button" aria-label="+ Add Domain" onClick={() => onQueueAction("+ Add Domain", site)}>
+              <button className="add-domain-chip" type="button" aria-label="+ Add Domain" onClick={() => onFunctionAction("Domain Manager", site)}>
                 <MenuIcon name="add-domain" />
               </button>
             </div>
@@ -4550,7 +5492,7 @@ function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
           <tr>
             <th>Site Name</th>
             <th>Mapped Domains</th>
-            <th>Status</th>
+            <th className="website-status-column">Status</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -4565,17 +5507,17 @@ function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
               <td>
                 <div className="table-domain-list">
                   {site.mappedDomains.map((domain) => (
-                    <a href={domain.url} key={domain.label}>
+                    <a href={domain.url} key={domain.label} target="_blank" rel="noreferrer">
                       <span>{domain.label}</span>
                       {domain.ssl && <span className="ssl-domain-badge">SSL</span>}
                     </a>
                   ))}
-                  <button className="add-domain-chip" type="button" aria-label="+ Add Domain" onClick={() => onQueueAction("+ Add Domain", site)}>
+                  <button className="add-domain-chip" type="button" aria-label="+ Add Domain" onClick={() => onFunctionAction("Domain Manager", site)}>
                     <MenuIcon name="add-domain" />
                   </button>
                 </div>
               </td>
-              <td>{site.status}</td>
+              <td className="website-status-column"><WebsiteStatusIndicator status={site.status} compact /></td>
               <td>
                 <WebsiteActionButtons
                   compact
@@ -4591,6 +5533,19 @@ function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
       </table>
     </div>
   );
+}
+
+function WebsiteStatusIndicator({ status, compact = false }) {
+  const isStopped = String(status ?? "").trim().toLowerCase() === "stopped";
+  if (isStopped && compact) {
+    return (
+      <span className="website-stopped-icon" title="Site Stopped" aria-label="Site Stopped">
+        <MenuIcon name="x" />
+      </span>
+    );
+  }
+
+  return <span className={isStopped ? "status-pill danger" : "status-pill"}>{status || "Active"}</span>;
 }
 
 function SiteNameEditor({ siteName, onChange }) {
@@ -4751,7 +5706,7 @@ function WebsiteMoreFunctionsDrawer({ site, onAction, onClose }) {
   );
 }
 
-function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyAction, message, onChangeField, onClose, onRefresh, onSubmit, onOpenFolderPicker }) {
+function WebsiteFunctionDrawer({ activeFunction, fields, siteOptions = [], error, isLoading, busyAction, message, onChangeField, onClose, onRefresh, onSubmit, onOpenFolderPicker }) {
   const details = activeFunction.details;
   const data = details?.data ?? {};
   const isSiteNameEditor = details?.key === "site-name" || activeFunction.key === "site-name";
@@ -4760,6 +5715,82 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyA
   const isMappedPath = functionKey === "mapped-path";
   const isDomainManager = functionKey === "domain-manager";
   const isDeleteWebsite = functionKey === "delete-website";
+  const isCoreMode = functionKey === "core-mode";
+  const isNodeJsApp = functionKey === "nodejs-app";
+  const isPhpVersion = functionKey === "php-version";
+  const isPhpSettings = functionKey === "php-settings";
+  const isVisitorStats = functionKey === "visitor-stats";
+  const isFtpAccess = functionKey === "ftp-access";
+  const isSmtpSampleCode = functionKey === "smtp-sample-code";
+  const isIpDeny = functionKey === "ip-deny";
+  const isIisLogManager = functionKey === "iis-log-manager";
+  const isDefaultDoc = functionKey === "default-doc";
+  const isMimeType = functionKey === "mime-type";
+  const isScriptMap = functionKey === "script-map";
+  const isCustomErrors = functionKey === "custom-errors";
+  const isForceHttps = functionKey === "force-https";
+  const isSiteGuard = functionKey === "site-guard";
+  const isOutgoingPort = functionKey === "outgoing-port";
+  const isCreateNetApp = functionKey === "create-net-app";
+  const isVirtualDir = functionKey === "virtual-dir";
+  const visitorStatsRows = Array.isArray(data.visitorStats?.rows) ? data.visitorStats.rows : [];
+  const visitorStatsRow = visitorStatsRows[0] ?? {};
+  const visitorStatsEnabled = Boolean(visitorStatsRow.stats_enabled ?? visitorStatsRow.statsEnabled);
+  const visitorStatsDomain = visitorStatsRow.stats_domain ?? visitorStatsRow.statsDomain ?? "";
+  const visitorDomainOptions = (Array.isArray(data.domains) ? data.domains : [])
+    .map((domain) => domain.domain_name ?? domain.domainName ?? domain.title ?? "")
+    .filter(Boolean)
+    .map((domain) => ({ value: domain, label: domain }));
+  const ftpRows = Array.isArray(data.ftpUsers) ? data.ftpUsers : [];
+  const mappedDomains = (activeFunction.site?.mappedDomains ?? []).filter((domain) => {
+    const label = String(domain.label ?? domain.domain ?? domain.domainName ?? "").trim();
+    return label && label !== "No mapped domains";
+  });
+  const moveSiteOptions = siteOptions
+    .filter((site) => !site.isSubdomain && String(site.siteKey) !== String(activeFunction.site?.siteKey))
+    .map((site) => ({
+      value: String(site.siteUid ?? site.siteKey),
+      label: `${site.siteName || site.rootName || "Website"}${site.sitePath ? ` - ${site.sitePath}` : ""}`
+    }));
+  const rootFtp = ftpRows.find((row) => String(row.ftp_login ?? row.ftpLogin ?? "").toLowerCase() === String(data.site?.cpLogin ?? activeFunction.site?.cpLogin ?? "").toLowerCase()) ?? ftpRows[0] ?? {};
+  const ftpServer = rootFtp.cpurl ?? rootFtp.cpURL ?? `${String(data.site?.serverId ?? activeFunction.site?.serverId ?? "").toLowerCase()}.site4now.net`;
+  const ipDenyRows = Array.isArray(data.ipDeny?.denyList) ? data.ipDeny.denyList : [];
+  const dynamicIp = data.ipDeny?.dynamic ?? {};
+  const iisLogs = data.iisLogs ?? {};
+  const mimeMaps = Array.isArray(data.mimeMaps) ? data.mimeMaps : [];
+  const scriptMaps = Array.isArray(data.scriptMaps) ? data.scriptMaps : [];
+  const errorPages = Array.isArray(data.errorPages) ? data.errorPages : [];
+  const outgoingPorts = Array.isArray(data.outgoingPorts) ? data.outgoingPorts : [];
+  const iisApps = Array.isArray(data.iisApps) ? data.iisApps : [];
+  const virtualDirs = Array.isArray(data.virtualDirs) ? data.virtualDirs : [];
+  const redirectRows = (Array.isArray(data.runtime) ? data.runtime : [])
+    .filter((row) => String(row.row_type ?? row.rowType ?? "").toLowerCase() === "redirect");
+  const siteGuardEnabled = Boolean(
+    data.site?.webknight
+    ?? data.security?.find?.((row) => String(row.site_Uid ?? row.site_uid ?? "") === String(activeFunction.site?.siteUid ?? ""))?.webknight
+    ?? activeFunction.site?.webknight
+  );
+  const customErrorOptions = ["401", "403", "404", "405", "406", "412", "500", "501"].map((code) => ({ value: code, label: `${code} Error` }));
+  const scriptMapOptions = [
+    { value: "85", label: "PHP 8.5.x" },
+    { value: "83", label: "PHP 8.3.x" },
+    { value: "82", label: "PHP 8.2.x" },
+    { value: "14", label: "PHP 8.1.x" },
+    { value: "13", label: "PHP 8.0.x" },
+    { value: "12", label: "PHP 7.4.x" },
+    { value: "11", label: "PHP 7.3.x" },
+    { value: "10", label: "PHP 7.2.x" },
+    { value: "9", label: "PHP 7.0.x" },
+    { value: "8", label: "PHP 5.6.x" },
+    { value: "7", label: "Perl" },
+    { value: "6", label: "Python" }
+  ];
+  const siteRootPath = String(data.site?.sitePath ?? activeFunction.site?.sitePath ?? "").replaceAll("/", "\\");
+  const smtpDomains = mappedDomains
+    .map((domain) => String(domain.label ?? domain.domain ?? domain.domainName ?? "").trim())
+    .filter((domain) => domain && !isTemporaryHostingDomain(domain));
+  const smtpDomainOptions = (smtpDomains.length ? smtpDomains : mappedDomains.map((domain) => String(domain.label ?? domain.domain ?? domain.domainName ?? "").trim()).filter(Boolean))
+    .map((domain) => ({ value: domain, label: domain }));
   const actionResult = (
     <>
       {error && <p className="sandbox-message danger function-action-message">{error}</p>}
@@ -4856,9 +5887,67 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyA
                 onSubmit("add");
               }}>
                 <h3>Domain Manager</h3>
-                <p>Add or remove a mapped domain for this website.</p>
+                <p>Map domain names to this website, remove existing mapped domains, or move a domain to another website.</p>
+                <div className="domain-manager-list">
+                  {mappedDomains.length ? mappedDomains.map((domain) => {
+                    const label = String(domain.label ?? domain.domain ?? domain.domainName ?? "").trim();
+                    const domainUid = domain.domainUid ?? domain.DomainUid ?? domain.id ?? domain.Id ?? "";
+                    const isTempDomain = isTemporaryHostingDomain(label);
+                    return (
+                      <article className="domain-manager-row" key={`${domainUid || label}`}>
+                        <div>
+                          <strong>{label}</strong>
+                          {domain.ssl && <span className="ssl-domain-badge">SSL</span>}
+                          {isTempDomain && <span className="status-pill muted">Temp URL</span>}
+                        </div>
+                        <div className="domain-manager-actions">
+                          <button
+                            className="secondary-button compact danger-button"
+                            type="button"
+                            disabled={Boolean(busyAction) || !domainUid}
+                            onClick={() => onSubmit(isTempDomain ? "deletetempurl" : "delete", {
+                              domain: label,
+                              domainUid: String(domainUid)
+                            })}
+                          >
+                            {busyAction === "delete" || busyAction === "deletetempurl" ? <LoadingIcon label="Removing domain" /> : "Delete"}
+                          </button>
+                          {!isTempDomain && (
+                            <>
+                              <CustomSelect
+                                value={fields.toSiteUid ?? ""}
+                                ariaLabel={`Move ${label} to another website`}
+                                placeholder="Move to..."
+                                onChange={(value) => {
+                                  onChangeField("domain", label);
+                                  onChangeField("domainUid", String(domainUid));
+                                  onChangeField("toSiteUid", value);
+                                }}
+                                options={moveSiteOptions}
+                              />
+                              <button
+                                className="secondary-button compact"
+                                type="button"
+                                disabled={Boolean(busyAction) || !domainUid || !fields.toSiteUid}
+                                onClick={() => onSubmit("move", {
+                                  domain: label,
+                                  domainUid: String(domainUid),
+                                  toSiteUid: fields.toSiteUid
+                                })}
+                              >
+                                {busyAction === "move" ? <LoadingIcon label="Moving domain" /> : "Move"}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  }) : (
+                    <p className="empty-state">No mapped domains found for this website.</p>
+                  )}
+                </div>
                 <label>
-                  Domain
+                  New Domain
                   <input
                     value={fields.domain ?? ""}
                     onChange={(event) => onChangeField("domain", event.target.value)}
@@ -4868,9 +5957,6 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyA
                 <div className="function-submit-row">
                   <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.domain ?? "").trim()}>
                     {busyAction === "add" ? <LoadingIcon label="Adding domain" /> : "Add Domain"}
-                  </button>
-                  <button className="secondary-button compact danger-button" type="button" disabled={Boolean(busyAction) || !(fields.domain ?? "").trim()} onClick={() => onSubmit("delete")}>
-                    {busyAction === "delete" ? <LoadingIcon label="Removing domain" /> : "Remove Domain"}
                   </button>
                 </div>
                 {actionResult}
@@ -4907,6 +5993,403 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyA
                 </div>
                 {actionResult}
               </form>
+            )}
+
+            {isCoreMode && (
+              <form className="function-field-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit("save");
+              }}>
+                <div className="function-tip-box">
+                  <p>To host multiple ASP.NET Core apps, use OutOfProcess hosting model in all core apps.</p>
+                </div>
+                <p>Current Core Model: <strong>{data.coreMode?.current ?? data.runtime?.coreMode ?? "Not available"}</strong></p>
+                <label>
+                  Core Model
+                  <CustomSelect
+                    value={fields.hostingModel || "OutOfProcess"}
+                    ariaLabel="Choose .NET Core hosting model"
+                    onChange={(value) => onChangeField("hostingModel", value)}
+                    options={[
+                      { value: "OutOfProcess", label: "OutOfProcess" },
+                      { value: "InProcess", label: "InProcess" }
+                    ]}
+                  />
+                </label>
+                <label className="file-action-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={(fields.applyAll ?? "true") === "true"}
+                    onChange={(event) => onChangeField("applyAll", event.target.checked ? "true" : "false")}
+                  />
+                  Apply to all core APPs
+                </label>
+                <p>
+                  <span className="kb-badge">KB Article</span>{" "}
+                  <a href="http://www.smarterasp.net/support/kb/a1999/what-should-we-do-when-get-http-error-500_34-ancm-mixed-hosting-models-not-supported.aspx" target="_blank" rel="noreferrer">
+                    How to change core hosting model manually
+                  </a>
+                </p>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="submit" disabled={Boolean(busyAction)}>
+                    {busyAction ? <LoadingIcon label="Saving .NET Core mode" /> : "Save"}
+                  </button>
+                </div>
+                {actionResult}
+              </form>
+            )}
+
+            {isNodeJsApp && (
+              <form className="function-field-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit("save");
+              }}>
+                <div className="function-tip-box">
+                  <p>Please update your code to use the dynamic port, for example: app.listen(process.env.PORT || 3000).</p>
+                </div>
+                <p>Current Node.JS Status: <strong>{data.nodejs?.status ?? "Not available"}</strong></p>
+                <label>
+                  Node.JS Module
+                  <CustomSelect
+                    value={fields.mode || "httpPlatformHandler"}
+                    ariaLabel="Choose Node.js module"
+                    onChange={(value) => onChangeField("mode", value)}
+                    options={[
+                      { value: "httpPlatformHandler", label: "Enable Node.JS" },
+                      { value: "none", label: "Disable Node.JS" }
+                    ]}
+                  />
+                </label>
+                {(fields.mode || "httpPlatformHandler") !== "none" && (
+                  <label>
+                    Application startup file*
+                    <input
+                      value={fields.startupfile ?? fields.entryPoint ?? ""}
+                      onChange={(event) => onChangeField("startupfile", event.target.value)}
+                      placeholder="app.js"
+                      required
+                    />
+                    <small>The name of the .js file that Node.js will start, such as app.js, server.js, or main.js.</small>
+                  </label>
+                )}
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || ((fields.mode || "httpPlatformHandler") !== "none" && !(fields.startupfile ?? fields.entryPoint ?? "").trim())}>
+                    {busyAction ? <LoadingIcon label="Saving Node.js app" /> : "Save"}
+                  </button>
+                </div>
+                <div className="function-submit-row">
+                  <button className="secondary-button compact" type="button" onClick={() => window.location.href = `/panel_cp?section=websites&nodeSubfolder=${activeFunction.site?.siteUid ?? ""}`}>
+                    Create Node.js App For Subfolder
+                  </button>
+                  <button className="secondary-button compact github-button" type="button" onClick={() => window.location.href = `/github/deploy?siteUid=${activeFunction.site?.siteUid ?? ""}`}>
+                    Github Deploy
+                  </button>
+                </div>
+                <div className="kb-link-list">
+                  {[
+                    ["Quick Start Node.JS", "http://www.smarterasp.net/support/kb/a1970/quick-start-node_js.aspx"],
+                    ["Quick Start Next.JS", "http://www.smarterasp.net/support/kb/a2233/how-to-publish-a-next_js-project-to-your-hosting-account.aspx"],
+                    ["Quick Start React.JS", "http://www.smarterasp.net/support/kb/a2176/how-to-publish-a-react_js-project-to-your-hosting-account.aspx"],
+                    ["Quick Start Nest.JS", "http://www.smarterasp.net/support/kb/a2259/how-to-publish-a-nestjs-project-to-your-hosting-account.aspx"],
+                    ["Quick Start Vue.JS", "http://www.smarterasp.net/support/kb/a2170/how-to-publish-a-vue_js-project-to-your-hosting-account.aspx"],
+                    ["Quick Start Peer.JS", "http://www.smarterasp.net/support/kb/a2193/how-to-deploy-peerjs.aspx"]
+                  ].map(([label, href]) => (
+                    <a key={href} href={href} target="_blank" rel="noreferrer"><span className="kb-badge">KB Article</span> {label}</a>
+                  ))}
+                </div>
+                {actionResult}
+              </form>
+            )}
+
+            {isPhpVersion && (
+              <form className="function-field-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit("save");
+              }}>
+                <div className="function-tip-box">
+                  <p>Make sure your site can run on the selected PHP version before changing it.</p>
+                </div>
+                <p>Current PHP Version: <strong>{activeFunction.site?.phpVersion || "Not available"}</strong></p>
+                <label>
+                  PHP Version
+                  <CustomSelect
+                    value={fields.phpversion || fields.phpVersion || "83"}
+                    ariaLabel="Choose PHP version"
+                    onChange={(value) => onChangeField("phpversion", value)}
+                    options={[
+                      { value: "85", label: "PHP 8.5.x" },
+                      { value: "83", label: "PHP 8.3.x" },
+                      { value: "82", label: "PHP 8.2.x" },
+                      { value: "14", label: "PHP 8.1.x" },
+                      { value: "13", label: "PHP 8.0.x" },
+                      { value: "12", label: "PHP 7.4.x" },
+                      { value: "11", label: "PHP 7.3.x" },
+                      { value: "10", label: "PHP 7.2.x" },
+                      { value: "9", label: "PHP 7.0.x" },
+                      { value: "8", label: "PHP 5.6.x" },
+                      { value: "4", label: "PHP 5.5.x" },
+                      { value: "3", label: "PHP 5.4.x" },
+                      { value: "1", label: "PHP 5.2.x" },
+                      { value: "250", label: "Disable PHP" }
+                    ]}
+                  />
+                </label>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="submit" disabled={Boolean(busyAction)}>
+                    {busyAction ? <LoadingIcon label="Saving PHP version" /> : "Save"}
+                  </button>
+                </div>
+                {actionResult}
+              </form>
+            )}
+
+            {isPhpSettings && (
+              <form className="function-field-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit("save");
+              }}>
+                <div className="function-tip-box">
+                  <p>You can define PHP parameters using the same syntax as php.ini.</p>
+                  <p>Examples: memory_limit = 128M, max_execution_time = 60, post_max_size = 8M, upload_max_filesize = 2M, opcache.enable=0</p>
+                </div>
+                <p>PHP Settings for <strong>{activeFunction.site?.siteName ?? "site"}</strong></p>
+                <label>
+                  .user.ini
+                  <textarea
+                    className="code-textarea"
+                    value={fields.phpsettings ?? fields.settings ?? ""}
+                    onChange={(event) => onChangeField("phpsettings", event.target.value)}
+                    rows={12}
+                    placeholder={"memory_limit = 128M\nmax_execution_time = 60"}
+                  />
+                </label>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="submit" disabled={Boolean(busyAction)}>
+                    {busyAction ? <LoadingIcon label="Saving PHP settings" /> : "Save"}
+                  </button>
+                </div>
+                {actionResult}
+              </form>
+            )}
+
+            {isVisitorStats && (
+              <section className="function-field-form">
+                {data.visitorStats?.available === false ? (
+                  <p className="sandbox-message danger">Visitor stats are not available for sub-sites.</p>
+                ) : (
+                  <>
+                    <div className="detail-error-status-row">
+                      <div>
+                        <h3>Visitor Stats</h3>
+                        <p>Stats take about 24 hours before the first update.</p>
+                      </div>
+                      <span className={visitorStatsEnabled ? "status-pill blue" : "status-pill muted"}>
+                        {visitorStatsEnabled ? "ON" : "OFF"}
+                      </span>
+                    </div>
+                    <label>
+                      Domain Name
+                      {visitorStatsEnabled ? (
+                        <input value={visitorStatsDomain} readOnly />
+                      ) : (
+                        <CustomSelect
+                          value={fields.mainDomain || visitorDomainOptions[0]?.value || ""}
+                          ariaLabel="Choose stats domain"
+                          onChange={(value) => onChangeField("mainDomain", value)}
+                          options={visitorDomainOptions}
+                        />
+                      )}
+                    </label>
+                    <div className="function-submit-row">
+                      <button className="primary-button compact" type="button" disabled={Boolean(busyAction) || (!visitorStatsEnabled && !(fields.mainDomain || visitorDomainOptions[0]?.value))} onClick={() => onSubmit("enable")}>
+                        {busyAction === "enable" ? <LoadingIcon label="Enabling visitor stats" /> : "Turn On"}
+                      </button>
+                      <button className="secondary-button compact" type="button" disabled={Boolean(busyAction) || !visitorStatsEnabled} onClick={() => onSubmit("disable")}>
+                        {busyAction === "disable" ? <LoadingIcon label="Disabling visitor stats" /> : "Turn Off"}
+                      </button>
+                      {visitorStatsEnabled && data.visitorStats?.statsUrl && (
+                        <a className="secondary-button compact" href={data.visitorStats.statsUrl} target="_blank" rel="noreferrer">View</a>
+                      )}
+                    </div>
+                  </>
+                )}
+                {actionResult}
+              </section>
+            )}
+
+            {isFtpAccess && (
+              <section className="function-field-form">
+                <dl className="webdeploy-info-list">
+                  <div>
+                    <dt>Server IP</dt>
+                    <dd>{ftpServer}</dd>
+                  </div>
+                  <div>
+                    <dt>Username</dt>
+                    <dd>{data.site?.cpLogin ?? activeFunction.site?.cpLogin ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt>Password</dt>
+                    <dd>Same as control panel</dd>
+                  </div>
+                  <div>
+                    <dt>FTP Path and Folder</dt>
+                    <dd>{formatWebsiteRelativePath(data.site?.sitePath ?? activeFunction.site?.sitePath ?? "")}</dd>
+                  </div>
+                </dl>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="button" onClick={() => window.location.href = "/panel_cp?section=ftp"}>
+                    Add FTP User
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {isSmtpSampleCode && (
+              <form className="function-field-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit("install");
+              }}>
+                <div className="function-tip-box">
+                  <p>This function will copy our ASP.NET/PHP SMTP testing script into your account. You can run it to test SMTP and review the source code.</p>
+                </div>
+                <label>
+                  Domain
+                  <CustomSelect
+                    value={fields.domain || smtpDomainOptions[0]?.value || ""}
+                    ariaLabel="Choose SMTP sample domain"
+                    onChange={(value) => onChangeField("domain", value)}
+                    options={smtpDomainOptions}
+                  />
+                </label>
+                <label>
+                  Type
+                  <CustomSelect
+                    value={fields.scripttype || "1"}
+                    ariaLabel="Choose SMTP sample type"
+                    onChange={(value) => onChangeField("scripttype", value)}
+                    options={[
+                      { value: "1", label: "ASP.NET C#" },
+                      { value: "2", label: "ASP.NET VB" },
+                      { value: "4", label: "ASP" },
+                      { value: "3", label: "PHP" }
+                    ]}
+                  />
+                </label>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.domain || smtpDomainOptions[0]?.value)}>
+                    {busyAction ? <LoadingIcon label="Installing SMTP sample code" /> : "Submit"}
+                  </button>
+                </div>
+                {actionResult}
+              </form>
+            )}
+
+            {isIpDeny && (
+              <section className="function-field-form">
+                <h3>Current Deny List</h3>
+                <div className="function-row-list">
+                  {ipDenyRows.length ? ipDenyRows.map((row, index) => (
+                    <article className="function-row-card ip-deny-row" key={`${row.ipAddress}-${row.subnetMask}-${index}`}>
+                      <div>
+                        <dt>IP Address</dt>
+                        <dd>{row.ipAddress}</dd>
+                      </div>
+                      <div>
+                        <dt>Mask</dt>
+                        <dd>{row.subnetMask}</dd>
+                      </div>
+                      <button
+                        className="secondary-button compact danger-button"
+                        type="button"
+                        disabled={Boolean(busyAction)}
+                        onClick={() => onSubmit("remove", { ipAddress: row.ipAddress, subnetMask: row.subnetMask })}
+                      >
+                        {busyAction === "remove" ? <LoadingIcon label="Removing denied IP" /> : "Delete"}
+                      </button>
+                    </article>
+                  )) : (
+                    <p className="empty-state">No denied IP addresses found.</p>
+                  )}
+                </div>
+                <h3>Add Deny IP</h3>
+                <label>
+                  IP Address
+                  <input value={fields.ipAddress ?? ""} onChange={(event) => onChangeField("ipAddress", event.target.value)} placeholder="123.123.123.123" />
+                </label>
+                <label>
+                  Mask
+                  <input value={fields.subnetMask ?? "255.255.255.255"} onChange={(event) => onChangeField("subnetMask", event.target.value)} placeholder="255.255.255.255" />
+                </label>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="button" disabled={Boolean(busyAction) || !(fields.ipAddress ?? "").trim()} onClick={() => onSubmit("create")}>
+                    {busyAction === "create" ? <LoadingIcon label="Adding denied IP" /> : "Add"}
+                  </button>
+                </div>
+                <h3>Dynamic IP Restriction Settings</h3>
+                <label className="file-action-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={(fields.denyConcurrent ?? String(dynamicIp.denyConcurrent ?? false)) === "true"}
+                    onChange={(event) => onChangeField("denyConcurrent", event.target.checked ? "true" : "false")}
+                  />
+                  Deny IP Address based on the number of concurrent requests
+                </label>
+                <label>
+                  Maximum number of concurrent requests
+                  <input value={fields.maxDenyConcurrentNumber ?? dynamicIp.maxDenyConcurrentNumber ?? "5"} onChange={(event) => onChangeField("maxDenyConcurrentNumber", event.target.value.replace(/\D/g, ""))} />
+                </label>
+                <label className="file-action-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={(fields.denyOverPeriod ?? String(dynamicIp.denyOverPeriod ?? false)) === "true"}
+                    onChange={(event) => onChangeField("denyOverPeriod", event.target.checked ? "true" : "false")}
+                  />
+                  Deny IP Address based on the number of requests over a period of time
+                </label>
+                <label>
+                  Maximum number of requests
+                  <input value={fields.maxDenyNumber ?? dynamicIp.maxDenyNumber ?? "20"} onChange={(event) => onChangeField("maxDenyNumber", event.target.value.replace(/\D/g, ""))} />
+                </label>
+                <label>
+                  Time Period (in milliseconds)
+                  <input value={fields.timePeriod ?? dynamicIp.timePeriod ?? "200"} onChange={(event) => onChangeField("timePeriod", event.target.value.replace(/\D/g, ""))} />
+                </label>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("dynamicip")}>
+                    {busyAction === "dynamicip" ? <LoadingIcon label="Saving dynamic IP restriction settings" /> : "Submit"}
+                  </button>
+                </div>
+                {actionResult}
+              </section>
+            )}
+
+            {isIisLogManager && (
+              <section className="function-field-form">
+                <div className="function-tip-box">
+                  <p>Copy raw IIS log files into this hosting account so they can be downloaded from File Manager.</p>
+                </div>
+                <dl className="webdeploy-info-list">
+                  <div>
+                    <dt>Site Name</dt>
+                    <dd>{activeFunction.site?.siteName ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt>Primary Domain</dt>
+                    <dd>{iisLogs.primaryDomain ?? smtpDomainOptions[0]?.value ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt>Log Folder</dt>
+                    <dd>{iisLogs.destination ?? "Not available"}</dd>
+                  </div>
+                </dl>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("download")}>
+                    {busyAction === "download" ? <LoadingIcon label="Copying IIS raw logs" /> : "Download"}
+                  </button>
+                </div>
+                {actionResult}
+              </section>
             )}
 
             {(details.key === "vs-webdeploy" || details.key === "remote-iis-manager") && (
@@ -4976,7 +6459,516 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyA
               </section>
             )}
 
-            {!!details.fields?.length && !isDetailError && !isDomainManager && !isDeleteWebsite && details.key !== "vs-webdeploy" && details.key !== "remote-iis-manager" && (
+            {details.key === "site-on-off" && (
+              <section className="function-action-only">
+                <div className="function-submit-row">
+                  <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("start")}>
+                    {busyAction === "start" ? <LoadingIcon label="Starting site" /> : "Start"}
+                  </button>
+                  <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("stop")}>
+                    {busyAction === "stop" ? <LoadingIcon label="Stopping site" /> : "Stop"}
+                  </button>
+                </div>
+                {actionResult}
+              </section>
+            )}
+
+            {isDefaultDoc && (
+              <form className="function-field-form default-doc-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit("update");
+              }}>
+                <div className="function-tip-box">
+                  <p>Default documents are checked from top to bottom when a visitor opens this website without a file name.</p>
+                </div>
+                <label>
+                  Default Documents
+                  <textarea
+                    value={fields.documents ?? ""}
+                    onChange={(event) => onChangeField("documents", event.target.value)}
+                    rows={12}
+                    spellCheck="false"
+                  />
+                </label>
+                <div className="function-submit-row">
+                  <button
+                    className="secondary-button compact"
+                    type="button"
+                    disabled={Boolean(busyAction)}
+                    onClick={() => onChangeField("documents", defaultWebsiteFunctionField("documents", activeFunction.site))}
+                  >
+                    Load Default Setting
+                  </button>
+                  <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.documents ?? "").trim()}>
+                    {busyAction === "update" || busyAction === "save" ? <LoadingIcon label="Saving default documents" /> : "Submit"}
+                  </button>
+                </div>
+                {actionResult}
+              </form>
+            )}
+
+            {isMimeType && (
+              <section className="function-field-form mime-type-panel">
+                <h3>Current Mimemap List</h3>
+                <div className="mime-map-list">
+                  {mimeMaps.length ? mimeMaps.map((row) => {
+                    const extension = String(row.extension ?? "");
+                    const mimeType = String(row.mimeType ?? "");
+                    return (
+                      <article className="mime-map-row" key={`${extension}-${mimeType}`}>
+                        <div>
+                          <dt>File Ext</dt>
+                          <dd>{extension}</dd>
+                        </div>
+                        <div>
+                          <dt>MIME Type</dt>
+                          <dd>{mimeType}</dd>
+                        </div>
+                        <button
+                          className="secondary-button compact icon-only-button danger-button"
+                          type="button"
+                          disabled={Boolean(busyAction)}
+                          onClick={() => onSubmit("remove", { extension })}
+                          aria-label={`Delete ${extension}`}
+                          title={`Delete ${extension}`}
+                        >
+                          {busyAction === "remove" || busyAction === "delete" ? <LoadingIcon label="Deleting MIME map" /> : <MenuIcon name="trash" />}
+                        </button>
+                      </article>
+                    );
+                  }) : (
+                    <p className="empty-state">No MIME maps found.</p>
+                  )}
+                </div>
+                <h3>Create MIME Type</h3>
+                <form className="mime-map-create-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  onSubmit("create");
+                }}>
+                  <label>
+                    File Ext
+                    <input
+                      value={fields.extension ?? ""}
+                      onChange={(event) => onChangeField("extension", event.target.value)}
+                      placeholder=".abc"
+                    />
+                  </label>
+                  <label>
+                    MIME Type
+                    <input
+                      value={fields.mimeType ?? ""}
+                      onChange={(event) => onChangeField("mimeType", event.target.value)}
+                      placeholder="text/html"
+                    />
+                  </label>
+                  <div className="function-submit-row">
+                    <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.extension ?? "").trim() || !(fields.mimeType ?? "").trim()}>
+                      {busyAction === "create" || busyAction === "add" ? <LoadingIcon label="Adding MIME map" /> : "Add"}
+                    </button>
+                  </div>
+                </form>
+                {actionResult}
+              </section>
+            )}
+
+            {isCustomErrors && (
+              <section className="function-field-form custom-errors-panel">
+                <h3>Current Custom Error Pages</h3>
+                <div className="custom-error-list">
+                  {errorPages.length ? errorPages.map((row) => (
+                    <article className="custom-error-row" key={row.statusCode}>
+                      <strong>{row.statusCode} Error</strong>
+                      <span>{row.path}</span>
+                    </article>
+                  )) : (
+                    <p className="empty-state">No custom error rows were returned by IIS.</p>
+                  )}
+                </div>
+                <h3>Update Custom Error</h3>
+                <form className="custom-error-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  onSubmit("update", { errorType: fields.errorType || "401" });
+                }}>
+                  <label>
+                    Error Type
+                    <CustomSelect
+                      value={fields.errorType || "401"}
+                      ariaLabel="Choose error type"
+                      onChange={(value) => onChangeField("errorType", value)}
+                      options={customErrorOptions}
+                    />
+                  </label>
+                  <label>
+                    File Path
+                    <span className="custom-error-path-input">
+                      <span>{siteRootPath ? `${siteRootPath}\\` : "\\"}</span>
+                      <input
+                        value={fields.path ?? ""}
+                        onChange={(event) => onChangeField("path", event.target.value)}
+                        placeholder="404.html"
+                      />
+                    </span>
+                  </label>
+                  <div className="function-submit-row">
+                    <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.path ?? "").trim()}>
+                      {busyAction === "update" ? <LoadingIcon label="Updating custom error page" /> : "Update"}
+                    </button>
+                    <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("reset", { errorType: fields.errorType || "401", path: fields.path ?? "" })}>
+                      {busyAction === "reset" ? <LoadingIcon label="Resetting custom error page" /> : "Reset to Default"}
+                    </button>
+                  </div>
+                </form>
+                {actionResult}
+              </section>
+            )}
+
+            {isScriptMap && (
+              <section className="function-field-form script-map-panel">
+                <h3>Current ScriptMap List</h3>
+                <div className="mime-map-list">
+                  {scriptMaps.length ? scriptMaps.map((row) => {
+                    const tagName = String(row.tagName ?? "");
+                    const extension = String(row.extension ?? "");
+                    const processor = String(row.processor ?? "");
+                    return (
+                      <article className="mime-map-row script-map-row" key={`${tagName}-${extension}`}>
+                        <div>
+                          <dt>File Ext</dt>
+                          <dd>{extension}</dd>
+                        </div>
+                        <div>
+                          <dt>Script Engine</dt>
+                          <dd>{processor}</dd>
+                        </div>
+                        <button
+                          className="secondary-button compact icon-only-button danger-button"
+                          type="button"
+                          disabled={Boolean(busyAction)}
+                          onClick={() => onSubmit("remove", { tagName, extension })}
+                          aria-label={`Delete ${extension}`}
+                          title={`Delete ${extension}`}
+                        >
+                          {busyAction === "remove" || busyAction === "delete" ? <LoadingIcon label="Deleting ScriptMap" /> : <MenuIcon name="trash" />}
+                        </button>
+                      </article>
+                    );
+                  }) : (
+                    <p className="empty-state">No ScriptMap entries found.</p>
+                  )}
+                </div>
+                <h3>Create ScriptMap</h3>
+                <form className="mime-map-create-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  onSubmit("create");
+                }}>
+                  <label>
+                    File Ext
+                    <span className="inline-prefix-input">
+                      <span>*.</span>
+                      <input
+                        value={fields.extension ?? ""}
+                        onChange={(event) => onChangeField("extension", event.target.value.replace(/^\.+/, ""))}
+                        placeholder="php"
+                      />
+                    </span>
+                  </label>
+                  <label>
+                    Script Engine
+                    <CustomSelect
+                      value={fields.scriptTypeIndex || "85"}
+                      ariaLabel="Choose script engine"
+                      onChange={(value) => onChangeField("scriptTypeIndex", value)}
+                      options={scriptMapOptions}
+                    />
+                  </label>
+                  <div className="function-submit-row">
+                    <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.extension ?? "").trim()}>
+                      {busyAction === "create" || busyAction === "add" ? <LoadingIcon label="Adding ScriptMap" /> : "Add"}
+                    </button>
+                  </div>
+                </form>
+                {actionResult}
+              </section>
+            )}
+
+            {isForceHttps && (
+              <section className="function-field-form force-https-panel">
+                <h3>Current Redirect Rules</h3>
+                <div className="function-row-list">
+                  {redirectRows.length ? redirectRows.map((row) => {
+                    const ruleName = String(row.id ?? row.rulename ?? row.ruleName ?? "");
+                    const domain = String(row.title ?? row.domain ?? "");
+                    const destination = String(row.status ?? row.destination ?? "");
+                    return (
+                      <article className="function-row-card force-https-row" key={`${ruleName}-${domain}`}>
+                        <div>
+                          <dt>Rule Name</dt>
+                          <dd>{ruleName || "httpTohttps"}</dd>
+                        </div>
+                        <div>
+                          <dt>Domain</dt>
+                          <dd>{domain}</dd>
+                        </div>
+                        <div>
+                          <dt>Redirect To</dt>
+                          <dd>{destination}</dd>
+                        </div>
+                        <button
+                          className="secondary-button compact icon-only-button danger-button"
+                          type="button"
+                          disabled={Boolean(busyAction)}
+                          onClick={() => onSubmit("delete", { ruleName: ruleName || "httpTohttps" })}
+                          aria-label={`Delete ${ruleName || "redirect rule"}`}
+                          title={`Delete ${ruleName || "redirect rule"}`}
+                        >
+                          {busyAction === "delete" || busyAction === "remove" ? <LoadingIcon label="Removing redirect rule" /> : <MenuIcon name="trash" />}
+                        </button>
+                      </article>
+                    );
+                  }) : (
+                    <p className="empty-state">No redirect rules found.</p>
+                  )}
+                </div>
+                <div className="function-tip-box warning-tip">
+                  <p>Only enable this setting once your site is already running securely over HTTPS.</p>
+                </div>
+                <div className="function-submit-row">
+                  <button
+                    className="primary-button compact"
+                    type="button"
+                    disabled={Boolean(busyAction)}
+                    onClick={() => onSubmit("create", { ruleName: "httpTohttps", fromDomain: "http", toDomain: "https" })}
+                  >
+                    {busyAction === "create" || busyAction === "enable" ? <LoadingIcon label="Creating HTTPS redirect" /> : "1-Click Force HTTPS"}
+                  </button>
+                </div>
+                {actionResult}
+              </section>
+            )}
+
+            {isSiteGuard && (
+              <section className="function-field-form site-guard-panel">
+                <div className="function-tip-box warning-tip">
+                  <p>This free protection helps block common attacks and exploits. Test your site after turning it on.</p>
+                </div>
+                <div className="detail-error-status-row">
+                  <div>
+                    <h3>Current Status</h3>
+                    <p>{activeFunction.site?.siteName ?? "Website"}</p>
+                  </div>
+                  <span className={siteGuardEnabled ? "status-pill blue" : "status-pill muted"}>
+                    {siteGuardEnabled ? "ON" : "OFF"}
+                  </span>
+                </div>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="button" disabled={Boolean(busyAction) || siteGuardEnabled} onClick={() => onSubmit("enable", { enabled: "true" })}>
+                    {busyAction === "enable" ? <LoadingIcon label="Turning Site Guard on" /> : "Turn On"}
+                  </button>
+                  <button className="secondary-button compact" type="button" disabled={Boolean(busyAction) || !siteGuardEnabled} onClick={() => onSubmit("disable", { enabled: "false" })}>
+                    {busyAction === "disable" ? <LoadingIcon label="Turning Site Guard off" /> : "Turn Off"}
+                  </button>
+                </div>
+                {actionResult}
+              </section>
+            )}
+
+            {isOutgoingPort && (
+              <section className="function-field-form outgoing-port-panel">
+                <h3>Current Enabled Port List</h3>
+                <div className="function-row-list">
+                  {outgoingPorts.length ? outgoingPorts.map((row) => {
+                    const ipid = String(row.ipid ?? row.id ?? "");
+                    const ip = String(row.remoteip ?? row.ip ?? "");
+                    const port = String(row.port ?? "");
+                    return (
+                      <article className="function-row-card force-https-row" key={`${ipid}-${ip}-${port}`}>
+                        <div>
+                          <dt>Server IP</dt>
+                          <dd>{ip}</dd>
+                        </div>
+                        <div>
+                          <dt>Server Port</dt>
+                          <dd>{port}</dd>
+                        </div>
+                        <div>
+                          <dt>Add Date</dt>
+                          <dd>{formatFunctionValue(row.adddate)}</dd>
+                        </div>
+                        <button
+                          className="secondary-button compact icon-only-button danger-button"
+                          type="button"
+                          disabled={Boolean(busyAction)}
+                          onClick={() => onSubmit("delete", { ipid, ip, port, rulename: row.rulename ?? "" })}
+                          aria-label={`Delete ${ip}:${port}`}
+                          title={`Delete ${ip}:${port}`}
+                        >
+                          {busyAction === "delete" || busyAction === "remove" ? <LoadingIcon label="Deleting outgoing port rule" /> : <MenuIcon name="trash" />}
+                        </button>
+                      </article>
+                    );
+                  }) : (
+                    <p className="empty-state">No outgoing port rules found.</p>
+                  )}
+                </div>
+                <h3>Add</h3>
+                <form className="mime-map-create-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  onSubmit("add");
+                }}>
+                  <label>
+                    Server IP
+                    <input value={fields.ip ?? ""} onChange={(event) => onChangeField("ip", event.target.value)} placeholder="123.123.123.123" />
+                  </label>
+                  <label>
+                    Port
+                    <input value={fields.port ?? "1433"} onChange={(event) => onChangeField("port", event.target.value.replace(/\D/g, ""))} placeholder="1433" />
+                  </label>
+                  <div className="function-submit-row">
+                    <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.ip ?? "").trim() || !(fields.port ?? "").trim()}>
+                      {busyAction === "add" ? <LoadingIcon label="Adding outgoing port rule" /> : "Submit"}
+                    </button>
+                  </div>
+                </form>
+                {actionResult}
+              </section>
+            )}
+
+            {isCreateNetApp && (
+              <section className="function-field-form create-net-app-panel">
+                <h3>ASP.NET Applications</h3>
+                <div className="function-row-list">
+                  {iisApps.length ? iisApps.map((row) => {
+                    const appPath = String(row.appPath ?? "");
+                    return (
+                      <article className="function-row-card app-path-row" key={appPath}>
+                        <div>
+                          <dt>Application</dt>
+                          <dd>{appPath}</dd>
+                        </div>
+                        <button
+                          className="secondary-button compact icon-only-button danger-button"
+                          type="button"
+                          disabled={Boolean(busyAction)}
+                          onClick={() => onSubmit("delete", { appPath })}
+                          aria-label={`Delete ${appPath}`}
+                          title={`Delete ${appPath}`}
+                        >
+                          {busyAction === "delete" || busyAction === "remove" ? <LoadingIcon label="Deleting ASP.NET application" /> : <MenuIcon name="trash" />}
+                        </button>
+                      </article>
+                    );
+                  }) : (
+                    <p className="empty-state">No ASP.NET applications found.</p>
+                  )}
+                </div>
+                <h3>Create ASP.NET Application</h3>
+                <form className="mime-map-create-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  onSubmit("create");
+                }}>
+                  <label>
+                    Application Path
+                    <input
+                      value={fields.appPath ?? ""}
+                      onChange={(event) => onChangeField("appPath", event.target.value)}
+                      placeholder="app"
+                    />
+                  </label>
+                  <label>
+                    ASP.NET Version
+                    <CustomSelect
+                      value={fields.version || "4.x"}
+                      ariaLabel="Choose ASP.NET version"
+                      onChange={(value) => onChangeField("version", value)}
+                      options={[
+                        { value: "4.x", label: "ASP.NET 4.x" },
+                        { value: "2/3.5", label: "ASP.NET 2.0 / 3.5" }
+                      ]}
+                    />
+                  </label>
+                  <div className="function-submit-row">
+                    <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.appPath ?? "").trim()}>
+                      {busyAction === "create" || busyAction === "add" ? <LoadingIcon label="Creating ASP.NET application" /> : "Create"}
+                    </button>
+                  </div>
+                </form>
+                {actionResult}
+              </section>
+            )}
+
+            {isVirtualDir && (
+              <section className="function-field-form virtual-dir-panel">
+                <h3>Virtual Directories</h3>
+                <div className="function-row-list">
+                  {virtualDirs.length ? virtualDirs.map((row) => {
+                    const name = String(row.name ?? "");
+                    return (
+                      <article className="function-row-card force-https-row" key={name}>
+                        <div>
+                          <dt>Virtual Dir</dt>
+                          <dd>{name}</dd>
+                        </div>
+                        <div>
+                          <dt>Path</dt>
+                          <dd>{row.path}</dd>
+                        </div>
+                        <div />
+                        <button
+                          className="secondary-button compact icon-only-button danger-button"
+                          type="button"
+                          disabled={Boolean(busyAction)}
+                          onClick={() => onSubmit("delete", { vdirname: name, virtualPath: name })}
+                          aria-label={`Delete ${name}`}
+                          title={`Delete ${name}`}
+                        >
+                          {busyAction === "delete" || busyAction === "remove" ? <LoadingIcon label="Deleting virtual directory" /> : <MenuIcon name="trash" />}
+                        </button>
+                      </article>
+                    );
+                  }) : (
+                    <p className="empty-state">No virtual directories found.</p>
+                  )}
+                </div>
+                <h3>Create Virtual Directory</h3>
+                <form className="function-field-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  onSubmit("create", { vdirname: fields.vdirname ?? fields.virtualPath ?? "", physicalPath: fields.physicalPath ?? "" });
+                }}>
+                  <label>
+                    Virtual Dir Name
+                    <input value={fields.vdirname ?? fields.virtualPath ?? ""} onChange={(event) => {
+                      onChangeField("vdirname", event.target.value);
+                      onChangeField("virtualPath", event.target.value);
+                    }} placeholder="assets" />
+                  </label>
+                  <label>
+                    Virtual Path
+                    <span className="ftp-path-control">
+                      <input value={fields.physicalPath ?? ""} readOnly placeholder="Select a folder" />
+                      <button className="secondary-button compact icon-only-button" type="button" onClick={onOpenFolderPicker} title="Select folder" aria-label="Select folder">
+                        <MenuIcon name="folder" />
+                      </button>
+                    </span>
+                  </label>
+                  <label className="file-action-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={(fields.isapp ?? "false") === "true"}
+                      onChange={(event) => onChangeField("isapp", event.target.checked ? "true" : "false")}
+                    />
+                    Set as IIS application
+                  </label>
+                  <div className="function-submit-row">
+                    <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.vdirname ?? fields.virtualPath ?? "").trim() || !(fields.physicalPath ?? "").trim()}>
+                      {busyAction === "create" || busyAction === "add" ? <LoadingIcon label="Creating virtual directory" /> : "Create"}
+                    </button>
+                  </div>
+                </form>
+                {actionResult}
+              </section>
+            )}
+
+            {!!details.fields?.length && details.key !== "site-on-off" && !isDetailError && !isDomainManager && !isDeleteWebsite && !isCoreMode && !isNodeJsApp && !isPhpVersion && !isPhpSettings && !isVisitorStats && !isFtpAccess && !isSmtpSampleCode && !isIpDeny && !isIisLogManager && !isDefaultDoc && !isMimeType && !isScriptMap && !isCustomErrors && !isForceHttps && !isSiteGuard && !isOutgoingPort && !isCreateNetApp && !isVirtualDir && details.key !== "vs-webdeploy" && details.key !== "remote-iis-manager" && (
               <form className="function-field-form" onSubmit={(event) => {
                 event.preventDefault();
                 onSubmit(fields.action || defaultWebsiteFunctionAction(details.key));
@@ -5006,12 +6998,7 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyA
                   </label>
                 ))}
                 <div className="function-submit-row">
-                  {details.key === "site-on-off" ? (
-                    <>
-                      <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("start")}>{busyAction === "start" ? <LoadingIcon label="Starting site" /> : "Start"}</button>
-                      <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("stop")}>{busyAction === "stop" ? <LoadingIcon label="Stopping site" /> : "Stop"}</button>
-                    </>
-                  ) : details.key === "outgoing-port" ? (
+                  {details.key === "outgoing-port" ? (
                     <>
                       <button className="primary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("add")}>{busyAction === "add" ? <LoadingIcon label="Adding rule" /> : "Add Rule"}</button>
                       <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("delete")}>{busyAction === "delete" ? <LoadingIcon label="Removing rule" /> : "Remove Rule"}</button>
@@ -5084,18 +7071,35 @@ function defaultWebsiteFunctionField(field, site) {
   if (field === "siteName") return site?.siteName ?? "";
   if (field === "source" || field === "target" || field === "path" || field === "physicalPath") return site?.sitePath ?? "";
   if (field === "enabled") return "true";
+  if (field === "hostingModel") return "OutOfProcess";
+  if (field === "applyAll") return "true";
+  if (field === "mode") return "httpPlatformHandler";
+  if (field === "startupfile" || field === "entryPoint") return "";
+  if (field === "phpversion" || field === "phpVersion") return site?.phpVersion === "8.5.x" ? "85" : site?.phpVersion === "8.3.x" ? "83" : site?.phpVersion === "8.2.x" ? "82" : site?.phpVersion === "8.1.x" ? "14" : site?.phpVersion === "8.0.x" ? "13" : site?.phpVersion === "7.4.x" ? "12" : site?.phpVersion === "7.3.x" ? "11" : site?.phpVersion === "7.2.x" ? "10" : site?.phpVersion === "7.0.x" ? "9" : site?.phpVersion === "5.6.x" ? "8" : site?.phpVersion === "5.5.x" ? "4" : site?.phpVersion === "5.4.x" ? "3" : site?.phpVersion === "5.2.x" ? "1" : "85";
+  if (field === "phpsettings" || field === "settings") return "";
   if (field === "confirmDelete" || field === "deleteFiles") return "false";
   if (field === "action") return "save";
   if (field === "permission") return "write";
   if (field === "password") return "";
   if (field === "appPath") return "/codex-test-app";
   if (field === "virtualPath") return "codex-test-vdir";
-  if (field === "extension") return "cdx";
+  if (field === "extension") return "";
   if (field === "processor") return "1";
-  if (field === "mimeType") return "text/plain";
+  if (field === "mimeType") return "";
   if (field === "documents") return "index.aspx\r\nindex.php\r\nindex.asp\r\nDefault.htm\r\nDefault.asp\r\nindex.htm\r\nindex.html\r\niisstart.htm\r\ndefault.aspx";
   if (field === "statusCode") return "404";
   return "";
+}
+
+function formatWebsiteRelativePath(path) {
+  const normalized = String(path ?? "").replaceAll("\\", "/");
+  const marker = "/www/";
+  const index = normalized.toLowerCase().indexOf(marker);
+  if (index >= 0) {
+    return `/${normalized.slice(index + marker.length).replace(/^\/+/, "")}`.replace(/\/$/, "") || "/";
+  }
+
+  return normalized || "/";
 }
 
 function defaultWebsiteFunctionAction(key) {
@@ -5126,10 +7130,10 @@ function formatFunctionValue(value) {
   return String(value);
 }
 
-function DatabasesSection({ cpId }) {
+function DatabasesSection({ cpId, engine = "All" }) {
   const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
   const [databaseDashboard, setDatabaseDashboard] = useState(null);
-  const [activeEngine, setActiveEngine] = useState("All");
+  const [activeEngine, setActiveEngine] = useState(engine);
   const [isLoadingDatabases, setIsLoadingDatabases] = useState(true);
   const [databaseError, setDatabaseError] = useState("");
   const [databaseMessage, setDatabaseMessage] = useState("");
@@ -5166,12 +7170,26 @@ function DatabasesSection({ cpId }) {
     loadBackupSchedules();
   }, [cpId]);
 
+  useEffect(() => {
+    setActiveEngine(engine);
+    if (engine !== "All") {
+      setNewDatabaseDraft((draft) => ({ ...draft, engine }));
+    }
+  }, [engine]);
+
   const databases = databaseDashboard?.databases ?? [];
   const visibleDatabases = activeEngine === "All"
     ? databases
     : databases.filter((database) => database.engine === activeEngine);
   const [viewMode, setViewMode] = useSectionViewMode("cp-databases", visibleDatabases.length);
   const totals = databaseDashboard?.totals ?? { total: 0, mssql: 0, mysql: 0 };
+  const isEngineLocked = engine !== "All";
+  const pageTitle = activeEngine === "MSSQL" ? "MSSQL Manager" : activeEngine === "MySQL" ? "MySQL Manager" : "Database Manager";
+  const pageDescription = activeEngine === "MSSQL"
+    ? "MSSQL database inventory and actions from the hosting control panel."
+    : activeEngine === "MySQL"
+      ? "MySQL database inventory and actions from the hosting control panel."
+      : "Unified MSSQL and MySQL inventory from the hosting control panel.";
   const databaseJobs = (activity?.jobs ?? []).filter((job) =>
     ["Queue MSSQL Backup", "Queue MSSQL Restore", "Queue MySQL Backup", "Queue MySQL Restore", "Run MSSQL File", "panel-test"].includes(job.type)
     && (job.server === "database-manager" || job.type !== "panel-test")
@@ -5403,8 +7421,8 @@ function DatabasesSection({ cpId }) {
       <article className="panel-card database-summary-card">
         <div>
           <span className="status-pill blue">Live databases</span>
-          <h2>Database Manager</h2>
-          <p>Unified MSSQL and MySQL inventory from the hosting control panel.</p>
+          <h2>{pageTitle}</h2>
+          <p>{pageDescription}</p>
         </div>
         <div className="database-total-grid">
           <div><span>Total</span><strong>{totals.total}</strong></div>
@@ -5422,18 +7440,20 @@ function DatabasesSection({ cpId }) {
           <button className="secondary-button compact" type="button" onClick={() => setDatabaseMessage("Run SQL form is ready below. Choose an MSSQL database and SQL file path.")}>Run SQL File</button>
           <button className="secondary-button compact" type="button" onClick={loadDeletedDatabases}>Deleted DBs</button>
         </div>
-        <div className="engine-tabs" aria-label="Database engine filter">
-          {["All", "MSSQL", "MySQL"].map((engine) => (
-            <button
-              className={activeEngine === engine ? "active" : ""}
-              type="button"
-              key={engine}
-              onClick={() => setActiveEngine(engine)}
-            >
-              {engine}
-            </button>
-          ))}
-        </div>
+        {!isEngineLocked && (
+          <div className="engine-tabs" aria-label="Database engine filter">
+            {["All", "MSSQL", "MySQL"].map((engineName) => (
+              <button
+                className={activeEngine === engineName ? "active" : ""}
+                type="button"
+                key={engineName}
+                onClick={() => setActiveEngine(engineName)}
+              >
+                {engineName}
+              </button>
+            ))}
+          </div>
+        )}
         <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Database view mode" />
       </div>
 
@@ -5489,7 +7509,7 @@ function DatabasesSection({ cpId }) {
           <form className="advance-inline-form" onSubmit={submitNewDatabaseDraft}>
             <label>
               Engine
-              <select value={newDatabaseDraft.engine} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, engine: event.target.value }))}>
+              <select disabled={isEngineLocked} value={newDatabaseDraft.engine} onChange={(event) => setNewDatabaseDraft((draft) => ({ ...draft, engine: event.target.value }))}>
                 <option value="MSSQL">MSSQL</option>
                 <option value="MySQL">MySQL</option>
               </select>
@@ -5768,6 +7788,403 @@ function DatabasesSection({ cpId }) {
   );
 }
 
+function AdvancedCustomerBackupSection({ cpId }) {
+  const [databaseDashboard, setDatabaseDashboard] = useState(null);
+  const [schedules, setSchedules] = useState([]);
+  const [draft, setDraft] = useState({ databaseKey: "", hour: "5", retentionDays: "7" });
+  const [editingScheduleId, setEditingScheduleId] = useState(0);
+  const [editingRetention, setEditingRetention] = useState("7");
+  const [isLoading, setIsLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function loadBackupPage() {
+    setIsLoading(true);
+    setError("");
+    try {
+      const [databasesResponse, schedulesResponse] = await Promise.all([
+        fetch(hostingApiUrl("/api/hosting/databases", cpId)),
+        fetch(hostingApiUrl("/api/hosting/databases/backup-schedules", cpId))
+      ]);
+      const databasesResult = await databasesResponse.json().catch(() => null);
+      const schedulesResult = await schedulesResponse.json().catch(() => null);
+      if (!databasesResponse.ok || !databasesResult?.success) {
+        throw new Error(databasesResult?.message ?? "Unable to load databases.");
+      }
+      if (!schedulesResponse.ok || !schedulesResult?.success) {
+        throw new Error(schedulesResult?.message ?? "Unable to load backup schedules.");
+      }
+
+      setDatabaseDashboard(databasesResult.dashboard);
+      setSchedules(schedulesResult.schedules ?? []);
+    } catch (loadError) {
+      setError(loadError.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadBackupPage();
+  }, [cpId]);
+
+  const databases = databaseDashboard?.databases ?? [];
+  const databaseOptions = databases.map((database) => ({
+    value: `${database.engine}:${database.databaseId}`,
+    label: `${database.name} (${database.engine})`
+  }));
+  const selectedDatabase = databases.find((database) => `${database.engine}:${database.databaseId}` === (draft.databaseKey || databaseOptions[0]?.value));
+
+  async function createBackupSchedule(event) {
+    event.preventDefault();
+    setMessage("");
+    if (!selectedDatabase) {
+      setMessage("Choose a database before enabling automated backup.");
+      return;
+    }
+
+    const hour = Math.max(0, Math.min(23, Number(draft.hour) || 0));
+    const retentionDays = Math.max(1, Math.min(7, Number(draft.retentionDays) || 7));
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/databases/${encodeURIComponent(selectedDatabase.engine)}/${selectedDatabase.databaseId}/backup-schedules`, cpId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId, hour, retentionDays })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to enable automated backup.");
+      }
+
+      setMessage(result.message);
+      await loadBackupPage();
+    } catch (actionError) {
+      setMessage(actionError.message);
+    }
+  }
+
+  async function updateCleanupDays(schedule) {
+    setMessage("");
+    const retentionDays = Math.max(1, Math.min(7, Number(editingRetention) || 7));
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/databases/backup-schedules/${schedule.id}`, cpId), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId, hour: schedule.hour, retentionDays })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to change cleanup days.");
+      }
+
+      setMessage(result.message);
+      setEditingScheduleId(0);
+      await loadBackupPage();
+    } catch (actionError) {
+      setMessage(actionError.message);
+    }
+  }
+
+  async function disableBackupSchedule(schedule) {
+    setMessage("");
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/databases/backup-schedules/${schedule.id}`, cpId), {
+        method: "DELETE"
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to disable automated backup.");
+      }
+
+      setMessage(result.message);
+      await loadBackupPage();
+    } catch (actionError) {
+      setMessage(actionError.message);
+    }
+  }
+
+  return (
+    <section className="databases-section">
+      <article className="panel-card database-summary-card">
+        <div>
+          <h2>Advance Customer Backup</h2>
+          <p>Daily automated MSSQL and MySQL database backups. Backup destination: /db.</p>
+        </div>
+        <RefreshButton onClick={loadBackupPage} />
+      </article>
+
+      <article className="panel-card database-schedule-card">
+        <div>
+          <h3>Create Custom DB Backup</h3>
+          <p>Choose a database, backup hour, and cleanup window.</p>
+        </div>
+        <form className="advance-inline-form backup-create-form" onSubmit={createBackupSchedule}>
+          <label>
+            Database
+            <CustomSelect
+              ariaLabel="Choose database"
+              value={draft.databaseKey || databaseOptions[0]?.value || ""}
+              options={databaseOptions}
+              disabled={!databaseOptions.length}
+              onChange={(value) => setDraft((current) => ({ ...current, databaseKey: value }))}
+            />
+          </label>
+          <label>
+            Backup Hour
+            <input type="number" min="0" max="23" value={draft.hour} onChange={(event) => setDraft((current) => ({ ...current, hour: event.target.value }))} />
+            <small>0 - 23, PST time</small>
+          </label>
+          <label>
+            Maximum Backups
+            <input type="number" min="1" max="7" value={draft.retentionDays} onChange={(event) => setDraft((current) => ({ ...current, retentionDays: event.target.value }))} />
+            <small>Cleanup days, 1 - 7</small>
+          </label>
+          <button className="primary-button compact" type="submit" disabled={!databaseOptions.length}>+ Create</button>
+        </form>
+      </article>
+
+      {isLoading && <LoadingState label="Loading backup schedules" />}
+      {message && <p className="sandbox-message">{message}</p>}
+      {error && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{error}</p>
+          <IconActionButton label="Retry" onClick={loadBackupPage} />
+        </div>
+      )}
+
+      {!isLoading && !error && (
+        <div className="table-wrap website-table solid-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Database Name</th>
+                <th>Backup Hour</th>
+                <th>Last Run Time</th>
+                <th>Last Result</th>
+                <th>Cleanup Days</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {!schedules.length && (
+                <tr>
+                  <td colSpan={6}>No custom database backups found.</td>
+                </tr>
+              )}
+              {schedules.map((schedule) => (
+                <tr key={schedule.id}>
+                  <td>{schedule.name}</td>
+                  <td>{schedule.hour}:00 PST</td>
+                  <td>{formatDate(schedule.createdAt)}</td>
+                  <td>{schedule.enabled ? "Enabled" : "Disabled"}</td>
+                  <td>
+                    {editingScheduleId === schedule.id ? (
+                      <div className="inline-edit-row">
+                        <input type="number" min="1" max="7" value={editingRetention} onChange={(event) => setEditingRetention(event.target.value)} />
+                        <IconActionButton label="Save" icon="save" onClick={() => updateCleanupDays(schedule)} />
+                      </div>
+                    ) : (
+                      <span className="inline-edit-row">
+                        {schedule.retentionDays}
+                        <IconActionButton label="Edit cleanup days" icon="edit" onClick={() => {
+                          setEditingScheduleId(schedule.id);
+                          setEditingRetention(String(schedule.retentionDays || 7));
+                        }} />
+                      </span>
+                    )}
+                  </td>
+                  <td className="actions-cell">
+                    <IconActionButton label="Disable" icon="delete" onClick={() => disableBackupSchedule(schedule)} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SqlReportingSection({ cpId }) {
+  const [dashboard, setDashboard] = useState(null);
+  const [draft, setDraft] = useState({ username: "", password: "", confirmPassword: "" });
+  const [isLoading, setIsLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function loadSqlReporting() {
+    setIsLoading(true);
+    setError("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/databases/mssql-report-users", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to load MSSQL Reporting Service.");
+      }
+
+      setDashboard(result.dashboard);
+    } catch (loadError) {
+      setError(loadError.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSqlReporting();
+  }, [cpId]);
+
+  const serverId = String(dashboard?.serverId || "").replace(/\.site4now\.net$/i, "");
+  const portalHost = serverId ? `${serverId}.site4now.net` : "";
+  const webPortal = portalHost && dashboard?.cpLogin
+    ? `https://${portalHost}/Reports/Pages/Folder.aspx?ItemPath=/${dashboard.cpLogin}`
+    : "";
+  const targetServerUrl = portalHost ? `https://${portalHost}/ReportServer` : "";
+  const kbHost = "www.smarterasp.net";
+
+  async function runReportUserAction(method, url, body = null) {
+    setMessage("");
+    try {
+      const response = await fetch(hostingApiUrl(url, cpId), {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify({ cpId, ...body }) : undefined
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Unable to update MSSQL Reporting Service user.");
+      }
+
+      setMessage(result.message);
+      setDraft({ username: "", password: "", confirmPassword: "" });
+      await loadSqlReporting();
+    } catch (actionError) {
+      setMessage(actionError.message);
+    }
+  }
+
+  function addReportUser(event) {
+    event.preventDefault();
+    if (!draft.username.trim() || !draft.password) {
+      setMessage("Username and password are required.");
+      return;
+    }
+    if (draft.password !== draft.confirmPassword) {
+      setMessage("Confirm password does not match.");
+      return;
+    }
+    runReportUserAction("POST", "/api/hosting/databases/mssql-report-users", {
+      username: draft.username.trim(),
+      password: draft.password
+    });
+  }
+
+  return (
+    <section className="databases-section">
+      <article className="panel-card database-summary-card">
+        <div>
+          <h2>MSSQL Reporting Service</h2>
+          <p>{dashboard?.enabled ? "Reporting Service is enabled for this hosting plan." : "Reporting Service is not enabled for this hosting plan."}</p>
+        </div>
+        <div className="database-actions">
+          <a className="primary-button compact" href="/account/addon_purchase_special?cat=SSRS">+ Order Reporting Service</a>
+          <RefreshButton onClick={loadSqlReporting} />
+        </div>
+      </article>
+
+      {isLoading && <LoadingState label="Loading MSSQL Reporting Service" />}
+      {message && <p className="sandbox-message">{message}</p>}
+      {error && (
+        <div className="panel-card dashboard-error-panel">
+          <p>{error}</p>
+          <IconActionButton label="Retry" onClick={loadSqlReporting} />
+        </div>
+      )}
+
+      {!isLoading && !error && (
+        <>
+          <article className="panel-card report-info-card">
+            <div>
+              <span className={dashboard?.enabled ? "status-pill" : "status-pill muted"}>{dashboard?.enabled ? "Enabled" : "Not enabled"}</span>
+              <h3>Reporting Service Info</h3>
+            </div>
+            {dashboard?.enabled ? (
+              <dl className="connection-snippet-list">
+                <div><dt>Web Portal</dt><dd><a href={webPortal} target="_blank" rel="noreferrer">{webPortal}</a></dd></div>
+                <div><dt>TargetServerURL</dt><dd>{targetServerUrl}</dd></div>
+                <div><dt>Primary User</dt><dd>{dashboard.cpLogin}</dd></div>
+                <div><dt>Users</dt><dd>{dashboard.userCount} / {dashboard.userQuota}</dd></div>
+              </dl>
+            ) : (
+              <p className="empty-state">Order Reporting Service before enabling report users.</p>
+            )}
+          </article>
+
+          <article className="panel-card report-info-card">
+            <div>
+              <h3>MSSQL Reporting Service Users</h3>
+              <p>You will still need to assign report roles from the report web portal.</p>
+            </div>
+            <div className="table-wrap website-table solid-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Password Stored</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboard?.users?.map((user) => (
+                    <tr key={user.username}>
+                      <td>{user.username}</td>
+                      <td>{user.hasPassword ? "Yes" : "No"}</td>
+                      <td className="actions-cell">
+                        {!user.isPrimaryUser && (
+                          <IconActionButton
+                            label="Delete"
+                            icon="delete"
+                            onClick={() => runReportUserAction("DELETE", `/api/hosting/databases/mssql-report-users/${encodeURIComponent(user.username)}`)}
+                          />
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {!dashboard?.users?.length && (
+                    <tr><td colSpan={3}>No Reporting Service users found.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <form className="advance-inline-form report-user-form" onSubmit={addReportUser}>
+              <label>
+                Username
+                <input value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} />
+              </label>
+              <label>
+                Password
+                <input type="password" value={draft.password} onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} />
+              </label>
+              <label>
+                Confirm Password
+                <input type="password" value={draft.confirmPassword} onChange={(event) => setDraft((current) => ({ ...current, confirmPassword: event.target.value }))} />
+              </label>
+              <button className="primary-button compact" type="submit">Add User</button>
+            </form>
+          </article>
+
+          <article className="panel-card kb-card">
+            <a href={`http://${kbHost}/support/kb/a388/how-to-publish-reports-to-reporting-server-via-visual-studio-2012.aspx`} target="_blank" rel="noreferrer"><span className="status-pill muted">KB Article</span> How to Publish Reports Using Visual Studio</a>
+            <a href={`http://${kbHost}/support/kb/a428/how-to-create-data-source-via-report-managerssrs.aspx`} target="_blank" rel="noreferrer"><span className="status-pill muted">KB Article</span> How to Create Data Source</a>
+            <a href={`http://${kbHost}/support/kb/a1705/how-to-integrate-ssrs-into-asp_net.aspx`} target="_blank" rel="noreferrer"><span className="status-pill muted">KB Article</span> How to Integrate SSRS into ASP.NET</a>
+          </article>
+        </>
+      )}
+    </section>
+  );
+}
+
 function ThemeToggle({ theme, onToggleTheme }) {
   const currentThemeLabel = theme === "dark" ? "Dark" : theme === "light" ? "Day" : "Classic";
   const nextThemeLabel = theme === "dark" ? "Day" : theme === "light" ? "Classic" : "Dark";
@@ -5801,10 +8218,11 @@ function ThemeToggle({ theme, onToggleTheme }) {
   );
 }
 
-function EmailsSection({ cpId }) {
+function EmailsSection({ cpId, mode = "all" }) {
   const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
   const [emailDashboard, setEmailDashboard] = useState(null);
-  const [activeType, setActiveType] = useState("All");
+  const fixedType = mode === "hosted" ? "Hosted Email" : mode === "corporate" ? "Corporate Email" : "All";
+  const [activeType, setActiveType] = useState(fixedType);
   const [isLoadingEmails, setIsLoadingEmails] = useState(true);
   const [emailError, setEmailError] = useState("");
   const [emailMessage, setEmailMessage] = useState("");
@@ -5834,12 +8252,27 @@ function EmailsSection({ cpId }) {
     loadEmails();
   }, [cpId]);
 
+  useEffect(() => {
+    setActiveType(fixedType);
+    setEmailDomainDraft((draft) => ({ ...draft, type: fixedType === "All" ? draft.type : fixedType }));
+  }, [fixedType]);
+
   const domains = emailDashboard?.domains ?? [];
   const visibleDomains = activeType === "All" ? domains : domains.filter((domain) => domain.type === activeType);
   const [viewMode, setViewMode] = useSectionViewMode("cp-emails", visibleDomains.length);
   const totals = emailDashboard?.totals ?? { total: 0, hosted: 0, corporate: 0, dailyLimits: 0 };
   const primaryDomain = visibleDomains[0] ?? domains[0] ?? null;
   const mailSetupRows = buildMailSetupRows(primaryDomain);
+  const pageTitle = fixedType === "Corporate Email" ? "Corporate Email" : fixedType === "Hosted Email" ? "Email Manager" : "Email Manager";
+  const pageDescription = fixedType === "Corporate Email"
+    ? "Corporate Email is designed for users with heavy space requirements."
+    : fixedType === "Hosted Email"
+      ? "Manage hosted email domains, mailbox access, quotas, and mail setup."
+      : "Hosted email and corporate email domains from the hosting control panel.";
+  const pageDomainCount = fixedType === "Corporate Email" ? totals.corporate : fixedType === "Hosted Email" ? totals.hosted : totals.total;
+  const orderButton = fixedType === "Corporate Email"
+    ? { href: "/account/addon_purchase_special?cat=corpemail", label: "+ Order Corporate Email" }
+    : { href: "/account/addon_purchase_special?cat=email", label: "+ Order Email" };
   const mailJobs = (activity?.jobs ?? []).filter((job) =>
     job.server === "mail-manager" ||
     String(job.type ?? "").toLowerCase().includes("mail") ||
@@ -6003,14 +8436,13 @@ function EmailsSection({ cpId }) {
     <section className="cp-inventory-section">
       <article className="panel-card cp-inventory-summary">
         <div>
-          <span className="status-pill blue">Live email</span>
-          <h2>Email Manager</h2>
-          <p>Hosted email and corporate email domains from the hosting control panel.</p>
+          <h2>{pageTitle}</h2>
+          <p>{pageDescription}</p>
         </div>
         <div className="database-total-grid">
-          <div><span>Total</span><strong>{totals.total}</strong></div>
-          <div><span>Hosted</span><strong>{totals.hosted}</strong></div>
-          <div><span>Corporate</span><strong>{totals.corporate}</strong></div>
+          <div><span>Email Domains</span><strong>{pageDomainCount}</strong></div>
+          {fixedType === "All" && <div><span>Hosted</span><strong>{totals.hosted}</strong></div>}
+          {fixedType === "All" && <div><span>Corporate</span><strong>{totals.corporate}</strong></div>}
           <div><span>Daily Limits</span><strong>{totals.dailyLimits}</strong></div>
         </div>
         <RefreshButton onClick={refreshEmailSection} />
@@ -6018,15 +8450,15 @@ function EmailsSection({ cpId }) {
 
       <div className="database-toolbar panel-card">
         <div className="database-actions">
-          <button className="primary-button compact" type="button" onClick={() => setEmailMessage("Email Domain form is ready below. Hosted email writes call the latest SmarterMail gateway.")}>+ Email Domain</button>
-          <button className="secondary-button compact" type="button" onClick={() => setEmailDomainDraft((draft) => ({ ...draft, type: "Corporate Email" }))}>+ Corporate Email</button>
+          <button className="primary-button compact" type="button" onClick={() => setEmailMessage(`${pageTitle} activation form is ready below.`)}>+ Email Domain</button>
+          {fixedType !== "Hosted Email" && <a className="secondary-button compact" href={orderButton.href}>{orderButton.label}</a>}
           <button className="secondary-button compact" type="button" onClick={() => setEmailMessage("Mailbox draft is ready below. Choose a domain, mailbox name, quota, and mailbox action.")}>+ Mailbox</button>
           <button className="secondary-button compact" type="button" onClick={() => setEmailMessage("Daily Send Limit uses cp_config_DailySentLimit. Purchase and active-user flows still need the exact masssmtp action ported before write.")}>Daily Send Limit</button>
           <button className="secondary-button compact" type="button" onClick={() => primaryDomain ? handleEmailDomainAction("DNS", primaryDomain) : setEmailMessage("No email domain selected.")}>DNS Records</button>
           <button className="secondary-button compact" type="button" onClick={() => primaryDomain ? handleEmailDomainAction("Webmail", primaryDomain) : setEmailMessage("No email domain selected.")}>Webmail Login</button>
           <button className="secondary-button compact" type="button" onClick={() => setEmailMessage("DKIM values are shown in Mail Setup when present. The SmarterMail DKIM generation SOAP action still needs exact template mapping before write.")}>DKIM Setup</button>
         </div>
-        <div className="engine-tabs" aria-label="Email type filter">
+        {fixedType === "All" && <div className="engine-tabs" aria-label="Email type filter">
           {["All", "Hosted Email", "Corporate Email"].map((type) => (
             <button
               className={activeType === type ? "active" : ""}
@@ -6037,7 +8469,7 @@ function EmailsSection({ cpId }) {
               {type}
             </button>
           ))}
-        </div>
+        </div>}
         <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Email view mode" />
       </div>
 
@@ -6069,8 +8501,8 @@ function EmailsSection({ cpId }) {
         <article className="panel-card advance-form-card">
           <div>
             <span className="status-pill blue">Email Domain</span>
-            <h3>Hosted / Corporate Draft</h3>
-            <p>Needs the SmarterMail gateway before hosted, corporate, and VPS email domain writes are enabled.</p>
+            <h3>{fixedType === "Corporate Email" ? "Activate Corporate Email" : "Activate Email"}</h3>
+            <p>Choose an owned domain and assign email space before activation.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitEmailDomainDraft}>
             <label>
@@ -6079,11 +8511,12 @@ function EmailsSection({ cpId }) {
             </label>
             <label>
               Type
-              <select value={emailDomainDraft.type} onChange={(event) => setEmailDomainDraft((draft) => ({ ...draft, type: event.target.value }))}>
-                <option>Hosted Email</option>
-                <option>Corporate Email</option>
-                <option>VPS Email</option>
-              </select>
+              <CustomSelect
+                ariaLabel="Choose email type"
+                value={emailDomainDraft.type}
+                options={(fixedType === "All" ? ["Hosted Email", "Corporate Email"] : [fixedType]).map((value) => ({ value, label: value }))}
+                onChange={(value) => setEmailDomainDraft((draft) => ({ ...draft, type: value }))}
+              />
             </label>
             <label>
               Postmaster Password
@@ -9958,7 +12391,7 @@ function LoadingState({ label = "Loading" }) {
   );
 }
 
-function CustomSelect({ value, options = [], onChange, ariaLabel = "Choose option", disabled = false, className = "" }) {
+function CustomSelect({ value, options = [], onChange, ariaLabel = "Choose option", disabled = false, className = "", menuWidth = "compact" }) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState(null);
   const menuRef = useRef(null);
@@ -9972,12 +12405,10 @@ function CustomSelect({ value, options = [], onChange, ariaLabel = "Choose optio
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
     const viewportPadding = 8;
-    const maxMenuWidth = 150;
-    const menuWidth = Math.min(
-      maxMenuWidth,
-      Math.max(120, window.innerWidth - (viewportPadding * 2))
-    );
-    const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - menuWidth - 8));
+    const targetWidth = menuWidth === "trigger"
+      ? Math.min(Math.max(rect.width, 220), window.innerWidth - (viewportPadding * 2))
+      : Math.min(150, Math.max(120, window.innerWidth - (viewportPadding * 2)));
+    const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - targetWidth - 8));
     const optionCount = Math.max(1, normalizedOptions.length);
     const estimatedHeight = Math.min(280, (optionCount * 36) + 12);
     const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
@@ -9989,7 +12420,7 @@ function CustomSelect({ value, options = [], onChange, ariaLabel = "Choose optio
     setMenuPosition({
       left,
       top,
-      width: menuWidth,
+      width: targetWidth,
       maxHeight: openUp ? Math.min(280, Math.max(120, spaceAbove - 12)) : Math.min(280, Math.max(120, spaceBelow - 6))
     });
   }
@@ -10913,6 +13344,11 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
     return result.order;
   }
 
+  function openHostingRenewPromotion(account) {
+    if (!account?.clientProductId) return;
+    window.location.href = hostingRenewUrl(account, "/account/cp_renew_promotion");
+  }
+
   async function hideUrgentLog(logId) {
     setUrgentBusyId(logId);
     setUrgentMessage("");
@@ -11264,12 +13700,9 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                   className="secondary-button"
                   type="button"
                   disabled={!account.clientProductId || renewalBusyId !== null}
-                  onClick={() => loadHostingRenewalPreview({
-                    clientProductId: account.clientProductId,
-                    name: account.cpLogin
-                  })}
+                  onClick={() => openHostingRenewPromotion(account)}
                 >
-                  {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <><MenuIcon name="order" /> Renew</>}
+                  <MenuIcon name="order" /> Renew
                 </button>
                 <button className="secondary-button" type="button" onClick={() => openHostingUpgrade(account)}>
                   <MenuIcon name="arrow-up" /> Upgrade
@@ -11310,12 +13743,9 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                         disabled={!account.clientProductId || renewalBusyId !== null}
                         title="Renew"
                         aria-label="Renew"
-                        onClick={() => loadHostingRenewalPreview({
-                          clientProductId: account.clientProductId,
-                          name: account.cpLogin
-                        })}
+                        onClick={() => openHostingRenewPromotion(account)}
                       >
-                        {renewalBusyId === account.clientProductId ? <LoadingIcon label="Checking renewal" /> : <MenuIcon name="order" />}
+                        <MenuIcon name="order" />
                       </button>
                       <button
                         className="secondary-button compact icon-only-button"
@@ -11411,6 +13841,295 @@ function goToCheckoutOrder(order) {
   }
 
   return false;
+}
+
+function hostingRenewUrl(account, path = "/account/cp_renew", extra = {}) {
+  const params = new URLSearchParams();
+  if (account?.cpId) params.set("cpId", account.cpId);
+  if (account?.clientProductId) params.set("clientProductId", account.clientProductId);
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined && value !== null && value !== "") params.set(key, value);
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function currentRenewParams() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    cpId: Number(params.get("cpId") || 0),
+    clientProductId: Number(params.get("clientProductId") || 0),
+    billingTerm: params.get("billingterm") || ""
+  };
+}
+
+function findHostingAccountForRenewal(accounts, renewParams) {
+  return accounts.find((account) => (
+    (renewParams.cpId && Number(account.cpId) === renewParams.cpId)
+    || (renewParams.clientProductId && Number(account.clientProductId) === renewParams.clientProductId)
+  )) ?? accounts[0] ?? null;
+}
+
+function hostingPromotionType(account) {
+  const planCode = String(account?.productName || account?.webHostType || account?.description || "").trim().toUpperCase();
+  if (planCode.startsWith("W500")) return "upgrade-advance";
+  if (planCode.startsWith("W1000")) return "upgrade-premium";
+  if (planCode.startsWith("W2") || planCode.startsWith("W1050")) return "renew";
+  return "";
+}
+
+function CpRenewPromotionPage({ theme, currentUser, onBackToPanel, onToggleTheme, embedded = false }) {
+  const [account, setAccount] = useState(null);
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const renewParams = currentRenewParams();
+  const promotionType = hostingPromotionType(account);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPromotionAccount() {
+      setIsLoading(true);
+      setMessage("");
+      try {
+        const response = await fetch("/api/account/dashboard");
+        const result = await response.json().catch(() => null);
+        if (!isMounted) return;
+
+        if (!response.ok || !result?.success) {
+          setMessage(result?.message ?? "Unable to load hosting renewal details.");
+          return;
+        }
+
+        const selectedAccount = findHostingAccountForRenewal(result.dashboard?.hostingAccounts ?? [], renewParams);
+        if (!selectedAccount) {
+          setMessage("Unable to find the hosting plan for this renewal.");
+          return;
+        }
+
+        const type = hostingPromotionType(selectedAccount);
+        if (!type) {
+          window.location.replace(hostingRenewUrl(selectedAccount, "/account/cp_renew"));
+          return;
+        }
+
+        setAccount(selectedAccount);
+      } catch {
+        if (isMounted) setMessage("Unable to reach hosting renewal service.");
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadPromotionAccount();
+    return () => {
+      isMounted = false;
+    };
+  }, [renewParams.cpId, renewParams.clientProductId]);
+
+  const renewUrl = account ? hostingRenewUrl(account, "/account/cp_renew") : "/panel?section=hosting";
+  const biennialRenewUrl = account ? hostingRenewUrl(account, "/account/cp_renew", { billingterm: "biennially" }) : renewUrl;
+  const upgradeUrl = account ? `/panel?section=hosting&upgradeCpId=${encodeURIComponent(account.cpId)}` : "/panel?section=hosting";
+
+  const content = (
+    <section className="checkout-handoff-card renew-promotion-card account-embedded-renew-card">
+      <span className="status-pill blue">Hosting Renewal</span>
+      <h1>Get Automatically Backup For Free!</h1>
+      <p>
+        Automatically back up your files, databases, and emails. Backup storage and restoration are included with the eligible renewal promotion.
+      </p>
+      {isLoading && <LoadingState label="Loading renewal promotion" />}
+      {message && <p className="renewal-action-message">{message}</p>}
+      {account && (
+        <div className="renew-promotion-layout">
+          <div className="renew-promotion-copy">
+            <dl className="card-meta single">
+              <div><dt>Hosting Plan</dt><dd>{account.cpLogin}</dd></div>
+              <div><dt>Plan Code</dt><dd>{account.webHostType}</dd></div>
+              <div><dt>Due Date</dt><dd>{formatDate(account.renewalDate)}</dd></div>
+            </dl>
+
+            {promotionType === "renew" && (
+              <>
+                <p className="renew-promotion-highlight">
+                  Receive a 10% discount when you renew for 2 years, along with free Data Backup Service and unlimited free SSL certificates!
+                </p>
+                <p className="renew-promotion-warning">
+                  This is a saving of $24/yr for Data Backup + $53/yr per SSL + 10% off hosting fee.
+                </p>
+                <div className="renew-promotion-actions">
+                  <a className="primary-button as-link" href={biennialRenewUrl}>Renew 2 years and save $100+ now!</a>
+                  <a className="secondary-button as-link" href={renewUrl}>No thanks</a>
+                </div>
+              </>
+            )}
+
+            {promotionType === "upgrade-advance" && (
+              <>
+                <p className="renew-promotion-highlight">
+                  Upgrade Basic Plan to Advance Plan or above and get free Data Backup Service and free SSL certificates.
+                </p>
+                <div className="renew-promotion-actions">
+                  <a className="primary-button as-link" href={upgradeUrl}>Upgrade and save $77 now!</a>
+                  <a className="secondary-button as-link" href={renewUrl}>No thanks, just renew me</a>
+                </div>
+              </>
+            )}
+
+            {promotionType === "upgrade-premium" && (
+              <>
+                <p className="renew-promotion-highlight">
+                  Upgrade Advance Plan to Premium Plan or above and get free Data Backup Service and free SSL certificates.
+                </p>
+                <div className="renew-promotion-actions">
+                  <a className="primary-button as-link" href={upgradeUrl}>Upgrade and save $77 now!</a>
+                  <a className="secondary-button as-link" href={renewUrl}>No thanks, just renew me</a>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="renew-promotion-visual" aria-hidden="true">
+            <MenuIcon name="backup" />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+
+  return embedded ? content : (
+    <main className="checkout-page account-standalone-page">
+      <header className="login-header">
+        <a className="brand" href="/panel" onClick={onBackToPanel} aria-label="Back to Account Panel">
+          <span className="brand-mark"><MenuIcon name="server" /></span>
+          <span>Account Panel</span>
+        </a>
+        <nav className="login-links" aria-label="Renewal navigation">
+          {currentUser && <span>{currentUser.login}</span>}
+          <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+        </nav>
+      </header>
+      {content}
+    </main>
+  );
+}
+
+function CpRenewPage({ theme, currentUser, onBackToPanel, onToggleTheme, embedded = false }) {
+  const [product, setProduct] = useState(null);
+  const [catalog, setCatalog] = useState(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const renewParams = currentRenewParams();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadRenewalPage() {
+      setBusy(true);
+      setMessage("");
+      setProduct(null);
+      setCatalog(null);
+      try {
+        const dashboardResponse = await fetch("/api/account/dashboard");
+        const dashboardResult = await dashboardResponse.json().catch(() => null);
+        if (!dashboardResponse.ok || !dashboardResult?.success) {
+          throw new Error(dashboardResult?.message ?? "Unable to load hosting renewal details.");
+        }
+
+        const selectedAccount = findHostingAccountForRenewal(dashboardResult.dashboard?.hostingAccounts ?? [], renewParams);
+        if (!selectedAccount?.clientProductId) {
+          throw new Error("Unable to find the hosting plan for this renewal.");
+        }
+
+        const selectedProduct = {
+          clientProductId: selectedAccount.clientProductId,
+          name: selectedAccount.cpLogin,
+          description: selectedAccount.webHostType,
+          nextDueDate: selectedAccount.renewalDate,
+          paymentTerm: selectedAccount.paymentTerm || ""
+        };
+
+        const catalogResponse = await fetch(`/api/account/renewals/${selectedAccount.clientProductId}/options`);
+        const catalogResult = await catalogResponse.json().catch(() => null);
+        if (!catalogResponse.ok || !catalogResult?.success) {
+          throw new Error(catalogResult?.message ?? "Unable to load renewal payment terms.");
+        }
+
+        if (!isMounted) return;
+        setProduct(selectedProduct);
+        setCatalog(catalogResult.catalog);
+      } catch (error) {
+        if (isMounted) setMessage(error.message || "Unable to load renewal payment terms.");
+      } finally {
+        if (isMounted) setBusy(false);
+      }
+    }
+
+    loadRenewalPage();
+    return () => {
+      isMounted = false;
+    };
+  }, [renewParams.cpId, renewParams.clientProductId]);
+
+  async function createRenewalCheckout(option) {
+    if (!product) return;
+    setBusy(true);
+    setMessage("");
+
+    try {
+      const response = await fetch(`/api/account/renewals/${product.clientProductId}/checkout-option`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentTerm: option.paymentTerm, currency: option.currency })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setMessage(result?.message ?? "Unable to create renewal checkout.");
+        return;
+      }
+
+      if (goToCheckoutOrder(result.order)) return;
+      setMessage("Renewal checkout order created.");
+    } catch {
+      setMessage("Unable to reach renewal checkout service.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const content = product ? (
+    <ProductRenewPage
+      product={product}
+      catalog={catalog}
+      message={message}
+      busy={busy}
+      initialPaymentTerm={renewParams.billingTerm}
+      onBack={() => { window.location.href = hostingRenewUrl(product, "/account/cp_renew_promotion"); }}
+      onCheckout={createRenewalCheckout}
+    />
+  ) : (
+    <section className="checkout-handoff-card account-embedded-renew-card">
+      <span className="status-pill blue">Product Renew</span>
+      <h1>Renew Hosting Plan</h1>
+      {busy && <LoadingState label="Loading renewal terms" />}
+      {message && <p className="renewal-action-message">{message}</p>}
+    </section>
+  );
+
+  return embedded ? content : (
+    <main className="checkout-page account-standalone-page">
+      <header className="login-header">
+        <a className="brand" href="/panel" onClick={onBackToPanel} aria-label="Back to Account Panel">
+          <span className="brand-mark"><MenuIcon name="server" /></span>
+          <span>Account Panel</span>
+        </a>
+        <nav className="login-links" aria-label="Renewal navigation">
+          {currentUser && <span>{currentUser.login}</span>}
+          <ThemeToggle theme={theme} onToggleTheme={onToggleTheme} />
+        </nav>
+      </header>
+      {content}
+    </main>
+  );
 }
 
 const domainRegistrarActionDefaults = {
@@ -14451,14 +17170,21 @@ function CheckoutPreviewCard({ preview, onClose }) {
   );
 }
 
-function ProductRenewPage({ product, catalog, message, busy, onBack, onCheckout }) {
+function ProductRenewPage({ product, catalog, message, busy, initialPaymentTerm = "", onBack, onCheckout }) {
   const [selectedKey, setSelectedKey] = useState("");
   const options = catalog?.options ?? [];
   const selectedOption = options.find((option) => renewalOptionKey(option) === selectedKey);
 
   useEffect(() => {
-    setSelectedKey("");
-  }, [product?.clientProductId]);
+    if (!initialPaymentTerm || !options.length) {
+      setSelectedKey("");
+      return;
+    }
+
+    const targetTerm = normalizeRenewalPaymentTerm(initialPaymentTerm);
+    const match = options.find((option) => normalizeRenewalPaymentTerm(option.paymentTerm) === targetTerm);
+    setSelectedKey(match ? renewalOptionKey(match) : "");
+  }, [product?.clientProductId, initialPaymentTerm, options.length]);
 
   return (
     <div className="billing-detail-layout">
@@ -14474,7 +17200,7 @@ function ProductRenewPage({ product, catalog, message, busy, onBack, onCheckout 
           <div><dt>Product</dt><dd>{product.name}</dd></div>
           <div><dt>Description</dt><dd>{product.description}</dd></div>
           <div><dt>Due Date</dt><dd>{formatDate(product.nextDueDate)}</dd></div>
-          <div><dt>Current Term</dt><dd>{product.paymentTerm || "N/A"}</dd></div>
+          {product.paymentTerm && <div><dt>Current Term</dt><dd>{formatPaymentTerm(product.paymentTerm)}</dd></div>}
         </dl>
         {busy && !catalog && (
           <div className="inline-loading-row">
@@ -14488,6 +17214,8 @@ function ProductRenewPage({ product, catalog, message, busy, onBack, onCheckout 
               <CustomSelect
                 value={selectedKey}
                 ariaLabel="Payment terms"
+                className="payment-term-select"
+                menuWidth="trigger"
                 onChange={(value) => setSelectedKey(value)}
                 options={[
                   { value: "", label: "Please choose a payment term" },
@@ -14527,6 +17255,26 @@ function ProductRenewPage({ product, catalog, message, busy, onBack, onCheckout 
 
 function renewalOptionKey(option) {
   return `${option.paymentTerm}|${option.currency}`;
+}
+
+function normalizeRenewalPaymentTerm(term) {
+  const value = String(term ?? "").trim().toLowerCase();
+  const aliases = {
+    monthly: "1m",
+    quarterly: "3m",
+    semiannually: "6m",
+    semiannuallyly: "6m",
+    annually: "1y",
+    biennially: "2y",
+    triennially: "3y",
+    "1 month": "1m",
+    "3 months": "3m",
+    "6 months": "6m",
+    "1 year": "1y",
+    "2 years": "2y",
+    "3 years": "3y"
+  };
+  return aliases[value] ?? value;
 }
 
 function renewalOptionLabel(catalog, option) {
@@ -15552,6 +18300,13 @@ function SettingsSection() {
 
   const profile = settings?.profile;
   const twoFactor = settings?.twoFactor;
+  const staffAccess = settings?.staffAccess;
+  const isStaffAutoLogin = Boolean(staffAccess?.isStaffAutoLogin);
+  const canEditProfile = staffAccess?.canEditCustomerProfile !== false;
+  const canChangeEmail = staffAccess?.canChangeCustomerEmail !== false;
+  const canChangeMobile = !isStaffAutoLogin;
+  const canChangeTwoFactor = staffAccess?.canChangeCustomerTwoFactor !== false;
+  const canChangePassword = staffAccess?.canChangeCustomerPassword !== false;
   const activeHostingAccounts = (settings?.hostingAccounts ?? []).filter((account) => account.status === "Active");
   const availablePasswordSyncTargets = defaultPasswordSyncTargets(activeHostingAccounts);
   const isEveryPasswordSyncTargetChecked = availablePasswordSyncTargets.length > 0
@@ -15572,9 +18327,11 @@ function SettingsSection() {
             <article className="settings-info-card">
               <div className="settings-info-heading">
                 <span className="status-pill">Profile</span>
-                <button className="settings-edit-button" type="button" title="Edit Profile" aria-label="Edit Profile" onClick={() => setSettingsEditor((current) => current === "profile" ? "" : "profile")}>
-                  <MenuIcon name="edit" />
-                </button>
+                {canEditProfile && (
+                  <button className="settings-edit-button" type="button" title="Edit Profile" aria-label="Edit Profile" onClick={() => setSettingsEditor((current) => current === "profile" ? "" : "profile")}>
+                    <MenuIcon name="edit" />
+                  </button>
+                )}
               </div>
               <dl className="card-meta single">
                 <div><dt>Customer ID</dt><dd>{profile.customerId}</dd></div>
@@ -15593,41 +18350,54 @@ function SettingsSection() {
                   <dt>Email</dt>
                   <dd className="settings-inline-action">
                     <span>{profile.emailDisplay || "Stored securely"}</span>
-                    <button className="settings-edit-button" type="button" title="Edit Email Address" aria-label="Edit Email Address" onClick={() => setSettingsEditor((current) => current === "email" ? "" : "email")}>
-                      <MenuIcon name="edit" />
-                    </button>
+                    {canChangeEmail && (
+                      <button className="settings-edit-button" type="button" title="Edit Email Address" aria-label="Edit Email Address" onClick={() => setSettingsEditor((current) => current === "email" ? "" : "email")}>
+                        <MenuIcon name="edit" />
+                      </button>
+                    )}
                   </dd>
                 </div>
                 <div>
                   <dt>Mobile</dt>
                   <dd className="settings-inline-action">
                     <span>{profile.mobileNumber || "N/A"}</span>
-                    <button className="settings-edit-button" type="button" title="Verify Mobile Number" aria-label="Verify Mobile Number" onClick={() => setSettingsEditor((current) => current === "mobile" ? "" : "mobile")}>
-                      <MenuIcon name="edit" />
-                    </button>
+                    {canChangeMobile && (
+                      <button className="settings-edit-button" type="button" title="Verify Mobile Number" aria-label="Verify Mobile Number" onClick={() => setSettingsEditor((current) => current === "mobile" ? "" : "mobile")}>
+                        <MenuIcon name="edit" />
+                      </button>
+                    )}
                   </dd>
                 </div>
                 <div>
                   <dt>2FA Status</dt>
                   <dd className="settings-inline-action">
                     <span>{twoFactor?.isEnabled ? "Enabled" : "Disabled"}</span>
-                    <button className="settings-edit-button" type="button" title="Edit 2FA Status" aria-label="Edit 2FA Status" onClick={() => setSettingsEditor((current) => current === "twoFactor" ? "" : "twoFactor")}>
-                      <MenuIcon name="edit" />
-                    </button>
+                    {canChangeTwoFactor && (
+                      <button className="settings-edit-button" type="button" title="Edit 2FA Status" aria-label="Edit 2FA Status" onClick={() => setSettingsEditor((current) => current === "twoFactor" ? "" : "twoFactor")}>
+                        <MenuIcon name="edit" />
+                      </button>
+                    )}
                   </dd>
                 </div>
                 <div>
                   <dt>Password</dt>
                   <dd className="settings-inline-action">
                     <span>********</span>
-                    <button className="settings-edit-button" type="button" title="Change Password" aria-label="Change Password" onClick={() => setSettingsEditor((current) => current === "password" ? "" : "password")}>
-                      <MenuIcon name="edit" />
-                    </button>
+                    {canChangePassword && (
+                      <button className="settings-edit-button" type="button" title="Change Password" aria-label="Change Password" onClick={() => setSettingsEditor((current) => current === "password" ? "" : "password")}>
+                        <MenuIcon name="edit" />
+                      </button>
+                    )}
                   </dd>
                 </div>
                 <div><dt>2FA Created</dt><dd>{formatDate(twoFactor?.enterDate)}</dd></div>
               </dl>
             </article>
+          </div>
+        )}
+        {isStaffAutoLogin && (
+          <div className="settings-staff-notice">
+            Staff auto-login is view-only for customer profile, email, mobile, password, and 2FA changes.
           </div>
         )}
       </article>
