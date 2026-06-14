@@ -2937,6 +2937,30 @@ html[data-theme="light"] .ram-meter {
   min-height: 34px;
 }
 
+.ssl-csr-form {
+  align-items: end;
+}
+
+.ssl-action-drawer {
+  align-content: start;
+}
+
+.drawer-form {
+  grid-template-columns: 1fr;
+}
+
+.ssl-csr-output {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  min-height: 260px;
+  padding: 12px;
+  resize: vertical;
+  width: 100%;
+}
+
 .activity-table td {
   max-width: 260px;
   overflow-wrap: anywhere;
@@ -4870,14 +4894,14 @@ html[data-theme="light"] .danger-button {
 
 .password-sync-list {
   display: grid;
-  gap: 12px;
+  gap: 6px;
 }
 
 .password-sync-group {
   border-top: 1px solid var(--line);
   display: grid;
-  gap: 8px;
-  padding-top: 10px;
+  gap: 4px;
+  padding-top: 8px;
 }
 
 .password-sync-group:first-child {
@@ -5486,8 +5510,10 @@ html[data-theme="light"] .ssl-domain-badge {
 }
 
 .function-drawer {
+  align-content: start;
   display: grid;
   gap: 18px;
+  grid-auto-rows: max-content;
   height: calc(100vh - 32px);
   margin: 16px;
   max-width: 760px;
@@ -5512,6 +5538,63 @@ html[data-theme="light"] .ssl-domain-badge {
 
 .settings-drawer-card .settings-form {
   max-width: none;
+}
+
+.hosting-pool-drawer {
+  align-content: start;
+}
+
+.pool-drawer-list {
+  display: grid;
+  gap: 12px;
+}
+
+.pool-manager-card {
+  gap: 14px;
+}
+
+.drawer-meta {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.pool-action-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+
+.pool-action-grid .secondary-button,
+.pool-memory-form .primary-button {
+  min-height: 34px;
+}
+
+.pool-memory-form {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(140px, 1fr) auto;
+}
+
+.pool-memory-form label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.78rem;
+  gap: 6px;
+}
+
+.pool-memory-form input {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  font: inherit;
+  height: 34px;
+  padding: 0 10px;
+}
+
+.drawer-full-button {
+  justify-content: center;
+  width: 100%;
 }
 
 @media (max-width: 760px) {
@@ -5546,6 +5629,31 @@ html[data-theme="light"] .ssl-domain-badge {
   display: flex;
   flex: 0 0 auto;
   gap: 8px;
+}
+
+.drawer-close-button {
+  background: var(--field);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  height: 38px;
+  min-height: 38px;
+  min-width: 38px;
+  position: relative;
+  z-index: 2;
+}
+
+.drawer-close-button .menu-icon {
+  color: currentColor;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  width: 18px;
+}
+
+.drawer-close-button:hover {
+  background: var(--panel);
+  border-color: var(--accent);
+  color: var(--ink);
 }
 
 .function-meta,
@@ -6296,43 +6404,6 @@ html[data-theme="light"] .affiliate-url-list div {
   border-radius: 6px;
   color: #ffffff;
   padding: 14px 16px;
-}
-
-.affiliate-invite-card {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-}
-
-.affiliate-invite-card h4 {
-  color: var(--ink);
-  font-size: 0.98rem;
-  font-weight: 400;
-  margin: 0;
-}
-
-.affiliate-invite-fields {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.affiliate-invite-fields label {
-  color: var(--muted);
-  display: grid;
-  font-size: 0.78rem;
-  gap: 6px;
-}
-
-.affiliate-invite-fields input {
-  background: var(--field);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--ink);
-  min-height: 36px;
-  padding: 9px 10px;
 }
 
 .banner-tabs {

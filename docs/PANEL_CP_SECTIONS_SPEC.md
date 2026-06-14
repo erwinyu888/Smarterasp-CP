@@ -428,7 +428,6 @@ Current rebuild status:
 
 - `cp/ftp.asp`
 - `cp/ftp_action.asp`
-- `cp/ftpedit.asp`
 - `cp/ftpimport.asp`
 - `cp/boxinfo_ftp.asp`
 
@@ -446,8 +445,8 @@ Current rebuild status:
 |---|---|---|---|
 | List FTP users | `ftp.asp`, `boxinfo_ftp.asp` | `cp_config_FTP` | `GET /api/hosting/ftp` |
 | Create FTP user | `ftp_action.asp`, `functions.inc:createFTPSingle` | `cp_config_FTP`, `encryptpwd`, `encryptFTPpwd` | `POST /api/hosting/ftp/users` |
-| Update FTP password | `functions.inc:updateFtpUserPassword` | `cp_config_FTP`, `encryptpwd`, `encryptFTPpwd` | `PUT /api/hosting/ftp/users/{login}` |
 | Delete user | `ftp_action.asp`, `functions.inc:deleteFTP` | `cp_config_FTP` | `DELETE /api/hosting/ftp/users/{login}` |
+| Update FTP password | `functions.inc:updateFtpUserPassword` | `cp_config_FTP`, `encryptpwd`, `encryptFTPpwd` | Not exposed in the rebuilt FTP Manager |
 | Edit FTP path/quota/permission | `ftp_action.asp`, disabled `functions.inc:edit_ftp_user` | Disabled inside `if 1 = 2` | Do not expose in UI |
 | Enable/disable user | `ftp_action.asp`, disabled `functions.inc:enable_ftp_user` / `stop_FTP` | Disabled inside `if 1 = 2` | Do not expose in UI |
 | Reset permission | `ftp_action.asp`, disabled permission reset code | Disabled inside `if 1 = 2` | Do not expose in UI |

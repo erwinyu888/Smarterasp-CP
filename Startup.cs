@@ -223,14 +223,12 @@ namespace controlpanel
                 endpoints.MapDelete("/api/hosting/emails/{domain}", HandleHostingEmailDeleteAsync);
                 endpoints.MapGet("/api/hosting/ftp", HandleHostingFtpAsync);
                 endpoints.MapPost("/api/hosting/ftp/users", HandleHostingFtpUserCreateAsync);
-                endpoints.MapPut("/api/hosting/ftp/users/{login}", HandleHostingFtpUserUpdateAsync);
-                endpoints.MapPost("/api/hosting/ftp/users/{login}/status", HandleHostingFtpUserStatusAsync);
-                endpoints.MapPost("/api/hosting/ftp/users/{login}/permissions/reset", HandleHostingFtpUserPermissionResetAsync);
                 endpoints.MapDelete("/api/hosting/ftp/users/{login}", HandleHostingFtpUserDeleteAsync);
                 endpoints.MapGet("/api/hosting/files/browse", HandleHostingFilesBrowseAsync);
                 endpoints.MapGet("/api/hosting/files/agent-health", HandleHostingFileAgentHealthAsync);
                 endpoints.MapPost("/api/hosting/files/action", HandleHostingFileActionAsync);
                 endpoints.MapGet("/api/hosting/runtime", HandleHostingRuntimeAsync);
+                endpoints.MapPost("/api/hosting/pools/action", HandleHostingPoolActionAsync);
                 endpoints.MapGet("/api/hosting/security", HandleHostingSecurityAsync);
                 endpoints.MapPost("/api/hosting/dns/preview", HandleHostingDnsPreviewAsync);
                 endpoints.MapPost("/api/hosting/cdn/action", HandleHostingCdnActionAsync);
@@ -5038,6 +5036,46 @@ VALUES ({values})";
             await Results.Ok(new HostingRuntimeResponse(true, "Hosting runtime data loaded.", dashboard)).ExecuteAsync(context);
         }
 
+        private async Task HandleHostingPoolActionAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new HostingPoolActionResponse(false, "Not signed in.", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<HostingPoolActionRequest>() ?? new HostingPoolActionRequest(0, 0, "", new Dictionary<string, string>());
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, request.CpId);
+            if (cp.CpId == 0)
+            {
+                await Results.Json(new HostingPoolActionResponse(false, "Hosting plan not found.", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var pool = request.PoolId > 0
+                ? await LoadOwnedPoolAsync(connection, cp.CpId, request.PoolId)
+                : await LoadDefaultOwnedPoolAsync(connection, cp);
+            if (pool == null)
+            {
+                await Results.Json(new HostingPoolActionResponse(false, "Application pool was not found for this hosting plan.", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var result = await RunHostingPoolActionAsync(connection, cp, pool, request.Action, request.Fields);
+            await Results.Json(result, statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+        }
+
         private async Task HandleHostingSecurityAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -5060,7 +5098,8 @@ VALUES ({values})";
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
 
-            var dashboard = await LoadHostingSecurityAsync(connection, sessionUser.CustomerId, GetRequestedCpId(context));
+            var includeSiteSecurity = IsTruthy(context.Request.Query["includeSiteSecurity"].ToString());
+            var dashboard = await LoadHostingSecurityAsync(connection, sessionUser.CustomerId, GetRequestedCpId(context), includeSiteSecurity);
             await Results.Ok(new HostingSecurityResponse(true, "Hosting security data loaded.", dashboard)).ExecuteAsync(context);
         }
 
@@ -5217,6 +5256,7 @@ VALUES ({values})";
             }
 
             var request = await context.Request.ReadFromJsonAsync<HostingDomainServiceActionRequest>() ?? new HostingDomainServiceActionRequest(0, "", "", new Dictionary<string, string>());
+            var action = NormalizeDomainServiceAction(request.Action, "request-free-ssl");
             var connectionString = GetEhbConfigConnectionString();
             if (string.IsNullOrWhiteSpace(connectionString))
             {
@@ -5234,6 +5274,37 @@ VALUES ({values})";
                 return;
             }
 
+            if (action is "csr-request" or "generate-csr")
+            {
+                var csrResult = await RunSslCsrRequestAsync(cp, sessionUser.CustomerId, request.Fields);
+                await Results.Json(new HostingServiceActionResponse(csrResult.Success, csrResult.Message, "ssl", csrResult.Details), statusCode: csrResult.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+                return;
+            }
+
+            if (action is "reinstall-ssl-cert" or "reinstall" or "export-ssl-cert" or "export" or "delete-ssl" or "delete" or "resend-approver-email")
+            {
+                var order = await LoadOwnedSslOrderAsync(connection, sessionUser.CustomerId, request.Fields);
+                if (order == null)
+                {
+                    await Results.Json(new HostingServiceActionResponse(false, "SSL order was not found for this account.", "ssl", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                    return;
+                }
+
+                var orderResult = await RunSslOrderActionAsync(connection, cp, order, action);
+                await Results.Json(new HostingServiceActionResponse(orderResult.Success, orderResult.Message, "ssl", orderResult.Details), statusCode: orderResult.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+                return;
+            }
+
+            if (action is "import-ssl" or "re-import-ssl")
+            {
+                await Results.Json(new HostingServiceActionResponse(false, "SSL import/re-import needs multipart certificate upload. The old flow is ssl_import_1.asp -> ssl_import_2.asp and the upload endpoint still needs to be ported before live import.", "ssl", new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/ssl_import_1.asp and ssl_import_2.asp",
+                    fields = request.Fields
+                }), statusCode: StatusCodes.Status400BadRequest).ExecuteAsync(context);
+                return;
+            }
+
             var domain = await LoadOwnedMappedDomainAsync(connection, cp, request.Domain);
             if (domain == null)
             {
@@ -5246,7 +5317,6 @@ VALUES ({values})";
                 return;
             }
 
-            var action = NormalizeDomainServiceAction(request.Action, "request-free-ssl");
             var legacySource = "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:requestFreeSSLForced/deleteFreeSSLRecord";
             if (action is "request-free-ssl" or "free-ssl")
             {
@@ -5267,13 +5337,159 @@ VALUES ({values})";
                 return;
             }
 
-            if (action is "delete-ssl" or "delete")
+            await Results.Json(new HostingServiceActionResponse(false, $"SSL action '{request.Action}' still needs exact Namecheap/SSL order mapping from latest ASP before write support.", "ssl", new { legacySource, domain.Domain })).ExecuteAsync(context);
+        }
+
+        private async Task<SslActionResult> RunSslCsrRequestAsync(SelectedHostingCp cp, long customerId, Dictionary<string, string> fields)
+        {
+            var commonName = FieldValue(fields, "commonName", FieldValue(fields, "domain", ""));
+            var organization = FieldValue(fields, "organization", "");
+            var department = FieldValue(fields, "department", "");
+            var city = FieldValue(fields, "city", "");
+            var state = FieldValue(fields, "state", "");
+            var country = FieldValue(fields, "country", "").ToUpperInvariant();
+            if (new[] { commonName, organization, department, city, state, country }.Any(string.IsNullOrWhiteSpace))
             {
-                await Results.Json(new HostingServiceActionResponse(false, "SSL delete is mapped to deleteFreeSSLRecord(CN), but live deletion is not exposed here yet to avoid touching existing SSL orders.", "ssl", new { legacySource, domain.Domain })).ExecuteAsync(context);
-                return;
+                return new SslActionResult(false, "CSR request needs common name, organization, department, city, state, and country.", null);
             }
 
-            await Results.Json(new HostingServiceActionResponse(false, $"SSL action '{request.Action}' still needs exact Namecheap/SSL order mapping from latest ASP before write support.", "ssl", new { legacySource, domain.Domain })).ExecuteAsync(context);
+            if (!Regex.IsMatch(commonName, @"^(\*\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$", RegexOptions.IgnoreCase))
+            {
+                return new SslActionResult(false, "CSR common name is not a valid domain name.", null);
+            }
+
+            var call = await PostLegacySharedApiAsync(GetLegacySharedApiSettings(), "/api/cert_request.asp", new Dictionary<string, string>
+            {
+                ["customerID"] = customerId.ToString(CultureInfo.InvariantCulture),
+                ["CommonName"] = commonName.ToLowerInvariant(),
+                ["Department"] = department,
+                ["Organization"] = organization,
+                ["City"] = city,
+                ["State"] = state,
+                ["Country"] = country
+            });
+
+            var csr = call.Body.Trim();
+            var success = call.Success && csr.Contains("BEGIN", StringComparison.OrdinalIgnoreCase);
+            return new SslActionResult(success, success ? "CSR created. Use this CSR when purchasing or reissuing an SSL certificate." : call.Message, new
+            {
+                legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/ssl_certreq.asp",
+                cp.CpId,
+                cp.CpLogin,
+                commonName,
+                csr = success ? csr : "",
+                call.Url,
+                call.Preview
+            });
+        }
+
+        private async Task<SslActionResult> RunSslOrderActionAsync(SqlConnection connection, SelectedHostingCp cp, OwnedSslOrder order, string action)
+        {
+            var shared = GetLegacySharedApiSettings();
+            if (!shared.IsConfigured)
+            {
+                return new SslActionResult(false, shared.MissingMessage, new { order.CommonName });
+            }
+
+            if (action is "resend-approver-email")
+            {
+                return new SslActionResult(false, "Resend Approver Email still uses Namecheap SSL API edit/resend helpers and is not enabled in the new panel yet.", new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/ssl_list_action.asp:resendApproverEmail",
+                    order.CommonName,
+                    order.CertificateId
+                });
+            }
+
+            if (action is "reinstall-ssl-cert" or "reinstall")
+            {
+                var call = await PostLegacySharedApiAsync(shared, "/api/https_binding_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "HTTPSBinding",
+                    ["SSLCN"] = order.CommonName
+                });
+                var success = call.Success && call.Body.Contains("successfully", StringComparison.OrdinalIgnoreCase);
+                return new SslActionResult(success, success ? "Done. The certificate has been installed." : call.Message, new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/ssl_list_action.asp:reinstall",
+                    order.CommonName,
+                    call.Url,
+                    call.Preview
+                });
+            }
+
+            if (action is "delete-ssl" or "delete")
+            {
+                if (!string.IsNullOrWhiteSpace(order.Email))
+                {
+                    return new SslActionResult(false, "Old CP only shows Delete for imported SSL certificates with no approver email. This paid/order SSL cannot be deleted from here.", new
+                    {
+                        legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/ssl_list.asp delete visibility",
+                        order.CommonName
+                    });
+                }
+
+                var call = await PostLegacySharedApiAsync(shared, "/tools/https_binding.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "delete",
+                    ["SSLCN"] = order.CommonName,
+                    ["ssl_id"] = order.Id.ToString(CultureInfo.InvariantCulture)
+                });
+                return new SslActionResult(call.Success, call.Success ? "SSL certificate deleted." : call.Message, new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/ssl_list_action.asp:deleteSSL",
+                    order.CommonName,
+                    call.Url,
+                    call.Preview
+                });
+            }
+
+            if (action is "export-ssl-cert" or "export")
+            {
+                var ftp = await LoadRootFtpForSslExportAsync(connection, cp);
+                if (ftp == null)
+                {
+                    return new SslActionResult(false, "Root FTP user was not found, so the old export-to-FTP flow cannot run.", new
+                    {
+                        legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/rawlog/export_ssl.asp",
+                        order.CommonName,
+                        cp.CpLogin
+                    });
+                }
+
+                var ftpPassword = await TryLegacyDecryptFtpPwdAsync(ftp.Pp1);
+                if (string.IsNullOrWhiteSpace(ftpPassword))
+                {
+                    return new SslActionResult(false, "Export needs decryptFTPpwd for cp_config_FTP.pp1, but the standalone legacy crypto API did not return a usable FTP password.", new
+                    {
+                        legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/rawlog/export_ssl.asp",
+                        order.CommonName,
+                        cp.CpLogin
+                    });
+                }
+
+                var fileNameCn = order.CommonName.Replace("*", "wildcard", StringComparison.OrdinalIgnoreCase);
+                var localPath = $@"C:\ssl_request\{fileNameCn}.pfx";
+                var call = await PostLegacySharedApiAsync(shared, "/api/upload_api.asp", new Dictionary<string, string>
+                {
+                    ["ftphost"] = $"{cp.ServerId.ToLowerInvariant()}.site4now.net",
+                    ["ftpuser"] = cp.CpLogin,
+                    ["ftppwd"] = ftpPassword,
+                    ["ftpdir"] = "db",
+                    ["localPath"] = localPath,
+                    ["remoteFilename"] = $"{fileNameCn}.pfx",
+                    ["action"] = "ftp_upload"
+                });
+                return new SslActionResult(call.Success, call.Success ? $"SSL certificate exported to /db/{fileNameCn}.pfx in FTP." : call.Message, new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/rawlog/export_ssl.asp",
+                    order.CommonName,
+                    call.Url,
+                    call.Preview
+                });
+            }
+
+            return new SslActionResult(false, $"SSL action '{action}' is not implemented.", new { order.CommonName });
         }
 
         private async Task HandleHostingActivityAsync(HttpContext context)
@@ -5573,27 +5789,6 @@ VALUES ({values})";
         private Task HandleHostingFtpUserCreateAsync(HttpContext context) =>
             HandleHostingFtpProvisionAsync(context);
 
-        private Task HandleHostingFtpUserUpdateAsync(HttpContext context, string login) =>
-            HandleHostingFtpUserMutationAsync(
-                context,
-                login,
-                () => new HostingFtpUserMutationRequest(0, "", "", "", 500, "write", ""),
-                UpdateHostingFtpUserAsync);
-
-        private Task HandleHostingFtpUserStatusAsync(HttpContext context, string login) =>
-            HandleHostingFtpUserMutationAsync(
-                context,
-                login,
-                () => new HostingFtpUserMutationRequest(0, "", "", "", 0, "", "enable"),
-                SetHostingFtpUserStatusAsync);
-
-        private Task HandleHostingFtpUserPermissionResetAsync(HttpContext context, string login) =>
-            HandleHostingFtpUserMutationAsync(
-                context,
-                login,
-                () => new HostingFtpUserMutationRequest(0, "", "", "", 0, "", "reset"),
-                ResetHostingFtpUserPermissionAsync);
-
         private async Task HandleHostingFtpUserDeleteAsync(HttpContext context, string login)
         {
             var sessionUser = GetSessionUser(context);
@@ -5632,51 +5827,6 @@ VALUES ({values})";
                     detail: ex.Message,
                     statusCode: StatusCodes.Status500InternalServerError,
                     title: "Unable to delete FTP user.").ExecuteAsync(context);
-            }
-        }
-
-        private async Task HandleHostingFtpUserMutationAsync(
-            HttpContext context,
-            string login,
-            Func<HostingFtpUserMutationRequest> fallbackRequest,
-            Func<SqlConnection, SelectedHostingCp, string, HostingFtpUserMutationRequest, Task<HostingProvisionResponse>> mutate)
-        {
-            var sessionUser = GetSessionUser(context);
-            if (sessionUser == null)
-            {
-                await Results.Json(new HostingProvisionResponse(false, "Not signed in.", "ftp", null), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
-                return;
-            }
-
-            var request = await context.Request.ReadFromJsonAsync<HostingFtpUserMutationRequest>() ?? fallbackRequest();
-            var connectionString = GetEhbConfigConnectionString();
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
-                return;
-            }
-
-            try
-            {
-                await using var connection = new SqlConnection(connectionString);
-                await connection.OpenAsync();
-
-                var cp = await LoadSelectedHostingCpAsync(connection, sessionUser.CustomerId, request.CpId);
-                if (cp.CpId == 0)
-                {
-                    await Results.Json(new HostingProvisionResponse(false, "Hosting plan not found.", "ftp", null), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
-                    return;
-                }
-
-                var result = await mutate(connection, cp, login, request);
-                await Results.Json(result, statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
-            }
-            catch (SqlException ex)
-            {
-                await Results.Problem(
-                    detail: ex.Message,
-                    statusCode: StatusCodes.Status500InternalServerError,
-                    title: "Unable to update FTP user.").ExecuteAsync(context);
             }
         }
 
@@ -13038,6 +13188,55 @@ WHERE customerID = @customerId";
             }
         }
 
+        private async Task<string> TryLegacyDecryptFtpPwdAsync(string encryptedValue)
+        {
+            var apiUrl = ConfigOrEnv("LegacyCrypto:DecryptFtpPwdApiUrl", "LEGACY_DECRYPTFTPPWD_API_URL").Trim();
+            if (string.IsNullOrWhiteSpace(apiUrl))
+            {
+                apiUrl = ConfigOrEnv("LegacyCrypto:DecryptPwdApiUrl", "LEGACY_DECRYPTPWD_API_URL").Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(encryptedValue))
+            {
+                return "";
+            }
+
+            return await TryLegacyDecryptApiAsync(apiUrl, encryptedValue, "decryptFTPpwd");
+        }
+
+        private static async Task<string> TryLegacyDecryptApiAsync(string apiUrl, string encryptedValue, string kind)
+        {
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                using var request = new HttpRequestMessage(HttpMethod.Post, apiUrl)
+                {
+                    Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                    {
+                        ["action"] = kind,
+                        ["mode"] = kind,
+                        ["kind"] = kind,
+                        ["value"] = encryptedValue,
+                        ["pwd"] = encryptedValue,
+                        ["pwd_hash"] = encryptedValue
+                    })
+                };
+
+                var response = await httpClient.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return "";
+                }
+
+                var text = (await response.Content.ReadAsStringAsync()).Trim();
+                return text.Contains('<', StringComparison.Ordinal) ? "" : text;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return "";
+            }
+        }
+
         private static AffiliateSummary BuildAffiliateSummary(List<AffiliateReferralSummary> referrals, List<AffiliateCommissionSummary> commissions, List<AffiliatePayoutSummary> payouts)
         {
             var pending = 0m;
@@ -15677,6 +15876,242 @@ WHERE site_Uid = @siteUid AND cpID = @cpId", connection))
             });
         }
 
+        private async Task<HostingPoolActionResponse> RunHostingPoolActionAsync(SqlConnection connection, SelectedHostingCp cp, OwnedApplicationPool pool, string action, Dictionary<string, string> fields)
+        {
+            var normalizedAction = NormalizeWebsiteAction(action);
+            var legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/apppoolmgr_action.asp";
+            if (normalizedAction is "restart" or "recycle" or "recycle-pool")
+            {
+                var customerId = await LoadCustomerIdByCpIdAsync(connection, cp.CpId);
+                var poolPrefix = cp.CpLogin.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+                var matchName = string.IsNullOrWhiteSpace(poolPrefix) ? pool.Name : poolPrefix;
+                var command = $"powershell Get-Process -IncludeUserName | Where UserName -match {matchName} | Stop-Process -force";
+                var killCall = await PostLegacyRemoteCommandAsync(GetLegacyAgentSettings(), GetLegacyRemoteCommandSettings(), cp.ServerId, customerId, command);
+                if (!killCall.Success)
+                {
+                    return new HostingPoolActionResponse(false, killCall.Message, new
+                    {
+                        legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/box_info_meter_ajax.asp",
+                        pool.Id,
+                        pool.Name,
+                        matchName,
+                        killCall.Url,
+                        killCall.Preview
+                    });
+                }
+
+                var startCall = await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Pools_AppPool_Start",
+                    ["AppPoolName"] = pool.Name
+                });
+
+                var startSuccess = startCall.Success && startCall.Preview.Contains("OK", StringComparison.OrdinalIgnoreCase);
+                return new HostingPoolActionResponse(true, startSuccess ? "Recycle Pool completed." : $"Recycle Pool completed. Start Pool check returned: {startCall.Message}", new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/box_info_meter_ajax.asp",
+                    pool.Id,
+                    pool.Name,
+                    matchName,
+                    killCall = new { killCall.Url, killCall.Preview },
+                    startCall = new { startCall.Url, startCall.Preview }
+                });
+            }
+
+            if (normalizedAction is "start" or "stop")
+            {
+                var agentAction = normalizedAction switch
+                {
+                    "start" => "IIS_Pools_AppPool_Start",
+                    "stop" => "IIS_Pools_AppPool_Stop",
+                    _ => "IIS_Pools_AppPool_Recycle"
+                };
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = agentAction,
+                    ["AppPoolName"] = pool.Name
+                });
+
+                var success = call.Success && call.Preview.Contains("OK", StringComparison.OrdinalIgnoreCase);
+                if (normalizedAction == "start" && success)
+                {
+                    await DeletePendingCreatePoolAsync(connection, cp.CpLogin, pool.Name);
+                    await CreateHostingWorkqueueAsync(connection, cp, new HostingWorkqueueRequest(
+                        cp.CpId,
+                        "createpool",
+                        "createpool",
+                        pool.Name,
+                        cp.ServerId,
+                        "",
+                        cp.CpLogin,
+                        "application-pool"));
+                }
+
+                return new HostingPoolActionResponse(success, success ? $"{PoolActionLabel(normalizedAction)} completed." : call.Message, new
+                {
+                    legacySource,
+                    pool.Id,
+                    pool.Name,
+                    agentAction,
+                    call.Url,
+                    call.Preview
+                });
+            }
+
+            if (normalizedAction is "1" or "aspnet-4-integrated" or "4.x-i" or "4x-integrated")
+            {
+                return await EditPoolRuntimeAsync(connection, cp, pool, "v4.0", "0", "4.x(i)", legacySource);
+            }
+
+            if (normalizedAction is "2" or "aspnet-4-classic" or "4.x-c" or "4x-classic")
+            {
+                return await EditPoolRuntimeAsync(connection, cp, pool, "v4.0", "1", "4.x(c)", legacySource);
+            }
+
+            if (normalizedAction is "3" or "aspnet-2-integrated" or "2.x-i" or "2x-integrated")
+            {
+                return await EditPoolRuntimeAsync(connection, cp, pool, "v2.0", "0", "2.x(i)", legacySource);
+            }
+
+            if (normalizedAction is "4" or "aspnet-2-classic" or "2.x-c" or "2x-classic")
+            {
+                return await EditPoolRuntimeAsync(connection, cp, pool, "v2.0", "1", "2.x(c)", legacySource);
+            }
+
+            if (normalizedAction is "9" or "net-core" or "dotnet-core")
+            {
+                return await EditPoolRuntimeAsync(connection, cp, pool, "", "0", "0(i)", legacySource);
+            }
+
+            if (normalizedAction is "5" or "32-bit" or "enable-32-bit" or "6" or "64-bit" or "disable-32-bit")
+            {
+                var enable32 = normalizedAction is "5" or "32-bit" or "enable-32-bit";
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Pools_AppPool_Edit",
+                    ["AppPoolName"] = pool.Name,
+                    ["Properties"] = "enable32BitAppOnWin64",
+                    ["Value"] = enable32 ? "True" : "False"
+                });
+                if (!call.Success)
+                {
+                    return new HostingPoolActionResponse(false, call.Message, new { legacySource, call.Url, call.Preview });
+                }
+
+                await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Pools SET enable32BitAppOnWin64 = @enabled WHERE cpID = @cpId AND pool_id = @poolId", command =>
+                {
+                    command.Parameters.AddWithValue("@enabled", enable32);
+                    command.Parameters.AddWithValue("@cpId", cp.CpId);
+                    command.Parameters.AddWithValue("@poolId", pool.Id);
+                });
+                return new HostingPoolActionResponse(true, enable32 ? "Application Pool changed to 32-bit." : "Application Pool changed to 64-bit.", new { legacySource, pool.Id, pool.Name, call.Url, call.Preview });
+            }
+
+            if (normalizedAction is "7" or "enable-load-user-profile" or "8" or "disable-load-user-profile")
+            {
+                var enabled = normalizedAction is "7" or "enable-load-user-profile";
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Pools_AppPool_processModel_Edit",
+                    ["AppPoolName"] = pool.Name,
+                    ["Properties"] = "loadUserProfile",
+                    ["Value"] = enabled ? "True" : "False"
+                });
+                if (!call.Success)
+                {
+                    return new HostingPoolActionResponse(false, call.Message, new { legacySource, call.Url, call.Preview });
+                }
+
+                await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Pools SET loadUserProfile = @enabled WHERE cpID = @cpId AND pool_id = @poolId", command =>
+                {
+                    command.Parameters.AddWithValue("@enabled", enabled);
+                    command.Parameters.AddWithValue("@cpId", cp.CpId);
+                    command.Parameters.AddWithValue("@poolId", pool.Id);
+                });
+                return new HostingPoolActionResponse(true, enabled ? "Load User Profile enabled." : "Load User Profile disabled.", new { legacySource, pool.Id, pool.Name, call.Url, call.Preview });
+            }
+
+            if (normalizedAction is "update-pool-ram" or "memory" or "ram")
+            {
+                var memory = ClampInt(FieldValue(fields, "memory", pool.PrivateMemoryMb.ToString(CultureInfo.InvariantCulture)), 256, 40960, pool.PrivateMemoryMb);
+                var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+                {
+                    ["action"] = "IIS_Pools_AppPool_Memory",
+                    ["AppPoolName"] = pool.Name,
+                    ["memory"] = memory.ToString(CultureInfo.InvariantCulture),
+                    ["privateMemory"] = memory.ToString(CultureInfo.InvariantCulture)
+                });
+                if (!call.Success)
+                {
+                    return new HostingPoolActionResponse(false, call.Message, new { legacySource, call.Url, call.Preview });
+                }
+
+                await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Pools SET privateMemory = @memory WHERE cpID = @cpId AND pool_id = @poolId", command =>
+                {
+                    command.Parameters.AddWithValue("@memory", memory);
+                    command.Parameters.AddWithValue("@cpId", cp.CpId);
+                    command.Parameters.AddWithValue("@poolId", pool.Id);
+                });
+                return new HostingPoolActionResponse(true, "Application Pool RAM updated.", new { legacySource, pool.Id, pool.Name, memory, call.Url, call.Preview });
+            }
+
+            return new HostingPoolActionResponse(false, "Unsupported Application Pool action.", new
+            {
+                legacySource,
+                supportedActions = new[] { "recycle", "start", "stop", "aspnet-4-integrated", "aspnet-4-classic", "aspnet-2-integrated", "aspnet-2-classic", "net-core", "32-bit", "64-bit", "enable-load-user-profile", "disable-load-user-profile", "ram" }
+            });
+        }
+
+        private async Task<HostingPoolActionResponse> EditPoolRuntimeAsync(SqlConnection connection, SelectedHostingCp cp, OwnedApplicationPool pool, string runtimeVersion, string pipelineMode, string dbVersion, string legacySource)
+        {
+            var callRuntime = await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Pools_AppPool_Edit",
+                ["AppPoolName"] = pool.Name,
+                ["Properties"] = "ManagedRuntimeVersion",
+                ["Value"] = runtimeVersion
+            });
+            var callPipeline = await PostLegacyAgentAsync(GetLegacyAgentSettings(), cp.ServerId, "/IIS_api.asp", new Dictionary<string, string>
+            {
+                ["action"] = "IIS_Pools_AppPool_Edit",
+                ["AppPoolName"] = pool.Name,
+                ["Properties"] = "ManagedPipelineMode",
+                ["Value"] = pipelineMode
+            });
+            if (!callRuntime.Success || !callPipeline.Success)
+            {
+                return new HostingPoolActionResponse(false, !callRuntime.Success ? callRuntime.Message : callPipeline.Message, new
+                {
+                    legacySource,
+                    runtime = callRuntime,
+                    pipeline = callPipeline
+                });
+            }
+
+            await ExecuteNonQueryAsync(connection, "UPDATE dbo.cp_config_Pools SET pool_version = @version WHERE cpID = @cpId AND pool_id = @poolId", command =>
+            {
+                command.Parameters.AddWithValue("@version", dbVersion);
+                command.Parameters.AddWithValue("@cpId", cp.CpId);
+                command.Parameters.AddWithValue("@poolId", pool.Id);
+            });
+            return new HostingPoolActionResponse(true, "Application Pool runtime updated.", new
+            {
+                legacySource,
+                pool.Id,
+                pool.Name,
+                version = dbVersion,
+                runtime = callRuntime.Preview,
+                pipeline = callPipeline.Preview
+            });
+        }
+
+        private static string PoolActionLabel(string normalizedAction) => normalizedAction switch
+        {
+            "start" => "Start Pool",
+            "stop" => "Stop Pool",
+            _ => "Recycle Pool"
+        };
+
         private async Task<HostingSiteFunctionMutationResponse> RunWebDeployMutationAsync(OwnedHostingSite site, string action)
         {
             if (action.Equals("fix-acl", StringComparison.OrdinalIgnoreCase) || action.Equals("fixacl", StringComparison.OrdinalIgnoreCase))
@@ -16092,6 +16527,35 @@ WHERE cpID = @cpId AND pool_id = @poolId", connection);
                 reader.GetBoolean(5));
         }
 
+        private static async Task<OwnedApplicationPool?> LoadDefaultOwnedPoolAsync(SqlConnection connection, SelectedHostingCp cp)
+        {
+            await using var command = new SqlCommand(@"
+SELECT TOP 1 pool_id,
+       ISNULL(pool_name, ''),
+       ISNULL(privateMemory, 0),
+       ISNULL(pool_version, ''),
+       ISNULL(enable32BitAppOnWin64, 0),
+       ISNULL(loadUserProfile, 0)
+FROM dbo.cp_config_Pools
+WHERE cpID = @cpId
+ORDER BY CASE WHEN LOWER(pool_name) = LOWER(@cpLogin) THEN 0 ELSE 1 END, pool_id", connection);
+            command.Parameters.AddWithValue("@cpId", cp.CpId);
+            command.Parameters.AddWithValue("@cpLogin", cp.CpLogin);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new OwnedApplicationPool(
+                reader.GetInt32(0),
+                reader.GetString(1).Trim(),
+                reader.GetInt32(2),
+                reader.GetString(3).Trim(),
+                reader.GetBoolean(4),
+                reader.GetBoolean(5));
+        }
+
         private static async Task DeletePendingPoolChangeAsync(SqlConnection connection, string cpLogin, string siteName)
         {
             await using var command = new SqlCommand(@"
@@ -16174,7 +16638,7 @@ WHERE type = 'createpool'
                 ["delete-website"] = new("Delete Website", "Settings", "domainbind_actions.asp?action=deletesite", "/iis_api.asp + DB cleanup", "Delete this website. This panel only shows inventory until delete confirmation is rebuilt.", false, true, new List<string>()),
                 ["domain-manager"] = new("Domain Manager", "Basic", "boxinfo_mapdomain.asp", "domainbind_actions.asp", "Add, move, and remove mapped domains.", true, true, new List<string> { "domain", "mode" }),
                 ["visitor-stats"] = new("Visitor Stats", "Basic", "boxinfo_webstats.asp", "AWStats setup tied to WebDeploy/Remote IIS user", "Review visitor statistics setup.", true, true, new List<string> { "enabled" }),
-                ["ftp-access"] = new("FTP Access", "Basic", "boxinfo_ftp.asp", "cp_config_FTP + encryptpwd/encryptFTPpwd", "Create or edit FTP access for this site.", true, true, new List<string> { "login", "password", "path", "permission" }),
+                ["ftp-access"] = new("FTP Access", "Basic", "boxinfo_ftp.asp", "cp_config_FTP + encryptpwd/encryptFTPpwd", "Create FTP access for this site.", true, true, new List<string> { "login", "password", "path", "permission" }),
                 ["vs-webdeploy"] = new("VS Webdeploy", "Basic", "boxinfo_webdeploy.asp", "iis_manager_webdeploy_action.asp + direct IIS API", "Configure Visual Studio/Web Deploy publishing.", true, true, new List<string>()),
                 ["github-deploy"] = new("Github Deploy", "Basic", "boxinfo_nodejs_deploy.asp", "nodejs_action.asp deploy fields + workqueue deploy", "Configure GitHub deployment for this site.", true, true, new List<string> { "source", "target" }),
                 ["smtp-sample-code"] = new("SMTP Sample Code", "Basic", "boxinfo_smtp_code.asp", "setupOtherPlugins/smtpscriptsamples_action", "Show SMTP sample code and related plugin metadata.", false, false, new List<string>()),
@@ -17716,7 +18180,7 @@ ORDER BY username",
             );
         }
 
-        private static async Task<HostingSecurityDashboard> LoadHostingSecurityAsync(SqlConnection connection, long customerId, long requestedCpId = 0)
+        private static async Task<HostingSecurityDashboard> LoadHostingSecurityAsync(SqlConnection connection, long customerId, long requestedCpId = 0, bool includeSiteSecurity = false)
         {
             var cp = await LoadSelectedHostingCpAsync(connection, customerId, requestedCpId);
             if (cp.CpId == 0)
@@ -17825,11 +18289,12 @@ ORDER BY startdate DESC",
                     reader.IsDBNull(2) ? null : reader.GetDateTime(2)
                 ));
 
-            var siteSecurityRows = await TryLoadSecurityRowsAsync(
-                connection,
-                warnings,
-                "site security rows",
-                @"
+            var siteSecurityRows = includeSiteSecurity
+                ? await TryLoadSecurityRowsAsync(
+                    connection,
+                    warnings,
+                    "site security rows",
+                    @"
 SELECT TOP 100 s.site_Uid,
        s.site_name,
        s.iis_id,
@@ -17841,16 +18306,17 @@ LEFT JOIN audit.dbo.siteSecurity a
   ON a.iis_id = TRY_CONVERT(bigint, CONCAT(CAST(@cpId AS varchar(30)), RIGHT('00' + CAST(ISNULL(s.iis_id, 0) AS varchar(10)), 2)))
 WHERE s.cpID = @cpId
 ORDER BY s.site_name",
-                command => command.Parameters.AddWithValue("@cpId", cp.CpId),
-                reader => new HostingSiteSecuritySummary(
-                    SecurityLong(reader, 0),
-                    SecurityValue(reader, 1),
-                    SecurityValue(reader, 2),
-                    SecurityBool(reader, 3),
-                    !reader.IsDBNull(4),
-                    reader.IsDBNull(4) ? false : SecurityBool(reader, 4),
-                    reader.IsDBNull(5) ? null : reader.GetDateTime(5)
-                ));
+                    command => command.Parameters.AddWithValue("@cpId", cp.CpId),
+                    reader => new HostingSiteSecuritySummary(
+                        SecurityLong(reader, 0),
+                        SecurityValue(reader, 1),
+                        SecurityValue(reader, 2),
+                        SecurityBool(reader, 3),
+                        !reader.IsDBNull(4),
+                        reader.IsDBNull(4) ? false : SecurityBool(reader, 4),
+                        reader.IsDBNull(5) ? null : reader.GetDateTime(5)
+                    ))
+                : new List<HostingSiteSecuritySummary>();
 
             var migrations = await TryLoadSecurityRowsAsync(
                 connection,
@@ -17947,6 +18413,12 @@ ORDER BY create_time DESC, id DESC",
             }
 
             return Convert.ToInt64(reader.GetValue(ordinal), CultureInfo.InvariantCulture);
+        }
+
+        private static bool IsTruthy(string value)
+        {
+            var text = (value ?? "").Trim().ToLowerInvariant();
+            return text is "1" or "true" or "yes" or "on";
         }
 
         private static bool SecurityBool(SqlDataReader reader, int ordinal)
@@ -18293,100 +18765,6 @@ VALUES (@pp1, @cpId, @ftpLogin, @ftpPassword, @ftpPath, @ftpQuota, @permission, 
                     permission,
                     legacySource = "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:createFTPSingle"
                 });
-        }
-
-        private async Task<HostingProvisionResponse> UpdateHostingFtpUserAsync(SqlConnection connection, SelectedHostingCp cp, string routeLogin, HostingFtpUserMutationRequest request)
-        {
-            var login = SafeProvisionName(string.IsNullOrWhiteSpace(routeLogin) ? request.Login : Uri.UnescapeDataString(routeLogin), 50, allowDash: true);
-            var user = await LoadOwnedFtpUserAsync(connection, cp, login);
-            if (user == null)
-            {
-                return new HostingProvisionResponse(false, "FTP user was not found on this hosting plan.", "ftp", null);
-            }
-
-            var pathResult = NormalizeOwnedHostingAbsolutePath(request.Path, cp.CpLogin, allowEmpty: true);
-            if (!pathResult.Success)
-            {
-                return new HostingProvisionResponse(false, pathResult.Message, "ftp", null);
-            }
-
-            var quotaMb = ClampInt(request.QuotaMb.ToString(CultureInfo.InvariantCulture), 0, 10240);
-            var permission = NormalizeFtpPermission(request.Permission);
-            var password = (request.Password ?? "").Trim();
-
-            if (!string.IsNullOrWhiteSpace(pathResult.Path) && !pathResult.Path.Equals(user.RawPath, StringComparison.OrdinalIgnoreCase))
-            {
-                return new HostingProvisionResponse(false, "FTP path update is not enabled in the active Classic ASP flow because edit_ftp_user is inside an if 1 = 2 block.", "ftp", null);
-            }
-
-            if (quotaMb != user.QuotaMb)
-            {
-                return new HostingProvisionResponse(false, "FTP quota update is not enabled in the active Classic ASP flow because edit_ftp_user is inside an if 1 = 2 block.", "ftp", null);
-            }
-
-            if (!permission.Equals(user.Permission, StringComparison.OrdinalIgnoreCase))
-            {
-                return new HostingProvisionResponse(false, "FTP permission update is not enabled in the active Classic ASP flow because edit_ftp_user is inside an if 1 = 2 block.", "ftp", null);
-            }
-
-            if (string.IsNullOrWhiteSpace(password))
-            {
-                return new HostingProvisionResponse(false, "No FTP changes were submitted.", "ftp", null);
-            }
-
-            var encryptedPassword = await TryLegacyEncryptPwdAsync(password);
-            var encryptedFtpPassword = await TryLegacyEncryptFtpPwdAsync(password);
-            if (string.IsNullOrWhiteSpace(encryptedPassword) || string.IsNullOrWhiteSpace(encryptedFtpPassword))
-            {
-                return new HostingProvisionResponse(false, "FTP password was validated, but the legacy encryptpwd/encryptFTPpwd API did not return a value.", "ftp", null);
-            }
-
-            var updated = await ExecuteNonQueryAsync(connection, @"
-UPDATE dbo.cp_config_FTP
-SET ftp_password = @ftpPassword,
-    pp1 = @pp1
-WHERE cpID = @cpId
-  AND LOWER(ftp_login) = LOWER(@ftpLogin)", command =>
-            {
-                command.Parameters.AddWithValue("@ftpPassword", encryptedPassword);
-                command.Parameters.AddWithValue("@pp1", encryptedFtpPassword);
-                command.Parameters.AddWithValue("@cpId", cp.CpId);
-                command.Parameters.AddWithValue("@ftpLogin", user.Login);
-            });
-
-            return updated > 0
-                ? new HostingProvisionResponse(true, "FTP password updated in cp_config_FTP using the active Classic ASP updateFtpUserPassword flow.", "ftp", new { user.Login, legacySource = "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:updateFtpUserPassword" })
-                : new HostingProvisionResponse(false, "FTP user was not updated.", "ftp", new { user.Login });
-        }
-
-        private async Task<HostingProvisionResponse> SetHostingFtpUserStatusAsync(SqlConnection connection, SelectedHostingCp cp, string routeLogin, HostingFtpUserMutationRequest request)
-        {
-            var login = SafeProvisionName(string.IsNullOrWhiteSpace(routeLogin) ? request.Login : Uri.UnescapeDataString(routeLogin), 50, allowDash: true);
-            var user = await LoadOwnedFtpUserAsync(connection, cp, login);
-            if (user == null)
-            {
-                return new HostingProvisionResponse(false, "FTP user was not found on this hosting plan.", "ftp", null);
-            }
-
-            return new HostingProvisionResponse(false, "FTP enable/disable is not enabled in the active Classic ASP flow because enable_ftp_user/stop_FTP are inside if 1 = 2 blocks.", "ftp", new { user.Login });
-        }
-
-        private async Task<HostingProvisionResponse> ResetHostingFtpUserPermissionAsync(SqlConnection connection, SelectedHostingCp cp, string routeLogin, HostingFtpUserMutationRequest request)
-        {
-            var login = SafeProvisionName(string.IsNullOrWhiteSpace(routeLogin) ? request.Login : Uri.UnescapeDataString(routeLogin), 50, allowDash: true);
-            var user = await LoadOwnedFtpUserAsync(connection, cp, login);
-            if (user == null)
-            {
-                return new HostingProvisionResponse(false, "FTP user was not found on this hosting plan.", "ftp", null);
-            }
-
-            var pathResult = NormalizeOwnedHostingAbsolutePath(string.IsNullOrWhiteSpace(request.Path) ? user.RawPath : request.Path, cp.CpLogin);
-            if (!pathResult.Success)
-            {
-                return new HostingProvisionResponse(false, pathResult.Message, "ftp", null);
-            }
-
-            return new HostingProvisionResponse(false, "FTP permission reset depends on a legacy /ftp_api.asp call that is not present in the active ftp_action.asp flow. It will stay disabled until an exact active ASP reference is found.", "ftp", new { user.Login, path = pathResult.Path });
         }
 
         private async Task<HostingProvisionResponse> DeleteHostingFtpUserAsync(SqlConnection connection, SelectedHostingCp cp, string routeLogin)
@@ -19556,8 +19934,8 @@ WHERE cpID = @cpId",
                     !body.Contains("error", StringComparison.OrdinalIgnoreCase);
 
                 return accepted
-                    ? new LegacyAgentCallResult(true, "Legacy shared API accepted the request.", url, Preview(body), new { status = (int)response.StatusCode })
-                    : new LegacyAgentCallResult(false, $"Legacy shared API rejected the request: {Preview(body)}", url, Preview(body), new { status = (int)response.StatusCode });
+                    ? new LegacyAgentCallResult(true, "Legacy shared API accepted the request.", url, Preview(body), new { status = (int)response.StatusCode }, body)
+                    : new LegacyAgentCallResult(false, $"Legacy shared API rejected the request: {Preview(body)}", url, Preview(body), new { status = (int)response.StatusCode }, body);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
@@ -19615,6 +19993,78 @@ WHERE cpID = @cpId",
             {
                 return new LegacyAgentCallResult(false, $"Legacy remote command failed: {ex.Message}", remoteUrl, "", null);
             }
+        }
+
+        private static async Task<OwnedSslOrder?> LoadOwnedSslOrderAsync(SqlConnection connection, long customerId, Dictionary<string, string> fields)
+        {
+            var orderIdText = GetField(fields, "sslOrderId", GetField(fields, "orderId", ""));
+            var commonName = GetField(fields, "domain", GetField(fields, "commonName", ""));
+            var hasOrderId = long.TryParse(orderIdText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var orderId) && orderId > 0;
+            if (!hasOrderId && string.IsNullOrWhiteSpace(commonName))
+            {
+                return null;
+            }
+
+            const string sql = @"
+SELECT TOP 1 so.id,
+       so.CN,
+       ISNULL(so.email, ''),
+       ISNULL(so.CertificateID, ''),
+       ISNULL(so.status, '')
+FROM dbo.ssl_order so
+LEFT JOIN oms.dbo.client_product cp ON so.client_product_id = cp.client_product_id
+WHERE so.status <> 'expired'
+  AND so.status <> 'deleted'
+  AND (cp.client_id = @customerId OR so.customerid = @customerIdText)
+  AND (@orderId = 0 OR so.id = @orderId)
+  AND (@commonName = '' OR LOWER(so.CN) = LOWER(@commonName))
+ORDER BY so.id DESC";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            command.Parameters.AddWithValue("@customerIdText", customerId.ToString(CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("@orderId", hasOrderId ? orderId : 0);
+            command.Parameters.AddWithValue("@commonName", commonName);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new OwnedSslOrder(
+                Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture),
+                reader.IsDBNull(1) ? "" : Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture)?.Trim() ?? "",
+                reader.IsDBNull(2) ? "" : Convert.ToString(reader.GetValue(2), CultureInfo.InvariantCulture)?.Trim() ?? "",
+                reader.IsDBNull(3) ? "" : Convert.ToString(reader.GetValue(3), CultureInfo.InvariantCulture)?.Trim() ?? "",
+                reader.IsDBNull(4) ? "" : Convert.ToString(reader.GetValue(4), CultureInfo.InvariantCulture)?.Trim() ?? ""
+            );
+        }
+
+        private static async Task<OwnedSslRootFtp?> LoadRootFtpForSslExportAsync(SqlConnection connection, SelectedHostingCp cp)
+        {
+            const string sql = @"
+SELECT TOP 1 ftp_login,
+       ISNULL(pp1, ''),
+       ISNULL(cpurl, '')
+FROM dbo.cp_config_FTP
+WHERE cpID = @cpId
+  AND LOWER(ftp_login) = LOWER(@cpLogin)
+ORDER BY ftp_uid DESC";
+
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cp.CpId);
+            command.Parameters.AddWithValue("@cpLogin", cp.CpLogin);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new OwnedSslRootFtp(
+                reader.IsDBNull(0) ? "" : Convert.ToString(reader.GetValue(0), CultureInfo.InvariantCulture)?.Trim() ?? "",
+                reader.IsDBNull(1) ? "" : Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture)?.Trim() ?? "",
+                reader.IsDBNull(2) ? "" : Convert.ToString(reader.GetValue(2), CultureInfo.InvariantCulture)?.Trim() ?? ""
+            );
         }
 
         private static string BuildCloudflareCommand(string action, OwnedMappedDomain domain, Dictionary<string, string> fields, string accountUserKey)
@@ -19771,6 +20221,16 @@ WHERE cpID = @cpId",
                 var accepted = response.IsSuccessStatusCode &&
                     !body.TrimStart().StartsWith("[[Error]]", StringComparison.OrdinalIgnoreCase) &&
                     !body.Contains("error", StringComparison.OrdinalIgnoreCase);
+
+                if (!accepted && (int)response.StatusCode == StatusCodes.Status401Unauthorized)
+                {
+                    return new LegacyAgentCallResult(false, $"Legacy agent returned 401 Unauthorized for {url}. The hosting server agent is rejecting this app server/request before the ASP action runs.", url, Preview(body), new { status = (int)response.StatusCode });
+                }
+
+                if (!accepted && LooksLikeHtml(body))
+                {
+                    return new LegacyAgentCallResult(false, $"Legacy agent returned an HTML error page from {url}. Status {(int)response.StatusCode}; preview: {ExtractHtmlTitle(body)}", url, Preview(body), new { status = (int)response.StatusCode });
+                }
 
                 return accepted
                     ? new LegacyAgentCallResult(true, "Legacy agent accepted the request.", url, Preview(body), new { status = (int)response.StatusCode })
@@ -19969,22 +20429,41 @@ WHERE object_id = OBJECT_ID(@tableName)
                 text = text.Replace(@"\\", @"\", StringComparison.Ordinal);
             }
 
+            if (text.Length > 3 && text[0] == '\\' && char.IsLetter(text[1]) && text[2] == ':')
+            {
+                text = text.TrimStart('\\');
+            }
+
             if (text.Contains("..", StringComparison.Ordinal) || text.StartsWith(@"\\", StringComparison.Ordinal))
             {
                 return new FtpPathValidationResult(false, "", "FTP path must stay inside the hosting account folder.");
             }
 
             var root = $@"h:\root\home\{cpLogin}".ToLowerInvariant();
-            var startsWithRoot = text.ToLowerInvariant().StartsWith(root, StringComparison.OrdinalIgnoreCase);
+            var webRoot = $@"{root}\www";
+            var textLower = text.ToLowerInvariant();
+            var startsWithRoot = textLower.Equals(root, StringComparison.OrdinalIgnoreCase) || textLower.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase);
             var looksLikeAbsoluteDrivePath = text.Length > 2 && char.IsLetter(text[0]) && text[1] == ':';
             if (looksLikeAbsoluteDrivePath && !startsWithRoot)
             {
                 return new FtpPathValidationResult(false, "", "FTP path must stay inside the selected hosting account.");
             }
 
+            var relativeText = text.TrimStart('\\');
+            if (relativeText.Equals("www", StringComparison.OrdinalIgnoreCase))
+            {
+                relativeText = "";
+            }
+            else if (relativeText.StartsWith(@"www\", StringComparison.OrdinalIgnoreCase))
+            {
+                relativeText = relativeText[4..];
+            }
+
             var full = startsWithRoot
                 ? text
-                : $@"h:\root\home\{cpLogin}\{text.TrimStart('\\')}";
+                : string.IsNullOrWhiteSpace(relativeText)
+                    ? webRoot
+                    : $@"{webRoot}\{relativeText}";
 
             full = full.Replace('/', '\\').TrimEnd('\\');
             if (!full.ToLowerInvariant().StartsWith(root, StringComparison.OrdinalIgnoreCase))
@@ -20525,6 +21004,26 @@ WHERE cpID = @cpId AND LOWER(ftp_login) = LOWER(@login)";
         {
             var text = (value ?? "").Replace("\r", " ", StringComparison.Ordinal).Replace("\n", " ", StringComparison.Ordinal).Trim();
             return text.Length <= 220 ? text : text[..220];
+        }
+
+        private static bool LooksLikeHtml(string? value)
+        {
+            var text = (value ?? "").TrimStart();
+            return text.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase)
+                || text.StartsWith("<html", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("<html", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ExtractHtmlTitle(string? value)
+        {
+            var text = value ?? "";
+            var titleMatch = Regex.Match(text, @"<title>\s*(.*?)\s*</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (!titleMatch.Success)
+            {
+                return "HTML error page";
+            }
+
+            return Regex.Replace(titleMatch.Groups[1].Value, @"\s+", " ").Trim();
         }
 
         private static async Task<long> LoadFirstSiteUidAsync(SqlConnection connection, long cpId)
@@ -21142,6 +21641,8 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record HostingRuntimeDashboard(long CpId, string CpLogin, List<HostingRuntimeRow> Pools, List<HostingRuntimeRow> Redirects, List<HostingRuntimeRow> SiteUsers, List<HostingRuntimeRow> StaticIps, List<HostingRuntimeRow> Aliases, HostingRuntimeTotals Totals, List<string> Warnings);
         private sealed record HostingRuntimeRow(string Title, string Subtitle, string Status, Dictionary<string, string> Details);
         private sealed record HostingRuntimeTotals(int Pools, int Redirects, int SiteUsers, int StaticIps, int ScheduledTasks, int Aliases);
+        private sealed record HostingPoolActionRequest(long CpId, int PoolId, string Action, Dictionary<string, string> Fields);
+        private sealed record HostingPoolActionResponse(bool Success, string Message, object? Details);
         private sealed record HostingSecurityResponse(bool Success, string Message, HostingSecurityDashboard? Dashboard);
         private sealed record HostingSecurityDashboard(long CpId, string CpLogin, List<HostingSslOrderSummary> SslOrders, List<HostingFreeSslSummary> FreeSslRows, List<HostingCdnDomainSummary> CdnDomains, List<HostingCloudflareAccountSummary> CloudflareAccounts, List<HostingSiteSecuritySummary> SiteSecurityRows, List<HostingMigrationSummary> Migrations, HostingSecurityTotals Totals, List<string> Warnings);
         private sealed record HostingSslOrderSummary(long Id, string CommonName, string Status, string Email, string BuyYears, string CertificateId, string DnsNames, string DnsApproverEmails, DateTime? CreateDate);
@@ -21153,6 +21654,9 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record HostingSecurityTotals(int SslOrders, int FreeSsl, int CdnDomains, int CdnEnabled, int CloudflareAccounts, int LockedSites, int Migrations);
         private sealed record HostingDomainServiceActionRequest(long CpId, string Domain, string Action, Dictionary<string, string> Fields);
         private sealed record HostingServiceActionResponse(bool Success, string Message, string Area, object? Details);
+        private sealed record SslActionResult(bool Success, string Message, object? Details);
+        private sealed record OwnedSslOrder(long Id, string CommonName, string Email, string CertificateId, string Status);
+        private sealed record OwnedSslRootFtp(string Login, string Pp1, string Server);
         private sealed record HostingActivityResponse(bool Success, string Message, HostingActivityDashboard? Dashboard);
         private sealed record HostingActivityDashboard(long CpId, string CpLogin, List<HostingActivitySummary> Jobs, HostingActivityTotals Totals);
         private sealed record HostingActivitySummary(long Id, string Type, string Status, int StatusCode, string From, string To, string Server, string Data, string SiteOwner, string NotifyEmail, string ErrorMessage, DateTime? EnterDate);
@@ -21172,7 +21676,6 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record HostingDatabaseProvisionRequest(long CpId, string Engine, string Name, string Login, string Password, int QuotaMb, string Collation, string ServerId) : IHostingCpRequest;
         private sealed record HostingEmailProvisionRequest(long CpId, string Domain, string Password, int QuotaMb, int MailboxQuota, string MailServer) : IHostingCpRequest;
         private sealed record HostingFtpProvisionRequest(long CpId, string Login, string Password, string Path, int QuotaMb, string Permission) : IHostingCpRequest;
-        private sealed record HostingFtpUserMutationRequest(long CpId, string Login, string Password, string Path, int QuotaMb, string Permission, string Action) : IHostingCpRequest;
         private sealed record HostingSiteFunctionResponse(bool Success, string Message, HostingSiteFunctionDetails? Function);
         private sealed record HostingSiteFunctionMutationRequest(long CpId, string Action, Dictionary<string, string> Fields);
         private sealed record HostingSiteFunctionMutationResponse(bool Success, string Message, object? Details);

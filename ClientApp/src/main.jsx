@@ -1755,10 +1755,10 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
         const currentCpLogin = String(currentUser?.cpLogin || "").trim().toLowerCase();
         const plans = currentUser?.isControlPanelLogin
           ? rawPlans.filter((plan) => {
-              const planCpId = Number(plan.cpId) || 0;
-              const planCpLogin = String(plan.cpLogin || "").trim().toLowerCase();
-              return (currentCpId > 0 && planCpId === currentCpId) || (currentCpLogin && planCpLogin === currentCpLogin);
-            })
+            const planCpId = Number(plan.cpId) || 0;
+            const planCpLogin = String(plan.cpLogin || "").trim().toLowerCase();
+            return (currentCpId > 0 && planCpId === currentCpId) || (currentCpLogin && planCpLogin === currentCpLogin);
+          })
           : rawPlans;
         setHostingPlanOptions(plans);
         if (billingResponse.ok && billingResult?.success) {
@@ -2079,6 +2079,11 @@ async function provisionHosting(path, cpId, payload) {
 function HostingDashboard({ cpId }) {
   const [dashboard, setDashboard] = useState(null);
   const [securityDashboard, setSecurityDashboard] = useState(null);
+  const [poolDrawer, setPoolDrawer] = useState(null);
+  const [poolRuntime, setPoolRuntime] = useState(null);
+  const [poolMessage, setPoolMessage] = useState("");
+  const [isLoadingPools, setIsLoadingPools] = useState(false);
+  const [isRunningPoolAction, setIsRunningPoolAction] = useState(false);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
   const [copiedDns, setCopiedDns] = useState(false);
@@ -2105,7 +2110,7 @@ function HostingDashboard({ cpId }) {
       }
 
       setDashboard(result.dashboard);
-      fetch(hostingApiUrl("/api/hosting/security", cpId))
+      fetch(hostingApiUrl("/api/hosting/security?includeSiteSecurity=1", cpId))
         .then((response) => response.json().then((securityResult) => ({ response, securityResult })))
         .then(({ response, securityResult }) => {
           if (response.ok && securityResult?.success) {
@@ -2123,6 +2128,59 @@ function HostingDashboard({ cpId }) {
   useEffect(() => {
     loadHostingDashboard();
   }, [cpId]);
+
+  async function loadPoolRuntime() {
+    setIsLoadingPools(true);
+    setPoolMessage("");
+    try {
+      const response = await fetch(hostingApiUrl("/api/hosting/runtime", cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setPoolMessage(result?.message ?? "Unable to load application pools.");
+        return;
+      }
+
+      setPoolRuntime(result.dashboard);
+    } catch {
+      setPoolMessage("Unable to reach application pool service.");
+    } finally {
+      setIsLoadingPools(false);
+    }
+  }
+
+  function openPoolDrawer(mode) {
+    setPoolDrawer(mode);
+    setPoolMessage("");
+    if (mode !== "ram") {
+      loadPoolRuntime();
+    }
+  }
+
+  async function runPoolAction(action, pool = null, fields = {}) {
+    setIsRunningPoolAction(true);
+    setPoolMessage("");
+    try {
+      const response = await fetch("/api/hosting/pools/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpId,
+          poolId: Number(pool?.details?.["Pool ID"] || pool?.poolId || 0),
+          action,
+          fields
+        })
+      });
+      const result = await response.json().catch(() => null);
+      setPoolMessage(result?.message ?? (response.ok ? "Application Pool action completed." : "Application Pool action failed."));
+      if (response.ok && result?.success) {
+        await Promise.all([loadPoolRuntime(), loadHostingDashboard()]);
+      }
+    } catch (error) {
+      setPoolMessage(error.message);
+    } finally {
+      setIsRunningPoolAction(false);
+    }
+  }
 
   async function copyDnsServers() {
     const ok = await writeTextToClipboard(dnsServers.join("\n"));
@@ -2188,9 +2246,9 @@ function HostingDashboard({ cpId }) {
           <h2>Ram Usage</h2>
           <p>Current memory usage for this hosting plan.</p>
           <div className="ram-actions">
-            <button className="secondary-button compact" type="button">Recycle Pool</button>
-            <button className="secondary-button compact" type="button">Manage Pool</button>
-            <button className="primary-button compact" type="button">+ Ram</button>
+            <button className="secondary-button compact" type="button" onClick={() => openPoolDrawer("recycle")}>Recycle Pool</button>
+            <button className="secondary-button compact" type="button" onClick={() => openPoolDrawer("manage")}>Manage Pool</button>
+            <button className="primary-button compact" type="button" onClick={() => openPoolDrawer("ram")}>+ Ram</button>
           </div>
         </div>
       </article>
@@ -2255,7 +2313,142 @@ function HostingDashboard({ cpId }) {
           </div>
         </article>
       )}
+      {poolDrawer && (
+        <HostingPoolDrawer
+          mode={poolDrawer}
+          cpId={cpId}
+          dashboard={dashboard}
+          runtime={poolRuntime}
+          isLoading={isLoadingPools}
+          isRunning={isRunningPoolAction}
+          message={poolMessage}
+          onClose={() => setPoolDrawer(null)}
+          onRefresh={loadPoolRuntime}
+          onRunAction={runPoolAction}
+        />
+      )}
     </section>
+  );
+}
+
+function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunning, message, onClose, onRefresh, onRunAction }) {
+  const pools = runtime?.pools ?? [];
+  const cpLogin = runtime?.cpLogin || dashboard?.cpLogin || "";
+  const defaultPool = pools.find((pool) => String(pool.title || "").toLowerCase().includes(String(cpLogin).toLowerCase())) || pools[0] || null;
+  const ramLink = String(dashboard?.webHostType || "").includes("V68")
+    ? `/account/upgrade_plan?cpid=${encodeURIComponent(cpId)}`
+    : "/account/addon_purchase_special?cat=ram";
+
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="function-drawer panel-card settings-drawer hosting-pool-drawer" role="dialog" aria-modal="true" aria-label="Application Pool">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">Application Pool</span>
+            <h2>{mode === "recycle" ? "Recycle Pool" : mode === "ram" ? "+ Ram" : "Manage Pool"}</h2>
+            <p>{mode === "ram" ? "Upgrade RAM through the same billing route used by the old control panel." : "Manage application pools."}</p>
+          </div>
+          <div className="function-drawer-actions">
+            {mode !== "ram" && <RefreshButton onClick={onRefresh} />}
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+              <MenuIcon name="Close" />
+            </button>
+          </div>
+        </header>
+
+        {mode === "ram" ? (
+          <article className="panel-card settings-drawer-card">
+            <div className="database-card-header">
+              <div>
+                <span className="status-pill blue">RAM</span>
+                <h3>Upgrade RAM</h3>
+                <p>The old dashboard sends this to the RAM add-on or plan upgrade page depending on plan type.</p>
+              </div>
+              <MenuIcon name="upgrade" />
+            </div>
+            <dl className="cp-context-meta drawer-meta">
+              <div><dt>Current Usage</dt><dd>{dashboard?.ramUsedMb ?? 0} MB</dd></div>
+              <div><dt>RAM Quota</dt><dd>{dashboard?.ramQuotaMb ?? 0} MB</dd></div>
+              <div><dt>Plan</dt><dd>{dashboard?.webHostType || "-"}</dd></div>
+            </dl>
+            <a className="primary-button compact drawer-full-button" href={ramLink}>Continue to RAM Order</a>
+          </article>
+        ) : (
+          <>
+            {isLoading && <LoadingState label="Loading application pools" />}
+            {message && <p className="sandbox-message">{message}</p>}
+            {mode === "recycle" && (
+              <article className="panel-card settings-drawer-card">
+                <div className="database-card-header">
+                  <div>
+                    <span className="status-pill warning">Default Pool</span>
+                    <h3>{defaultPool?.title || cpLogin || "Application Pool"}</h3>
+                    <p>{defaultPool?.subtitle || "Restart the selected application pool."}</p>
+                  </div>
+                  <MenuIcon name="refresh" />
+                </div>
+                <button className="primary-button compact drawer-full-button" type="button" disabled={isRunning || !defaultPool} onClick={() => onRunAction("recycle", defaultPool)}>
+                  {isRunning ? <LoadingIcon label="Recycling pool" /> : "Recycle Pool"}
+                </button>
+              </article>
+            )}
+            {mode === "manage" && (
+              <div className="pool-drawer-list">
+                {!pools.length && !isLoading && <p className="runtime-empty">No application pool rows found.</p>}
+                {pools.map((pool) => (
+                  <PoolManagerCard key={`${pool.title}-${pool.details?.["Pool ID"]}`} pool={pool} isRunning={isRunning} onRunAction={onRunAction} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function PoolManagerCard({ pool, isRunning, onRunAction }) {
+  const [memory, setMemory] = useState(String(pool.details?.["Private Memory"] || "").replace(/[^\d]/g, "") || "1024");
+  return (
+    <article className="panel-card settings-drawer-card pool-manager-card">
+      <div className="database-card-header">
+        <div>
+          <span className="status-pill blue">{pool.status || "Pool"}</span>
+          <h3>{pool.title}</h3>
+          <p>{pool.subtitle}</p>
+        </div>
+        <MenuIcon name="server" />
+      </div>
+      <dl className="cp-context-meta drawer-meta">
+        {Object.entries(pool.details ?? {}).map(([key, value]) => (
+          <div key={key}><dt>{key}</dt><dd>{String(value || "-")}</dd></div>
+        ))}
+      </dl>
+      <div className="pool-action-grid">
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("recycle", pool)}>Recycle</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("stop", pool)}>Stop</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("start", pool)}>Start</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("aspnet-4-integrated", pool)}>4.x Integrated</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("aspnet-4-classic", pool)}>4.x Classic</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("net-core", pool)}>.NET Core</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("32-bit", pool)}>32-bit</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("64-bit", pool)}>64-bit</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("enable-load-user-profile", pool)}>Enable Profile</button>
+        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("disable-load-user-profile", pool)}>Disable Profile</button>
+      </div>
+      <form className="pool-memory-form" onSubmit={(event) => {
+        event.preventDefault();
+        onRunAction("ram", pool, { memory });
+      }}>
+        <label>
+          Pool Memory
+          <input type="number" min="256" max="40960" value={memory} onChange={(event) => setMemory(event.target.value)} />
+        </label>
+        <button className="primary-button compact" type="submit" disabled={isRunning}>{isRunning ? <LoadingIcon label="Updating pool" /> : "Update RAM"}</button>
+      </form>
+    </article>
   );
 }
 
@@ -3032,7 +3225,7 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, messa
           </div>
           <div className="function-drawer-actions">
             <RefreshButton onClick={onRefresh} />
-            <button className="secondary-button compact icon-only-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
               <MenuIcon name="x" />
             </button>
           </div>
@@ -4327,13 +4520,12 @@ function buildMailSetupRows(domain) {
 }
 
 function FtpSection({ cpId }) {
-  const { activity, isLoading: isLoadingActivity, error: activityError, reload: reloadActivity } = useHostingActivity(cpId);
   const [ftpDashboard, setFtpDashboard] = useState(null);
   const [isLoadingFtp, setIsLoadingFtp] = useState(true);
   const [ftpError, setFtpError] = useState("");
   const [ftpMessage, setFtpMessage] = useState("");
   const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", password: "CodexFtp123!", path: "/" });
-  const [editingFtpLogin, setEditingFtpLogin] = useState("");
+  const [isFtpCreateOpen, setIsFtpCreateOpen] = useState(false);
   const [isFtpMutating, setIsFtpMutating] = useState(false);
   const [isFtpFolderPickerOpen, setIsFtpFolderPickerOpen] = useState(false);
   const [isLoadingFtpFolders, setIsLoadingFtpFolders] = useState(false);
@@ -4365,19 +4557,13 @@ function FtpSection({ cpId }) {
 
   const users = ftpDashboard?.users ?? [];
   const totals = ftpDashboard?.totals ?? { total: 0, rootUsers: 0, extraUsers: 0 };
-  const ftpJobs = (activity?.jobs ?? []).filter((job) =>
-    job.server === "ftp-manager" ||
-    String(job.from ?? "").toLowerCase().startsWith("ftp:") ||
-    String(job.type ?? "").toLowerCase().includes("ftp")
-  );
-
   useEffect(() => {
-    if (!ftpDashboard?.cpLogin || editingFtpLogin) return;
+    if (!ftpDashboard?.cpLogin) return;
     setFtpDraft((draft) => {
       if (draft.path && !draft.path.includes("openreward-001") && !draft.path.includes("jyu001-001")) return draft;
       return { ...draft, path: "/" };
     });
-  }, [ftpDashboard?.cpLogin, editingFtpLogin]);
+  }, [ftpDashboard?.cpLogin]);
 
   async function browseFtpFolders(path = ftpDraft.path || "/") {
     setIsLoadingFtpFolders(true);
@@ -4409,7 +4595,7 @@ function FtpSection({ cpId }) {
   }
 
   function chooseFtpFolder(path) {
-    setFtpDraft((draft) => ({ ...draft, path: normalizeFtpPickerPath(path) }));
+    setFtpDraft((draft) => ({ ...draft, path: normalizeFtpPickerPath(path, ftpDashboard?.cpLogin) }));
     setIsFtpFolderPickerOpen(false);
   }
 
@@ -4428,7 +4614,6 @@ function FtpSection({ cpId }) {
 
       setFtpMessage(result.message);
       await loadFtp();
-      await reloadActivity();
       return result;
     } finally {
       setIsFtpMutating(false);
@@ -4447,29 +4632,14 @@ function FtpSection({ cpId }) {
         quotaMb: 0,
         permission: "write"
       };
-      const result = editingFtpLogin
-        ? await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(editingFtpLogin)}`, {
-          method: "PUT",
-          body: JSON.stringify(payload)
-        })
-        : await provisionHosting("/api/hosting/ftp/users", cpId, payload);
+      const result = await provisionHosting("/api/hosting/ftp/users", cpId, payload);
       setFtpMessage(result.message);
-      setEditingFtpLogin("");
       setFtpDraft((draft) => ({ ...draft, login: "codex-test-ftp", password: "CodexFtp123!", path: "/" }));
+      setIsFtpCreateOpen(false);
       await loadFtp();
     } catch (error) {
       setFtpMessage(error.message);
     }
-  }
-
-  function editFtpUser(user) {
-    setEditingFtpLogin(user.login);
-    setFtpDraft({
-      login: user.login,
-      password: "",
-      path: simplifySitePath(user.rawPath || user.path || "", ftpDashboard?.cpLogin)
-    });
-    setFtpMessage("Editing live FTP user. The active Classic ASP edit page only changes the password.");
   }
 
   async function deleteFtpUser(user) {
@@ -4490,7 +4660,6 @@ function FtpSection({ cpId }) {
 
   function refreshFtpSection() {
     loadFtp();
-    reloadActivity();
   }
 
   return (
@@ -4499,7 +4668,7 @@ function FtpSection({ cpId }) {
         <div>
           <span className="status-pill blue">Live FTP</span>
           <h2>FTP Manager</h2>
-          <p>FTP account inventory from cp_config_FTP. Create, delete, and password updates follow the active Classic ASP DB flow.</p>
+          <p>FTP account inventory from cp_config_FTP. Create and delete follow the active Classic ASP DB flow.</p>
         </div>
         <div className="database-total-grid">
           <div><span>Total</span><strong>{totals.total}</strong></div>
@@ -4512,17 +4681,17 @@ function FtpSection({ cpId }) {
       <div className="database-toolbar panel-card">
         <div className="database-actions">
           <button className="primary-button compact" type="button" onClick={() => {
-            setEditingFtpLogin("");
             setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "/" });
+            setIsFtpCreateOpen(true);
           }}>+ FTP User</button>
         </div>
       </div>
 
-      <article className="panel-card advance-form-card">
+      {isFtpCreateOpen && <article className="panel-card advance-form-card">
         <div>
           <span className="status-pill blue">FTP User Draft</span>
-          <h3>{editingFtpLogin ? `Edit ${displayFtpLogin(editingFtpLogin, ftpDashboard?.cpLogin)}` : "Create FTP User"}</h3>
-          <p>{editingFtpLogin ? "The active Classic ASP ftpedit page exposes password update only." : "Matches the active Classic ASP Add FTP User form: login, password, confirm password, and folder."}</p>
+          <h3>Create FTP User</h3>
+          <p>Matches the active Classic ASP Add FTP User form: login, password, confirm password, and folder.</p>
         </div>
         <form className="advance-inline-form" onSubmit={submitFtpDraft}>
           <label>
@@ -4536,21 +4705,14 @@ function FtpSection({ cpId }) {
           <label>
             Path
             <span className="ftp-path-control">
-              <input value={ftpDraft.path} disabled={!!editingFtpLogin} onChange={(event) => setFtpDraft((draft) => ({ ...draft, path: event.target.value || "/" }))} />
-              {!editingFtpLogin && (
-                <IconActionButton label="Select Folder" onClick={openFtpFolderPicker} />
-              )}
+              <input value={ftpDraft.path} readOnly />
+              <IconActionButton label="Select Folder" icon="folder" onClick={openFtpFolderPicker} />
             </span>
           </label>
-          <button className="primary-button compact" type="submit" disabled={isFtpMutating}>{editingFtpLogin ? "Save FTP User" : "Create FTP User"}</button>
-          {editingFtpLogin && (
-            <button className="secondary-button compact" type="button" onClick={() => {
-              setEditingFtpLogin("");
-              setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "/" });
-            }}>Cancel</button>
-          )}
+          <button className="primary-button compact" type="submit" disabled={isFtpMutating}>Create FTP User</button>
+          <button className="secondary-button compact" type="button" onClick={() => setIsFtpCreateOpen(false)}>Cancel</button>
         </form>
-      </article>
+      </article>}
 
       {isFtpFolderPickerOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
@@ -4561,7 +4723,7 @@ function FtpSection({ cpId }) {
               <div>
                 <span className="status-pill blue">Folder</span>
                 <h2>Select FTP Root Folder</h2>
-                <p>{normalizeFtpPickerPath(ftpFolderPicker?.currentPath || ftpDraft.path || "/")}</p>
+                <p>{normalizeFtpPickerPath(ftpFolderPicker?.currentPath || ftpDraft.path || "/", ftpDashboard?.cpLogin)}</p>
               </div>
               <button className="secondary-button compact icon-only-button" type="button" title="Close" aria-label="Close" onClick={() => setIsFtpFolderPickerOpen(false)}>
                 <MenuIcon name="close" />
@@ -4645,7 +4807,6 @@ function FtpSection({ cpId }) {
                   <td>{simplifySitePath(user.rawPath || user.path, ftpDashboard?.cpLogin)}</td>
                   <td>
                     <div className="website-action-buttons compact-actions">
-                      <IconActionButton label="Edit" onClick={() => editFtpUser(user)} />
                       <IconActionButton label="Delete" className="secondary-button compact icon-only-button danger" disabled={isFtpMutating || user.isRootUser} onClick={() => deleteFtpUser(user)} />
                     </div>
                   </td>
@@ -4664,7 +4825,6 @@ function FtpSection({ cpId }) {
         <a href="http://www.smarterasp.net/support/KB/c34/ftp-program-configuration.aspx" target="_blank" rel="noreferrer">How to Deploy Files using other FTP Tools</a>
       </article>
 
-      <ActivityList jobs={ftpJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle="No recent FTP jobs" onRetry={reloadActivity} />
     </section>
   );
 }
@@ -4677,10 +4837,25 @@ function displayFtpLogin(login, cpLogin) {
   return text || "FTP User";
 }
 
-function normalizeFtpPickerPath(path) {
-  const text = String(path ?? "").replace(/\\/g, "/").trim();
+function normalizeFtpPickerPath(path, cpLogin = "") {
+  let text = String(path ?? "").replace(/\\/g, "/").trim();
   if (!text || text === ".") return "/";
+
+  const login = String(cpLogin ?? "").trim();
+  if (login) {
+    const absoluteBasePattern = new RegExp(`^/?[a-z]:/root/home/${escapeRegExp(login)}/www(?:/|$)`, "i");
+    text = text.replace(absoluteBasePattern, "/");
+
+    const accountBasePattern = new RegExp(`^/?${escapeRegExp(login)}/www(?:/|$)`, "i");
+    text = text.replace(accountBasePattern, "/");
+  }
+
+  text = text.replace(/^\/+/, "/").replace(/\/+$/, "");
   return text.startsWith("/") ? text : `/${text}`;
+}
+
+function escapeRegExp(value) {
+  return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function FilesSection({ cpId }) {
@@ -6505,7 +6680,7 @@ function simplifySitePath(path, cpLogin) {
   const markerIndex = text.toLowerCase().indexOf(marker.toLowerCase());
   if (markerIndex >= 0) {
     const trimmed = text.slice(markerIndex + marker.length).replace(/^\/+/, "");
-    return trimmed ? `/${trimmed}` : "/www";
+    return trimmed ? `/${trimmed}` : "/";
   }
   return text;
 }
@@ -6663,16 +6838,38 @@ function sslOrderActions(order, runAction) {
   ));
 }
 
-function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServiceAction, setSslDraft }) {
+function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServiceAction, sslDraft, setSslDraft, domainMessage, serviceResult }) {
   const sslOrders = securityDashboard?.sslOrders ?? [];
-  const freeSslRows = securityDashboard?.freeSslRows ?? [];
   const firstDomain = actionableDomains[0] || null;
+  const [activeWorkflow, setActiveWorkflow] = useState("");
 
   function runSslOrderAction(action, order) {
+    setActiveWorkflow(action);
+    if (action === "Re-import SSL") {
+      setActiveWorkflow("Import SSL");
+      setSslDraft((draft) => ({
+        ...draft,
+        action,
+        domain: order.commonName || "",
+        certificateType: order.buyYears ? "Paid SSL" : "Free SSL",
+        sslOrderId: String(order.id ?? "")
+      }));
+      return;
+    }
+
+    setSslDraft((draft) => ({
+      ...draft,
+      action,
+      domain: order.commonName || firstDomain?.label || "",
+      sslOrderId: String(order.id ?? ""),
+      certificateId: String(order.certificateId ?? ""),
+      certificateType: order.buyYears ? "Paid SSL" : "Free SSL",
+      approverEmail: order.email || ""
+    }));
     runDomainServiceAction("ssl", action, firstDomain, {
       domain: order.commonName || firstDomain?.label || "",
-      sslOrderId: order.id,
-      certificateId: order.certificateId,
+      sslOrderId: String(order.id ?? ""),
+      certificateId: String(order.certificateId ?? ""),
       certificateType: order.buyYears ? "Paid SSL" : "Free SSL",
       approverEmail: order.email || "",
       action
@@ -6680,15 +6877,36 @@ function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServi
   }
 
   function chooseSslWorkflow(action) {
+    setActiveWorkflow(action);
     setSslDraft((draft) => ({
       ...draft,
       action,
       domain: draft.domain || firstDomain?.label || "",
       approverEmail: draft.approverEmail || (firstDomain ? `admin@${firstDomain.label}` : "")
     }));
-    runDomainServiceAction("ssl", action, firstDomain, {
+    if (action === "Request Free SSL") {
+      runDomainServiceAction("ssl", action, firstDomain, {
+        domain: firstDomain?.label || "",
+        action
+      });
+    }
+  }
+
+  function submitCsr(event) {
+    event.preventDefault();
+    runDomainServiceAction("ssl", "CSR Request", firstDomain, {
+      ...sslDraft,
+      commonName: sslDraft.commonName || sslDraft.domain || firstDomain?.label || "",
+      action: "CSR Request"
+    });
+  }
+
+  function submitImport(event) {
+    event.preventDefault();
+    runDomainServiceAction("ssl", sslDraft.action || "Import SSL", firstDomain, {
+      ...sslDraft,
       domain: firstDomain?.label || "",
-      action
+      action: sslDraft.action || "Import SSL"
     });
   }
 
@@ -6718,6 +6936,20 @@ function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServi
           </button>
         </div>
       </div>
+
+      {activeWorkflow && (
+        <SslActionDrawer
+          activeWorkflow={activeWorkflow}
+          firstDomain={firstDomain}
+          sslDraft={sslDraft}
+          setSslDraft={setSslDraft}
+          domainMessage={domainMessage}
+          serviceResult={serviceResult}
+          onClose={() => setActiveWorkflow("")}
+          onSubmitCsr={submitCsr}
+          onSubmitImport={submitImport}
+        />
+      )}
 
       <section className="runtime-row-section ssl-legacy-table-section">
         <h4>SSL Certificates</h4>
@@ -6779,30 +7011,6 @@ function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServi
         )}
       </section>
 
-      <section className="runtime-row-section">
-        <h4>Free SSL</h4>
-        {!freeSslRows.length ? (
-          <p className="runtime-empty">No Let's SSL rows found for this hosting plan.</p>
-        ) : (
-          <div className="runtime-row-grid">
-            {freeSslRows.slice(0, 12).map((row) => (
-              <article className="runtime-row-card" key={`free-ssl-${row.id}`}>
-                <div>
-                  <span className="status-pill muted">{row.status || "Free SSL"}</span>
-                  <strong>{row.domain || `Free SSL #${row.id}`}</strong>
-                  <p>{row.lastUpdate ? `Updated ${formatDateTime(row.lastUpdate)}` : "Let's SSL"}</p>
-                </div>
-                <dl>
-                  <div><dt>Row ID</dt><dd>{row.id}</dd></div>
-                  <div><dt>Created</dt><dd>{row.createDate ? formatDateTime(row.createDate) : "-"}</dd></div>
-                  <div><dt>Updated</dt><dd>{row.lastUpdate ? formatDateTime(row.lastUpdate) : "-"}</dd></div>
-                </dl>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-
       <article className="panel-card ssl-kb-card">
         <div>
           <span className="status-pill blue">Tips</span>
@@ -6817,6 +7025,141 @@ function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServi
         </div>
       </article>
     </>
+  );
+}
+
+function SslActionDrawer({ activeWorkflow, firstDomain, sslDraft, setSslDraft, domainMessage, serviceResult, onClose, onSubmitCsr, onSubmitImport }) {
+  const isCsr = activeWorkflow === "CSR Request";
+  const isImport = activeWorkflow === "Import SSL";
+  const title = isCsr
+    ? "Create CSR"
+    : isImport
+      ? (sslDraft.action === "Re-import SSL" ? "Re-Import SSL Cert" : "Import SSL Cert")
+      : activeWorkflow;
+  const badge = isCsr
+    ? "CSR Request"
+    : isImport
+      ? (sslDraft.action === "Re-import SSL" ? "Re-Import SSL Cert" : "Import SSL")
+      : "SSL Action";
+
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="function-drawer panel-card settings-drawer ssl-action-drawer" role="dialog" aria-modal="true" aria-label={title}>
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">{badge}</span>
+            <h2>{title}</h2>
+            <p>{isCsr ? "Creates the CSR through the same legacy cert_request.asp flow." : isImport ? "The old CP opens ssl_import_1 and uploads a .cer/.crt or .pfx before installing it." : "Runs the selected SSL action through the old CP compatible backend."}</p>
+          </div>
+          <div className="function-drawer-actions">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+              <MenuIcon name="Close" />
+            </button>
+          </div>
+        </header>
+
+        {isCsr && (
+          <article className="panel-card settings-drawer-card ssl-workflow-card">
+            <form className="advance-inline-form ssl-csr-form drawer-form" onSubmit={onSubmitCsr}>
+              <label>
+                Common Name
+                <input value={sslDraft.commonName || sslDraft.domain || firstDomain?.label || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, commonName: event.target.value }))} />
+              </label>
+              <label>
+                Organization
+                <input value={sslDraft.organization || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, organization: event.target.value }))} />
+              </label>
+              <label>
+                Department
+                <input value={sslDraft.department || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, department: event.target.value }))} />
+              </label>
+              <label>
+                City
+                <input value={sslDraft.city || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, city: event.target.value }))} />
+              </label>
+              <label>
+                State
+                <input value={sslDraft.state || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, state: event.target.value }))} />
+              </label>
+              <label>
+                Country
+                <input maxLength={2} value={sslDraft.country || "US"} onChange={(event) => setSslDraft((draft) => ({ ...draft, country: event.target.value.toUpperCase() }))} />
+              </label>
+              <button className="primary-button compact drawer-full-button" type="submit">Create CSR</button>
+            </form>
+          </article>
+        )}
+
+        {isImport && (
+          <article className="panel-card settings-drawer-card ssl-workflow-card">
+            <form className="advance-inline-form ssl-csr-form drawer-form" onSubmit={onSubmitImport}>
+              <label>
+                Common Name
+                <input value={sslDraft.domain || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, domain: event.target.value }))} />
+              </label>
+              <label>
+                Certificate Type
+                <select value={sslDraft.certType || ".pfx"} onChange={(event) => setSslDraft((draft) => ({ ...draft, certType: event.target.value }))}>
+                  <option value=".pfx">.pfx</option>
+                  <option value=".cer">.cer / .crt</option>
+                </select>
+              </label>
+              <label>
+                Import Password
+                <input value={sslDraft.sslpwd || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, sslpwd: event.target.value }))} />
+              </label>
+              <label>
+                Cert File
+                <input type="file" accept=".cer,.crt,.pfx" />
+              </label>
+              <button className="primary-button compact drawer-full-button" type="submit">{sslDraft.action === "Re-import SSL" ? "Re-Import SSL Cert" : "Import SSL Cert"}</button>
+            </form>
+          </article>
+        )}
+
+        {!isCsr && !isImport && (
+          <article className="panel-card settings-drawer-card">
+            <dl className="cp-context-meta drawer-meta">
+              <div><dt>Domain</dt><dd>{sslDraft.domain || "-"}</dd></div>
+              <div><dt>Certificate Type</dt><dd>{sslDraft.certificateType || "-"}</dd></div>
+              <div><dt>Order ID</dt><dd>{sslDraft.sslOrderId || "-"}</dd></div>
+            </dl>
+          </article>
+        )}
+
+        {domainMessage && <p className="sandbox-message">{domainMessage}</p>}
+        {serviceResult?.details?.csr && (
+          <article className="panel-card settings-drawer-card">
+            <div className="database-card-header">
+              <div>
+                <span className="status-pill blue">CSR</span>
+                <h3>Generated CSR</h3>
+              </div>
+              <MenuIcon name="invoice" />
+            </div>
+            <textarea className="ssl-csr-output" readOnly value={serviceResult.details.csr} />
+          </article>
+        )}
+        {serviceResult?.details && !serviceResult.details.csr && (
+          <article className="panel-card settings-drawer-card">
+            <div className="database-card-header">
+              <div>
+                <span className="status-pill blue">Result</span>
+                <h3>Action Detail</h3>
+              </div>
+              <MenuIcon name="logs" />
+            </div>
+            <dl className="cp-context-meta drawer-meta">
+              {Object.entries(serviceResult.details).map(([key, value]) => (
+                <div key={key}><dt>{key}</dt><dd>{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd></div>
+              ))}
+            </dl>
+          </article>
+        )}
+      </aside>
+    </div>
   );
 }
 
@@ -6969,11 +7312,13 @@ function DomainServicesSection({ mode, cpId }) {
   async function runDomainServiceAction(area, action, domain, fields = {}) {
     setDomainMessage("");
     setServiceResult(null);
-    if (!domain) {
+    const targetDomain = domain?.label || fields.domain || fields.commonName || "";
+    const canRunWithoutMappedDomain = area === "ssl" && ["CSR Request", "Re-install SSL Cert", "Export SSL Cert", "Delete SSL", "Re-import SSL", "Resend Approver Email"].includes(action);
+    if (!domain && !canRunWithoutMappedDomain) {
       setDomainMessage(`${area.toUpperCase()} actions need a mapped customer domain. Temporary hosting URLs are skipped.`);
       return;
     }
-    if (isTemporaryHostingDomain(domain.label || fields.domain)) {
+    if (!canRunWithoutMappedDomain && isTemporaryHostingDomain(targetDomain)) {
       setDomainMessage(`${area.toUpperCase()} actions are not tested on temporary hosting URLs. Choose a mapped customer domain.`);
       return;
     }
@@ -6988,7 +7333,7 @@ function DomainServicesSection({ mode, cpId }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cpId,
-          domain: domain?.label || fields.domain || "",
+          domain: targetDomain,
           action,
           fields
         })
@@ -7032,7 +7377,7 @@ function DomainServicesSection({ mode, cpId }) {
 
   return (
     <section className="cp-inventory-section">
-      <article className="panel-card cp-inventory-summary">
+      {mode !== "ssl" && <article className="panel-card cp-inventory-summary">
         <div>
           <span className="status-pill blue">{modeCopy.label}</span>
           <h2>{modeCopy.title} Manager</h2>
@@ -7044,7 +7389,7 @@ function DomainServicesSection({ mode, cpId }) {
           <div><span>{modeCopy.statThree}</span><strong>{uniqueSites}</strong></div>
         </div>
         <RefreshButton onClick={refreshDomainServiceSection} />
-      </article>
+      </article>}
 
       {mode !== "ssl" && <div className="database-toolbar panel-card">
         <div className="database-actions">
@@ -7122,58 +7467,14 @@ function DomainServicesSection({ mode, cpId }) {
       )}
 
       {mode === "ssl" && (
-        <article className="panel-card dns-record-draft-card">
-          <div className="database-card-header">
-            <div>
-              <span className="status-pill blue">SSL Workflow</span>
-              <h3>Certificate Workflow</h3>
-              <p>Use the SSL List below for certificate rows and row actions. Write actions remain guarded until each exact legacy SSL gateway path is enabled.</p>
-            </div>
-            <MenuIcon name="ssl" />
-          </div>
-          <form className="advance-inline-form" onSubmit={submitSslDraft}>
-            <label>
-              Domain
-              <select value={sslDraft.domain || selectedSslDomain?.label || ""} onChange={(event) => setSslDraft((draft) => ({ ...draft, domain: event.target.value, approverEmail: `admin@${event.target.value}` }))}>
-                {actionableDomains.map((domain) => <option key={domain.domainUid} value={domain.label}>{domain.label}</option>)}
-              </select>
-            </label>
-            <label>
-              Certificate
-              <select value={sslDraft.certificateType} onChange={(event) => setSslDraft((draft) => ({ ...draft, certificateType: event.target.value }))}>
-                <option>Free SSL</option>
-                <option>Comodo SSL</option>
-                <option>Wildcard SSL</option>
-                <option>Imported Certificate</option>
-              </select>
-            </label>
-            <label>
-              Approver Email
-              <input type="email" value={sslDraft.approverEmail} onChange={(event) => setSslDraft((draft) => ({ ...draft, approverEmail: event.target.value }))} />
-            </label>
-            <label>
-              Action
-              <select value={sslDraft.action} onChange={(event) => setSslDraft((draft) => ({ ...draft, action: event.target.value }))}>
-                <option>Request Free SSL</option>
-                <option>Import SSL</option>
-                <option>Install Certificate</option>
-                <option>Reinstall Certificate</option>
-                <option>Resend Approver Email</option>
-                <option>Renew SSL</option>
-                <option>Delete SSL</option>
-              </select>
-            </label>
-            <button className="primary-button compact" type="submit">Run SSL Action</button>
-          </form>
-        </article>
-      )}
-
-      {mode === "ssl" && (
         <SslLegacyContent
           securityDashboard={securityDashboard}
           actionableDomains={actionableDomains}
           runDomainServiceAction={runDomainServiceAction}
+          sslDraft={sslDraft}
           setSslDraft={setSslDraft}
+          domainMessage={domainMessage}
+          serviceResult={serviceResult}
         />
       )}
 
@@ -7225,8 +7526,8 @@ function DomainServicesSection({ mode, cpId }) {
 
       {isLoadingDomains && <LoadingState label="Loading mapped domains" />}
       {isLoadingSecurity && <LoadingState label={`Loading ${mode.toUpperCase()} legacy inventory`} />}
-      {domainMessage && <p className="sandbox-message">{domainMessage}</p>}
-      {serviceResult?.details?.records?.length > 0 && (
+      {mode !== "ssl" && domainMessage && <p className="sandbox-message">{domainMessage}</p>}
+      {mode !== "ssl" && serviceResult?.details?.records?.length > 0 && (
         <RuntimeRows
           title={`${serviceResult.area.toUpperCase()} Preview`}
           rows={serviceResult.details.records.map((record) => ({
@@ -7244,7 +7545,7 @@ function DomainServicesSection({ mode, cpId }) {
           emptyText="No preview records."
         />
       )}
-      {serviceResult?.details && !serviceResult.details.records && (
+      {mode !== "ssl" && serviceResult?.details && !serviceResult.details.records && (
         <RuntimeRows
           title={`${serviceResult.area.toUpperCase()} Action Detail`}
           rows={[{
@@ -7279,7 +7580,7 @@ function DomainServicesSection({ mode, cpId }) {
         <RuntimeRows key={section.title} title={section.title} rows={section.rows} emptyText={section.emptyText} />
       ))}
 
-      {!!domains.length && viewMode === "cards" && (
+      {mode !== "ssl" && !!domains.length && viewMode === "cards" && (
         <div className="domain-service-grid">
           {domains.map((domain) => (
             <article className="panel-card domain-service-card" key={`${mode}-${domain.domainUid}-${domain.label}`}>
@@ -7308,7 +7609,7 @@ function DomainServicesSection({ mode, cpId }) {
           ))}
         </div>
       )}
-      {!!domains.length && viewMode === "table" && (
+      {mode !== "ssl" && !!domains.length && viewMode === "table" && (
         <div className="table-wrap website-table">
           <table>
             <thead>
@@ -7344,7 +7645,7 @@ function DomainServicesSection({ mode, cpId }) {
           </table>
         </div>
       )}
-      <ActivityList jobs={domainJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle={`No recent ${mode.toUpperCase()} jobs`} onRetry={reloadActivity} />
+      {mode !== "ssl" && <ActivityList jobs={domainJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle={`No recent ${mode.toUpperCase()} jobs`} onRetry={reloadActivity} />}
     </section>
   );
 }
@@ -7395,7 +7696,7 @@ function LoadingState({ label = "Loading" }) {
   );
 }
 
-function IconActionButton({ label, onClick, disabled = false, className = "secondary-button compact icon-only-button", type = "button" }) {
+function IconActionButton({ label, icon = "", onClick, disabled = false, className = "secondary-button compact icon-only-button", type = "button" }) {
   return (
     <button
       aria-label={label}
@@ -7405,7 +7706,7 @@ function IconActionButton({ label, onClick, disabled = false, className = "secon
       title={label}
       type={type}
     >
-      <MenuIcon name={iconForAction(label)} />
+      <MenuIcon name={icon || iconForAction(label)} />
     </button>
   );
 }
@@ -8600,13 +8901,13 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
         <div className="table-wrap website-table hosting-plan-table">
           <table>
             <thead>
-                <tr>
-                  <th>Hosting Plan</th>
-                  <th>Status</th>
-                  <th>Renewal</th>
-                  <th>Plan</th>
-                  <th>Actions</th>
-                </tr>
+              <tr>
+                <th>Hosting Plan</th>
+                <th>Status</th>
+                <th>Renewal</th>
+                <th>Plan</th>
+                <th>Actions</th>
+              </tr>
             </thead>
             <tbody>
               {accounts.map((account) => (
@@ -9480,8 +9781,8 @@ function DomainSection() {
     setDomainRegistrarForm({
       action,
       value: action === "contact"
-          ? contactDefault
-          : domainRegistrarActionDefaults[action] ?? ""
+        ? contactDefault
+        : domainRegistrarActionDefaults[action] ?? ""
     });
     setDomainActionMessage("");
     setDomainDnsPreview([]);
@@ -12820,316 +13121,316 @@ function SettingsSection() {
               <p>{settingsEditorDescription(settingsEditor)}</p>
             </div>
             <div className="function-drawer-actions">
-              <button className="secondary-button compact icon-only-button" type="button" onClick={() => setSettingsEditor("")} title="Close" aria-label="Close">
+              <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={() => setSettingsEditor("")} title="Close" aria-label="Close">
                 <MenuIcon name="x" />
               </button>
             </div>
           </header>
 
-      {settingsEditor === "profile" && <article className="panel-card profile-card settings-drawer-card">
-        <div>
-          <span className="status-pill blue">Profile</span>
-          <h2>Update Profile</h2>
-          <p>Update the account display and contact fields used across the account panel.</p>
-        </div>
-        <form className="settings-form settings-form-grid" onSubmit={saveProfile}>
-          <label>
-            Name
-            <input
-              type="text"
-              value={profileForm.name}
-              onChange={(event) => updateProfileField("name", event.target.value)}
-            />
-          </label>
-          <label>
-            Company
-            <input
-              type="text"
-              value={profileForm.companyName}
-              onChange={(event) => updateProfileField("companyName", event.target.value)}
-            />
-          </label>
-          <label>
-            VAT
-            <input
-              type="text"
-              value={profileForm.vat}
-              onChange={(event) => updateProfileField("vat", event.target.value)}
-            />
-          </label>
-          <div className="settings-form-section-title">Contact Address</div>
-          <label>
-            Country
-            <input type="text" value={profileForm.contactCountry} onChange={(event) => updateProfileField("contactCountry", event.target.value)} />
-          </label>
-          <label>
-            Province / State
-            <input type="text" value={profileForm.contactProvince} onChange={(event) => updateProfileField("contactProvince", event.target.value)} />
-          </label>
-          <label>
-            City
-            <input type="text" value={profileForm.contactCity} onChange={(event) => updateProfileField("contactCity", event.target.value)} />
-          </label>
-          <label>
-            Area
-            <input type="text" value={profileForm.contactArea} onChange={(event) => updateProfileField("contactArea", event.target.value)} />
-          </label>
-          <label className="settings-wide-field">
-            Address
-            <input type="text" value={profileForm.contactAddress} onChange={(event) => updateProfileField("contactAddress", event.target.value)} />
-          </label>
-          <label>
-            Postal Code
-            <input type="text" value={profileForm.contactPostcode} onChange={(event) => updateProfileField("contactPostcode", event.target.value)} />
-          </label>
-          <div className="settings-form-section-title with-action">
-            <span>Billing Address</span>
-            <button className="secondary-button compact" type="button" onClick={copyContactAddressToBilling}>Use Contact</button>
-          </div>
-          <label>
-            Billing Country
-            <input type="text" value={profileForm.billingCountry} onChange={(event) => updateProfileField("billingCountry", event.target.value)} />
-          </label>
-          <label>
-            Billing Province / State
-            <input type="text" value={profileForm.billingProvince} onChange={(event) => updateProfileField("billingProvince", event.target.value)} />
-          </label>
-          <label>
-            Billing City
-            <input type="text" value={profileForm.billingCity} onChange={(event) => updateProfileField("billingCity", event.target.value)} />
-          </label>
-          <label>
-            Billing Area
-            <input type="text" value={profileForm.billingArea} onChange={(event) => updateProfileField("billingArea", event.target.value)} />
-          </label>
-          <label className="settings-wide-field">
-            Billing Address
-            <input type="text" value={profileForm.billingAddress} onChange={(event) => updateProfileField("billingAddress", event.target.value)} />
-          </label>
-          <label>
-            Billing Postal Code
-            <input type="text" value={profileForm.billingPostcode} onChange={(event) => updateProfileField("billingPostcode", event.target.value)} />
-          </label>
-          <div className="settings-form-actions">
-            <button className="primary-button" type="submit" disabled={isSavingProfile || !profileForm.name.trim()}>
-              {isSavingProfile ? <LoadingIcon label="Saving profile" /> : "Save Profile"}
-            </button>
-          </div>
-        </form>
-        {profileMessage && <p className="renewal-action-message">{profileMessage}</p>}
-      </article>}
-
-      {settingsEditor === "email" && <article className="panel-card password-card settings-drawer-card">
-        <div>
-          <span className="status-pill blue">Email</span>
-          <h2>Change Email Address</h2>
-          <p>Create a verification request for a new account contact email.</p>
-        </div>
-        <form className="settings-form" onSubmit={requestEmailChange}>
-          <label>
-            New Email
-            <input
-              type="email"
-              autoComplete="email"
-              value={emailChange}
-              onChange={(event) => setEmailChange(event.target.value)}
-            />
-          </label>
-          <button className="primary-button" type="submit" disabled={isRequestingEmailChange || !emailChange.trim()}>
-            {isRequestingEmailChange ? <LoadingIcon label="Creating verification request" /> : "Create Verification Request"}
-          </button>
-        </form>
-        {emailChangeMessage && <p className="renewal-action-message">{emailChangeMessage}</p>}
-      </article>}
-
-      {settingsEditor === "mobile" && <article className="panel-card password-card settings-drawer-card">
-        <div>
-          <span className="status-pill blue">Mobile</span>
-          <h2>Verify Mobile Number</h2>
-          <p>Send a one-time PIN through the same SMS gateway used by the old account panel.</p>
-        </div>
-        <form className="settings-form" onSubmit={sendMobilePin}>
-          <label>
-            Country Code
-            <input
-              type="text"
-              value={mobileForm.countryCode}
-              onChange={(event) => updateMobileField("countryCode", event.target.value)}
-            />
-          </label>
-          <label>
-            Mobile Number
-            <input
-              type="tel"
-              value={mobileForm.mobileNumber}
-              onChange={(event) => updateMobileField("mobileNumber", event.target.value)}
-            />
-          </label>
-          <button className="primary-button compact" type="submit" disabled={isSendingMobilePin || !mobileForm.mobileNumber.trim()}>
-            {isSendingMobilePin ? <LoadingIcon label="Sending SMS PIN" /> : "Send PIN"}
-          </button>
-        </form>
-        <form className="settings-form" onSubmit={verifyMobilePin}>
-          <label>
-            PIN
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={4}
-              value={mobileForm.pin}
-              onChange={(event) => updateMobileField("pin", event.target.value.replace(/\D/g, "").slice(0, 4))}
-            />
-          </label>
-          <button className="primary-button compact" type="submit" disabled={isVerifyingMobilePin || mobileForm.pin.length !== 4}>
-            {isVerifyingMobilePin ? <LoadingIcon label="Verifying SMS PIN" /> : "Verify PIN"}
-          </button>
-        </form>
-        {mobileMessage && <p className="renewal-action-message">{mobileMessage}</p>}
-      </article>}
-
-      {settingsEditor === "twoFactor" && <article className="panel-card password-card settings-drawer-card">
-        <div>
-          <span className={twoFactor?.isEnabled ? "status-pill" : "status-pill muted"}>
-            {twoFactor?.isEnabled ? "Enabled" : "Disabled"}
-          </span>
-          <h2>Two-Factor Authentication</h2>
-          <p>Review the current authenticator status and disable 2FA when an account needs recovery.</p>
-        </div>
-        <div className="settings-action-strip">
-          {twoFactor?.isEnabled ? (
-            <button className="primary-button" type="button" onClick={disableTwoFactor} disabled={isUpdatingTwoFactor}>
-              {isUpdatingTwoFactor ? "Disabling..." : "Disable 2FA"}
-            </button>
-          ) : (
-            <button className="secondary-button compact" type="button" onClick={startTwoFactorSetup} disabled={isUpdatingTwoFactor}>
-              {isUpdatingTwoFactor ? <LoadingIcon label="Starting 2FA setup" /> : "Setup 2FA"}
-            </button>
-          )}
-          <span>{twoFactor?.hasSecret ? `Created ${formatDate(twoFactor.enterDate)}` : "No authenticator secret on file"}</span>
-        </div>
-        {twoFactorSetup && (
-          <form className="settings-form two-factor-setup-form" onSubmit={confirmTwoFactorSetup}>
-            {twoFactorSetup.qrCodeUrl && <img className="two-factor-qr" src={twoFactorSetup.qrCodeUrl} alt="2FA QR code" />}
-            <label>
-              Secret
-              <input value={twoFactorSetup.secret || ""} readOnly />
-            </label>
-            <label>
-              Six-digit code
-              <input
-                inputMode="numeric"
-                pattern="[0-9]{6}"
-                maxLength={6}
-                value={twoFactorCode}
-                onChange={(event) => setTwoFactorCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-              />
-            </label>
-            <button className="primary-button compact" type="submit" disabled={isUpdatingTwoFactor || twoFactorCode.length !== 6}>
-              {isUpdatingTwoFactor ? <LoadingIcon label="Confirming 2FA" /> : "Finish"}
-            </button>
-          </form>
-        )}
-        {twoFactorMessage && <p className="renewal-action-message">{twoFactorMessage}</p>}
-      </article>}
-
-      {settingsEditor === "password" && <article className="panel-card password-card settings-drawer-card">
-        <div>
-          <span className="status-pill blue">Password</span>
-          <h2>Change Account Password</h2>
-          <p>This updates the main account login password and can sync selected hosting passwords like the old control panel.</p>
-        </div>
-        <form className="settings-form password-change-form" onSubmit={changePassword}>
-          <div className="password-change-fields">
-            <label>
-              Current Password
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={passwordForm.currentPassword}
-                onChange={(event) => updatePasswordField("currentPassword", event.target.value)}
-              />
-            </label>
-            <label>
-              New Password
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={passwordForm.newPassword}
-                onChange={(event) => updatePasswordField("newPassword", event.target.value)}
-              />
-            </label>
-            <label>
-              Confirm New Password
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={passwordForm.confirmPassword}
-                onChange={(event) => updatePasswordField("confirmPassword", event.target.value)}
-              />
-            </label>
-            <button className="primary-button" type="submit" disabled={isChangingPassword}>
-              {isChangingPassword ? "Updating..." : "Update Password"}
-            </button>
-          </div>
-          <div className="password-sync-panel">
-            <div className="password-sync-heading">
-              <span>Password Sync To (Suggested):</span>
-              {activeHostingAccounts.length > 0 && (
-                <label className="checkbox-row compact">
-                  <input
-                    type="checkbox"
-                    checked={isEveryPasswordSyncTargetChecked}
-                    onChange={(event) => toggleAllPasswordSyncTargets(event.target.checked)}
-                  />
-                  Check All
-                </label>
-              )}
+          {settingsEditor === "profile" && <article className="panel-card profile-card settings-drawer-card">
+            <div>
+              <span className="status-pill blue">Profile</span>
+              <h2>Update Profile</h2>
+              <p>Update the account display and contact fields used across the account panel.</p>
             </div>
-            {activeHostingAccounts.length > 0 ? (
-              <div className="password-sync-list">
-                {activeHostingAccounts.map((account) => {
-                const isLinux = (account.webHostType || "").includes("LX");
-                return (
-                  <div className="password-sync-group" key={account.cpId}>
-                    <label className="checkbox-row">
+            <form className="settings-form settings-form-grid" onSubmit={saveProfile}>
+              <label>
+                Name
+                <input
+                  type="text"
+                  value={profileForm.name}
+                  onChange={(event) => updateProfileField("name", event.target.value)}
+                />
+              </label>
+              <label>
+                Company
+                <input
+                  type="text"
+                  value={profileForm.companyName}
+                  onChange={(event) => updateProfileField("companyName", event.target.value)}
+                />
+              </label>
+              <label>
+                VAT
+                <input
+                  type="text"
+                  value={profileForm.vat}
+                  onChange={(event) => updateProfileField("vat", event.target.value)}
+                />
+              </label>
+              <div className="settings-form-section-title">Contact Address</div>
+              <label>
+                Country
+                <input type="text" value={profileForm.contactCountry} onChange={(event) => updateProfileField("contactCountry", event.target.value)} />
+              </label>
+              <label>
+                Province / State
+                <input type="text" value={profileForm.contactProvince} onChange={(event) => updateProfileField("contactProvince", event.target.value)} />
+              </label>
+              <label>
+                City
+                <input type="text" value={profileForm.contactCity} onChange={(event) => updateProfileField("contactCity", event.target.value)} />
+              </label>
+              <label>
+                Area
+                <input type="text" value={profileForm.contactArea} onChange={(event) => updateProfileField("contactArea", event.target.value)} />
+              </label>
+              <label className="settings-wide-field">
+                Address
+                <input type="text" value={profileForm.contactAddress} onChange={(event) => updateProfileField("contactAddress", event.target.value)} />
+              </label>
+              <label>
+                Postal Code
+                <input type="text" value={profileForm.contactPostcode} onChange={(event) => updateProfileField("contactPostcode", event.target.value)} />
+              </label>
+              <div className="settings-form-section-title with-action">
+                <span>Billing Address</span>
+                <button className="secondary-button compact" type="button" onClick={copyContactAddressToBilling}>Use Contact</button>
+              </div>
+              <label>
+                Billing Country
+                <input type="text" value={profileForm.billingCountry} onChange={(event) => updateProfileField("billingCountry", event.target.value)} />
+              </label>
+              <label>
+                Billing Province / State
+                <input type="text" value={profileForm.billingProvince} onChange={(event) => updateProfileField("billingProvince", event.target.value)} />
+              </label>
+              <label>
+                Billing City
+                <input type="text" value={profileForm.billingCity} onChange={(event) => updateProfileField("billingCity", event.target.value)} />
+              </label>
+              <label>
+                Billing Area
+                <input type="text" value={profileForm.billingArea} onChange={(event) => updateProfileField("billingArea", event.target.value)} />
+              </label>
+              <label className="settings-wide-field">
+                Billing Address
+                <input type="text" value={profileForm.billingAddress} onChange={(event) => updateProfileField("billingAddress", event.target.value)} />
+              </label>
+              <label>
+                Billing Postal Code
+                <input type="text" value={profileForm.billingPostcode} onChange={(event) => updateProfileField("billingPostcode", event.target.value)} />
+              </label>
+              <div className="settings-form-actions">
+                <button className="primary-button" type="submit" disabled={isSavingProfile || !profileForm.name.trim()}>
+                  {isSavingProfile ? <LoadingIcon label="Saving profile" /> : "Save Profile"}
+                </button>
+              </div>
+            </form>
+            {profileMessage && <p className="renewal-action-message">{profileMessage}</p>}
+          </article>}
+
+          {settingsEditor === "email" && <article className="panel-card password-card settings-drawer-card">
+            <div>
+              <span className="status-pill blue">Email</span>
+              <h2>Change Email Address</h2>
+              <p>Create a verification request for a new account contact email.</p>
+            </div>
+            <form className="settings-form" onSubmit={requestEmailChange}>
+              <label>
+                New Email
+                <input
+                  type="email"
+                  autoComplete="email"
+                  value={emailChange}
+                  onChange={(event) => setEmailChange(event.target.value)}
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={isRequestingEmailChange || !emailChange.trim()}>
+                {isRequestingEmailChange ? <LoadingIcon label="Creating verification request" /> : "Create Verification Request"}
+              </button>
+            </form>
+            {emailChangeMessage && <p className="renewal-action-message">{emailChangeMessage}</p>}
+          </article>}
+
+          {settingsEditor === "mobile" && <article className="panel-card password-card settings-drawer-card">
+            <div>
+              <span className="status-pill blue">Mobile</span>
+              <h2>Verify Mobile Number</h2>
+              <p>Send a one-time PIN through the same SMS gateway used by the old account panel.</p>
+            </div>
+            <form className="settings-form" onSubmit={sendMobilePin}>
+              <label>
+                Country Code
+                <input
+                  type="text"
+                  value={mobileForm.countryCode}
+                  onChange={(event) => updateMobileField("countryCode", event.target.value)}
+                />
+              </label>
+              <label>
+                Mobile Number
+                <input
+                  type="tel"
+                  value={mobileForm.mobileNumber}
+                  onChange={(event) => updateMobileField("mobileNumber", event.target.value)}
+                />
+              </label>
+              <button className="primary-button compact" type="submit" disabled={isSendingMobilePin || !mobileForm.mobileNumber.trim()}>
+                {isSendingMobilePin ? <LoadingIcon label="Sending SMS PIN" /> : "Send PIN"}
+              </button>
+            </form>
+            <form className="settings-form" onSubmit={verifyMobilePin}>
+              <label>
+                PIN
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={mobileForm.pin}
+                  onChange={(event) => updateMobileField("pin", event.target.value.replace(/\D/g, "").slice(0, 4))}
+                />
+              </label>
+              <button className="primary-button compact" type="submit" disabled={isVerifyingMobilePin || mobileForm.pin.length !== 4}>
+                {isVerifyingMobilePin ? <LoadingIcon label="Verifying SMS PIN" /> : "Verify PIN"}
+              </button>
+            </form>
+            {mobileMessage && <p className="renewal-action-message">{mobileMessage}</p>}
+          </article>}
+
+          {settingsEditor === "twoFactor" && <article className="panel-card password-card settings-drawer-card">
+            <div>
+              <span className={twoFactor?.isEnabled ? "status-pill" : "status-pill muted"}>
+                {twoFactor?.isEnabled ? "Enabled" : "Disabled"}
+              </span>
+              <h2>Two-Factor Authentication</h2>
+              <p>Review the current authenticator status and disable 2FA when an account needs recovery.</p>
+            </div>
+            <div className="settings-action-strip">
+              {twoFactor?.isEnabled ? (
+                <button className="primary-button" type="button" onClick={disableTwoFactor} disabled={isUpdatingTwoFactor}>
+                  {isUpdatingTwoFactor ? "Disabling..." : "Disable 2FA"}
+                </button>
+              ) : (
+                <button className="secondary-button compact" type="button" onClick={startTwoFactorSetup} disabled={isUpdatingTwoFactor}>
+                  {isUpdatingTwoFactor ? <LoadingIcon label="Starting 2FA setup" /> : "Setup 2FA"}
+                </button>
+              )}
+              <span>{twoFactor?.hasSecret ? `Created ${formatDate(twoFactor.enterDate)}` : "No authenticator secret on file"}</span>
+            </div>
+            {twoFactorSetup && (
+              <form className="settings-form two-factor-setup-form" onSubmit={confirmTwoFactorSetup}>
+                {twoFactorSetup.qrCodeUrl && <img className="two-factor-qr" src={twoFactorSetup.qrCodeUrl} alt="2FA QR code" />}
+                <label>
+                  Secret
+                  <input value={twoFactorSetup.secret || ""} readOnly />
+                </label>
+                <label>
+                  Six-digit code
+                  <input
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    value={twoFactorCode}
+                    onChange={(event) => setTwoFactorCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                  />
+                </label>
+                <button className="primary-button compact" type="submit" disabled={isUpdatingTwoFactor || twoFactorCode.length !== 6}>
+                  {isUpdatingTwoFactor ? <LoadingIcon label="Confirming 2FA" /> : "Finish"}
+                </button>
+              </form>
+            )}
+            {twoFactorMessage && <p className="renewal-action-message">{twoFactorMessage}</p>}
+          </article>}
+
+          {settingsEditor === "password" && <article className="panel-card password-card settings-drawer-card">
+            <div>
+              <span className="status-pill blue">Password</span>
+              <h2>Change Account Password</h2>
+              <p>This updates the main account login password and can sync selected hosting passwords like the old control panel.</p>
+            </div>
+            <form className="settings-form password-change-form" onSubmit={changePassword}>
+              <div className="password-change-fields">
+                <label>
+                  Current Password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={passwordForm.currentPassword}
+                    onChange={(event) => updatePasswordField("currentPassword", event.target.value)}
+                  />
+                </label>
+                <label>
+                  New Password
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={passwordForm.newPassword}
+                    onChange={(event) => updatePasswordField("newPassword", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Confirm New Password
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={passwordForm.confirmPassword}
+                    onChange={(event) => updatePasswordField("confirmPassword", event.target.value)}
+                  />
+                </label>
+                <button className="primary-button" type="submit" disabled={isChangingPassword}>
+                  {isChangingPassword ? "Updating..." : "Update Password"}
+                </button>
+              </div>
+              <div className="password-sync-panel">
+                <div className="password-sync-heading">
+                  <span>Password Sync To (Suggested):</span>
+                  {activeHostingAccounts.length > 0 && (
+                    <label className="checkbox-row compact">
                       <input
                         type="checkbox"
-                        checked={passwordSyncTargets.includes(`cp_${account.cpId}`)}
-                        onChange={(event) => togglePasswordSyncTarget(`cp_${account.cpId}`, event.target.checked)}
+                        checked={isEveryPasswordSyncTargetChecked}
+                        onChange={(event) => toggleAllPasswordSyncTargets(event.target.checked)}
                       />
-                      <span>"{account.cpLogin}" account password</span>
+                      Check All
                     </label>
-                    {!isLinux && (
-                      <>
-                        <label className="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={passwordSyncTargets.includes(`ftp_${account.cpId}`)}
-                            onChange={(event) => togglePasswordSyncTarget(`ftp_${account.cpId}`, event.target.checked)}
-                          />
-                          <span>"{account.cpLogin}" FTP password</span>
-                        </label>
-                        <label className="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={passwordSyncTargets.includes(`iis_${account.cpId}`)}
-                            onChange={(event) => togglePasswordSyncTarget(`iis_${account.cpId}`, event.target.checked)}
-                          />
-                          <span>"{account.cpLogin}" WebDeploy / Remote IIS password</span>
-                        </label>
-                      </>
-                    )}
+                  )}
+                </div>
+                {activeHostingAccounts.length > 0 ? (
+                  <div className="password-sync-list">
+                    {activeHostingAccounts.map((account) => {
+                      const isLinux = (account.webHostType || "").includes("LX");
+                      return (
+                        <div className="password-sync-group" key={account.cpId}>
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={passwordSyncTargets.includes(`cp_${account.cpId}`)}
+                              onChange={(event) => togglePasswordSyncTarget(`cp_${account.cpId}`, event.target.checked)}
+                            />
+                            <span>"{account.cpLogin}" account password</span>
+                          </label>
+                          {!isLinux && (
+                            <>
+                              <label className="checkbox-row">
+                                <input
+                                  type="checkbox"
+                                  checked={passwordSyncTargets.includes(`ftp_${account.cpId}`)}
+                                  onChange={(event) => togglePasswordSyncTarget(`ftp_${account.cpId}`, event.target.checked)}
+                                />
+                                <span>"{account.cpLogin}" FTP password</span>
+                              </label>
+                              <label className="checkbox-row">
+                                <input
+                                  type="checkbox"
+                                  checked={passwordSyncTargets.includes(`iis_${account.cpId}`)}
+                                  onChange={(event) => togglePasswordSyncTarget(`iis_${account.cpId}`, event.target.checked)}
+                                />
+                                <span>"{account.cpLogin}" WebDeploy / Remote IIS password</span>
+                              </label>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                ) : (
+                  <p className="settings-helper-text">No active hosting plans were found for password sync.</p>
+                )}
               </div>
-            ) : (
-              <p className="settings-helper-text">No active hosting plans were found for password sync.</p>
-            )}
-          </div>
-        </form>
-        {passwordMessage && <p className="renewal-action-message">{passwordMessage}</p>}
-      </article>}
+            </form>
+            {passwordMessage && <p className="renewal-action-message">{passwordMessage}</p>}
+          </article>}
         </aside>
       </div>}
       <KnowledgeBaseCard title="Security App Guides" articles={securityGuideArticles} badge="2FA Guides" />
@@ -13465,22 +13766,10 @@ function AffiliateGettingStarted({ affiliate }) {
   const banners = buildAffiliateBanners(referralCode, brandDomain);
   const [activeBannerSize, setActiveBannerSize] = useState(banners[0]?.size ?? "728X90");
   const [copiedBanner, setCopiedBanner] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteName, setInviteName] = useState("");
   const [inviteCopied, setInviteCopied] = useState("");
   const activeBanner = banners.find((banner) => banner.size === activeBannerSize) ?? banners[0];
   const referralUrl = `https://www.${brandDomain}/index?r=${encodeURIComponent(referralCode)}`;
   const referralIdUrl = referralCustomerId ? `https://www.${brandDomain}/index?r=${encodeURIComponent(referralCustomerId)}` : "";
-  const inviteSubject = `Try ${brandDomain} hosting`;
-  const inviteBody = [
-    `Hi${inviteName.trim() ? ` ${inviteName.trim()}` : ""},`,
-    "",
-    `I wanted to share ${brandDomain} with you. They offer Windows ASP.NET hosting, domains, VPN services, SSL certificates, and add-ons.`,
-    "",
-    `You can start here: ${referralUrl}`,
-    "",
-    "Thanks!"
-  ].join("\n");
 
   async function copyActiveBanner() {
     if (await writeTextToClipboard(activeBanner.code)) {
@@ -13489,17 +13778,6 @@ function AffiliateGettingStarted({ affiliate }) {
     } else {
       setCopiedBanner("failed");
       window.setTimeout(() => setCopiedBanner(""), 1600);
-    }
-  }
-
-  async function copyInviteDraft() {
-    const draft = `To: ${inviteEmail || "customer@example.com"}\nSubject: ${inviteSubject}\n\n${inviteBody}`;
-    if (await writeTextToClipboard(draft)) {
-      setInviteCopied("draft");
-      window.setTimeout(() => setInviteCopied(""), 1600);
-    } else {
-      setInviteCopied("failed");
-      window.setTimeout(() => setInviteCopied(""), 1600);
     }
   }
 
@@ -13547,23 +13825,6 @@ function AffiliateGettingStarted({ affiliate }) {
           <p className="affiliate-note">
             <strong>Note:</strong> Once your customer visits our site through the URL above, your referral ID will be recorded in their browser's cookie. Anytime your customer decides to signup, you'll get credited.
           </p>
-          <div className="affiliate-invite-card">
-            <h4>Invite Customer</h4>
-            <div className="affiliate-invite-fields">
-              <label>
-                Customer Name
-                <input type="text" value={inviteName} onChange={(event) => setInviteName(event.target.value)} />
-              </label>
-              <label>
-                Customer Email
-                <input type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} />
-              </label>
-            </div>
-            <textarea readOnly value={`Subject: ${inviteSubject}\n\n${inviteBody}`} aria-label="Affiliate invitation email draft" />
-            <button className="secondary-button compact" type="button" onClick={copyInviteDraft}>
-              {inviteCopied === "draft" ? "Copied" : inviteCopied === "failed" ? "Copy Failed" : "Copy Invite Draft"}
-            </button>
-          </div>
           <p>You can also use the following banners we provide:</p>
           <div className="banner-tabs" aria-label="Banner sizes">
             {banners.map((banner) => (
