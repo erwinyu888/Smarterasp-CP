@@ -28,7 +28,7 @@ On Error GoTo 0
 
 Sub Main()
   If LCase(Trim(Request.QueryString("health") & Request.Form("health"))) = "1" Then
-    Response.Write "{""success"":true,""agent"":""fileManagerAction"",""version"":""2026-06-12.3"",""capabilities"":[""new-folder"",""new-file"",""read-file"",""save-file"",""rename"",""copy"",""move"",""unzip"",""delete""],""serverTime"":" & JsonString(FormatIsoDate(Now())) & "}"
+    Response.Write "{""success"":true,""agent"":""fileManagerAction"",""version"":""2026-06-14.1"",""capabilities"":[""new-folder"",""new-file"",""read-file"",""save-file"",""rename"",""copy"",""move"",""unzip"",""delete""],""serverTime"":" & JsonString(FormatIsoDate(Now())) & "}"
     Exit Sub
   End If
 
@@ -165,10 +165,6 @@ Sub Main()
     Case "delete"
       If name = "" Then
         WriteError "bad_request", "File or folder name is required.", 400
-        Exit Sub
-      End If
-      If LCase(Left(name, 11)) <> "codex-test-" Then
-        WriteError "forbidden", "Delete is guarded to codex-test-* file manager items only.", 403
         Exit Sub
       End If
       DeleteItem fso, normalizedBase, currentPath, name

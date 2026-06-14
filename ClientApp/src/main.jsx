@@ -68,12 +68,9 @@ const controlPanelSections = [
 ];
 
 const websiteActions = [
-  { label: "Error Logs", icon: "logs" },
   { label: "SSL", icon: "ssl" },
   { label: "CDN", icon: "cdn" },
   { label: "File Manager", icon: "folder" },
-  { label: "App Pool", icon: "server" },
-  { label: "Runtime Settings", icon: "advance" },
   { label: "More Functions", icon: "more" }
 ];
 
@@ -107,6 +104,7 @@ const actionIconByLabel = {
   "Lock Site": "lock",
   "Manage Mailboxes": "mail",
   "New Folder": "new-folder",
+  "New File": "new-file",
   "New Site": "website-plus",
   Open: "open",
   Permissions: "permissions",
@@ -149,7 +147,8 @@ const actionIconByLabel = {
   "Edit Validation Method": "edit",
   "Resend Approver Email": "mail",
   "View Free SSL Log": "logs",
-  "Delete SSL": "trash"
+  "Delete SSL": "trash",
+  "Work Queue": "work-queue"
 };
 
 function iconForAction(label) {
@@ -168,7 +167,7 @@ const websiteMoreFunctionColumns = [
       { label: "Node.js App", icon: "node" },
       { label: "PHP Version", icon: "php" },
       { label: "PHP Settings", icon: "checklist" },
-      { label: "Detail Error", icon: "warning" },
+      { label: "Detail Error Message Display", icon: "warning" },
       { label: "Site On/Off", icon: "power" },
       { label: "Delete Website", icon: "trash" }
     ]
@@ -218,6 +217,7 @@ websiteMoreFunctionKeyByLabel["Create .Net App"] = "create-net-app";
 websiteMoreFunctionKeyByLabel["Create Virtual Dir"] = "virtual-dir";
 websiteMoreFunctionKeyByLabel["ScriptMap"] = "script-map";
 websiteMoreFunctionKeyByLabel["Application Pool 🔥"] = "application-pool";
+websiteMoreFunctionKeyByLabel["Detail Error Message Display"] = "detail-error";
 
 const websites = [
   {
@@ -418,7 +418,7 @@ function App() {
         if (response.ok && result?.success) {
           setCurrentUser(result.user);
           if (result.user?.isControlPanelLogin && (route === "panel" || route === "login")) {
-            window.history.replaceState({}, "", "/panel_cp");
+            window.history.replaceState({}, "", savedPanelPath("/panel_cp", "hosting-panel-section"));
             setRoute("panel_cp");
           }
         } else if (!isPublicRoute(route)) {
@@ -452,7 +452,7 @@ function App() {
   useEffect(() => {
     if (!isAuthReady || !currentUser?.isControlPanelLogin) return;
     if (route === "panel" || route === "login") {
-      window.history.replaceState({}, "", "/panel_cp");
+      window.history.replaceState({}, "", savedPanelPath("/panel_cp", "hosting-panel-section"));
       setRoute("panel_cp");
     }
   }, [currentUser, isAuthReady, route]);
@@ -460,7 +460,7 @@ function App() {
   const goToPanel = (event) => {
     event?.preventDefault();
     if (currentUser?.isControlPanelLogin) {
-      window.history.pushState({}, "", "/panel_cp");
+      window.history.pushState({}, "", savedPanelPath("/panel_cp", "hosting-panel-section"));
       setRoute("panel_cp");
       return;
     }
@@ -471,7 +471,7 @@ function App() {
 
   const goToControlPanel = (event) => {
     event?.preventDefault();
-    window.history.pushState({}, "", "/panel_cp");
+    window.history.pushState({}, "", savedPanelPath("/panel_cp", "hosting-panel-section"));
     setRoute("panel_cp");
   };
 
@@ -492,7 +492,7 @@ function App() {
     setTwoFactorLogin("");
     setCurrentUser(user);
     if (user?.isControlPanelLogin) {
-      window.history.pushState({}, "", "/panel_cp");
+      window.history.pushState({}, "", savedPanelPath("/panel_cp", "hosting-panel-section"));
       setRoute("panel_cp");
       return;
     }
@@ -581,6 +581,30 @@ function appRouteFromPath(pathname) {
 
 function isPublicRoute(route) {
   return ["login", "checkout", "invoice", "email-verify", "password-reset-request", "password-reset-confirm", "two-factor"].includes(route);
+}
+
+function activeSectionFromUrl(allowedSections, fallback, storageKey = "") {
+  const section = new URLSearchParams(window.location.search).get("section");
+  if (allowedSections.includes(section)) return section;
+  if (storageKey) {
+    const savedSection = localStorage.getItem(storageKey);
+    if (allowedSections.includes(savedSection)) return savedSection;
+  }
+  return fallback;
+}
+
+function rememberSection(path, section, storageKey) {
+  if (!section) return;
+  if (storageKey) localStorage.setItem(storageKey, section);
+  const url = new URL(window.location.href);
+  if (url.pathname !== path) return;
+  url.searchParams.set("section", section);
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function savedPanelPath(path, storageKey) {
+  const section = localStorage.getItem(storageKey);
+  return section ? `${path}?section=${encodeURIComponent(section)}` : path;
 }
 
 function InvoicePage({ theme, onBackToPanel }) {
@@ -1412,8 +1436,8 @@ function Login({ onLogin, onTwoFactorRequired, theme, onToggleTheme, onForgotPas
 
 function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme }) {
   const initialSection = useMemo(() => {
-    const section = new URLSearchParams(window.location.search).get("section");
-    return sections.some((item) => item.id === section) || section === "new-order" || section === "helpdesk" ? section : "hosting";
+    const allowedSections = [...sections.map((item) => item.id), "new-order", "helpdesk"];
+    return activeSectionFromUrl(allowedSections, "hosting", "account-panel-section");
   }, []);
   const [activeSection, setActiveSection] = useState(initialSection);
   const [dashboard, setDashboard] = useState(null);
@@ -1526,6 +1550,7 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
+    rememberSection("/panel", activeSection, "account-panel-section");
   }, [activeSection]);
 
   const accountFunds = accountStats.balance === null ? "$0.00" : formatUsdFull(accountStats.balance);
@@ -1620,7 +1645,7 @@ function Panel({ theme, currentUser, onLogout, onManageHosting, onToggleTheme })
       <main className="workspace">
         <div className="workspace-header">
           <div>
-            <p className="kicker">Your Account Panel</p>
+            <p className="kicker">Account Panel</p>
             <div className="workspace-title-row">
               <h1>{activeTitle}</h1>
               {activeSection === "affiliate" ? <span className="status-pill blue title-badge">Pays 60%</span> : null}
@@ -1717,7 +1742,11 @@ async function writeTextToClipboard(text) {
 }
 
 function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onToggleTheme }) {
-  const [activeSection, setActiveSection] = useState("dashboard");
+  const initialSection = useMemo(() => {
+    const allowedSections = [...controlPanelSections.map((section) => section.id), "helpdesk"];
+    return activeSectionFromUrl(allowedSections, "dashboard", "hosting-panel-section");
+  }, []);
+  const [activeSection, setActiveSection] = useState(initialSection);
   const [hostingPlanOptions, setHostingPlanOptions] = useState([]);
   const [selectedCpId, setSelectedCpId] = useState(0);
   const [isHostingPlanMenuOpen, setIsHostingPlanMenuOpen] = useState(false);
@@ -1725,6 +1754,7 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
   const [sectionCounts, setSectionCounts] = useState({ websites: null, databases: null });
   const [sidebarBrandName, setSidebarBrandName] = useState("SMARTERASP.NET");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [fileManagerContext, setFileManagerContext] = useState({ path: "", fromWebsites: false });
   const activeTitle = useMemo(
     () => activeSection === "helpdesk"
       ? "24/7 Helpdesk"
@@ -1780,7 +1810,13 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
+    rememberSection("/panel_cp", activeSection, "hosting-panel-section");
   }, [activeSection, selectedCpId]);
+
+  function openFileManagerAtPath(path) {
+    setFileManagerContext({ path: path || "", fromWebsites: true });
+    setActiveSection("files");
+  }
 
   useEffect(() => {
     if (!selectedCpId) {
@@ -1896,7 +1932,12 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
               className={section.id === activeSection ? "nav-item active" : "nav-item"}
               key={section.id}
               type="button"
-              onClick={() => setActiveSection(section.id)}
+              onClick={() => {
+                if (section.id === "files") {
+                  setFileManagerContext({ path: "", fromWebsites: false });
+                }
+                setActiveSection(section.id);
+              }}
             >
               <span className="nav-label">
                 <MenuIcon name={section.icon} />
@@ -1940,7 +1981,7 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
       <main className="workspace">
         <div className="workspace-header">
           <div>
-            <p className="kicker">Your hosting control panel</p>
+            <p className="kicker">Hosting Control Panel</p>
             <h1>{activeTitle}</h1>
           </div>
           <div className="workspace-actions">
@@ -1950,10 +1991,17 @@ function HostingControlPanel({ theme, currentUser, onBackToPanel, onLogout, onTo
           </div>
         </div>
         {activeSection === "dashboard" && <HostingDashboard cpId={selectedCpId} />}
-        {activeSection === "websites" && <WebsitesSection cpId={selectedCpId} />}
+        {activeSection === "websites" && <WebsitesSection cpId={selectedCpId} currentUser={currentUser} onChangeSection={setActiveSection} onOpenFileManager={openFileManagerAtPath} />}
         {activeSection === "databases" && <DatabasesSection cpId={selectedCpId} />}
         {activeSection === "emails" && <EmailsSection cpId={selectedCpId} />}
-        {activeSection === "files" && <FilesSection cpId={selectedCpId} />}
+        {activeSection === "files" && (
+          <FilesSection
+            cpId={selectedCpId}
+            initialPath={fileManagerContext.path}
+            showBackToWebsites={fileManagerContext.fromWebsites}
+            onBackToWebsites={() => setActiveSection("websites")}
+          />
+        )}
         {activeSection === "apps" && <AppsSection cpId={selectedCpId} />}
         {activeSection === "ftp" && <FtpSection cpId={selectedCpId} />}
         {activeSection === "dns" && <DomainServicesSection mode="dns" cpId={selectedCpId} />}
@@ -2027,7 +2075,11 @@ function ViewModeToggle({ viewMode, onChange, label }) {
 
 function isTemporaryHostingDomain(value) {
   const domain = String(value || "").toLowerCase();
-  return domain.endsWith(".etempurl.com") || domain.includes("-site") && domain.endsWith(".etempurl.com") || domain.endsWith(".site4now.net");
+  return domain.endsWith("tempurl.com") || domain.endsWith(".site4now.net") || domain.endsWith(".mysitepanel.net");
+}
+
+function shouldShowTemporaryUrlWaitTip(message) {
+  return /Website created with temporary URL:/i.test(String(message || ""));
 }
 
 async function createPanelTestActivity(cpId, payload) {
@@ -2043,6 +2095,18 @@ async function createHostingWorkqueue(cpId, payload) {
   const result = await response.json().catch(() => null);
   if (!response.ok || !result?.success) {
     throw new Error(result?.message ?? "Unable to queue worker job.");
+  }
+
+  return result;
+}
+
+async function deleteHostingWorkqueue(cpId, id) {
+  const response = await fetch(hostingApiUrl(`/api/hosting/workqueue/${id}`, cpId), {
+    method: "DELETE"
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.message ?? "Unable to delete queue item.");
   }
 
   return result;
@@ -2082,6 +2146,7 @@ function HostingDashboard({ cpId }) {
   const [poolDrawer, setPoolDrawer] = useState(null);
   const [poolRuntime, setPoolRuntime] = useState(null);
   const [poolMessage, setPoolMessage] = useState("");
+  const [poolActionDetails, setPoolActionDetails] = useState(null);
   const [isLoadingPools, setIsLoadingPools] = useState(false);
   const [isRunningPoolAction, setIsRunningPoolAction] = useState(false);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
@@ -2097,12 +2162,16 @@ function HostingDashboard({ cpId }) {
   const dnsServers = dashboard?.dnsServers?.length ? dashboard.dnsServers : ["NS1.SITE4NOW.NET", "NS2.SITE4NOW.NET", "NS3.SITE4NOW.NET"];
   const migrations = securityDashboard?.migrations ?? [];
   const visibleMigrations = migrations.slice(0, 3);
+  const healthSummary = dashboard?.healthSummary ?? {};
+  const healthIssueCount = healthSummary.totalPast7Days ?? serverLogs.length;
+  const communicationErrorCount = healthSummary.communicationErrorsPast7Days ?? 0;
+  const recycleCount = healthSummary.recyclesPast7Days ?? 0;
 
-  async function loadHostingDashboard() {
+  async function loadHostingDashboard(options = {}) {
     setIsLoadingDashboard(true);
     setDashboardError("");
     try {
-      const dashboardResponse = await fetch(hostingApiUrl("/api/hosting/dashboard", cpId));
+      const dashboardResponse = await fetch(hostingApiUrl(`/api/hosting/dashboard${options.forceRefresh ? "?refresh=1" : ""}`, cpId));
       const result = await dashboardResponse.json().catch(() => null);
       if (!dashboardResponse.ok || !result?.success) {
         setDashboardError(result?.message ?? "Unable to load hosting dashboard.");
@@ -2132,6 +2201,7 @@ function HostingDashboard({ cpId }) {
   async function loadPoolRuntime() {
     setIsLoadingPools(true);
     setPoolMessage("");
+    setPoolActionDetails(null);
     try {
       const response = await fetch(hostingApiUrl("/api/hosting/runtime", cpId));
       const result = await response.json().catch(() => null);
@@ -2151,6 +2221,7 @@ function HostingDashboard({ cpId }) {
   function openPoolDrawer(mode) {
     setPoolDrawer(mode);
     setPoolMessage("");
+    setPoolActionDetails(null);
     if (mode !== "ram") {
       loadPoolRuntime();
     }
@@ -2159,6 +2230,7 @@ function HostingDashboard({ cpId }) {
   async function runPoolAction(action, pool = null, fields = {}) {
     setIsRunningPoolAction(true);
     setPoolMessage("");
+    setPoolActionDetails(null);
     try {
       const response = await fetch("/api/hosting/pools/action", {
         method: "POST",
@@ -2172,8 +2244,13 @@ function HostingDashboard({ cpId }) {
       });
       const result = await response.json().catch(() => null);
       setPoolMessage(result?.message ?? (response.ok ? "Application Pool action completed." : "Application Pool action failed."));
+      setPoolActionDetails(result?.details ?? null);
       if (response.ok && result?.success) {
-        await Promise.all([loadPoolRuntime(), loadHostingDashboard()]);
+        const refreshTasks = [loadHostingDashboard({ forceRefresh: true })];
+        if (pool) {
+          refreshTasks.push(loadPoolRuntime());
+        }
+        await Promise.all(refreshTasks);
       }
     } catch (error) {
       setPoolMessage(error.message);
@@ -2195,15 +2272,13 @@ function HostingDashboard({ cpId }) {
         <div>
           <span className="status-pill blue">{isLoadingDashboard ? <LoadingIcon label="Loading dashboard" /> : dashboard?.status ?? "Live CP"}</span>
           <h2>Hosting Overview</h2>
-          <p>{dashboard?.primaryDomain || "Primary hosting context"}</p>
+          {dashboard?.primaryDomain && <p>{dashboard.primaryDomain}</p>}
         </div>
         <dl className="cp-context-meta">
           <div><dt>Plan Type</dt><dd>{dashboard?.webHostType || "ASP.NET hosting"}</dd></div>
           <div><dt>Server</dt><dd>{dashboard?.serverId || "winhost"}</dd></div>
-          <div><dt>Websites</dt><dd>{dashboard?.siteCount ?? 0}</dd></div>
-          <div><dt>Domains</dt><dd>{dashboard?.domainCount ?? 0}</dd></div>
         </dl>
-        <RefreshButton onClick={loadHostingDashboard} />
+        <RefreshButton onClick={() => loadHostingDashboard({ forceRefresh: true })} />
       </article>
       {dashboardError && (
         <div className="panel-card dashboard-error-panel">
@@ -2237,18 +2312,40 @@ function HostingDashboard({ cpId }) {
         </article>
       )}
       <article className="panel-card ram-card">
-        <div className="ram-meter" style={{ "--ram-percent": `${ramPercentage}%` }} aria-label={`RAM usage ${ramPercentage} percent`}>
-          <span>{ramPercentage}%</span>
-          <small>{ramUsed} MB used</small>
+        <div className="ram-usage-pane">
+          <div className="ram-meter" style={{ "--ram-percent": `${ramPercentage}%` }} aria-label={`RAM usage ${ramPercentage} percent`}>
+            <span>{ramPercentage}%</span>
+            <small>{ramUsed} MB used</small>
+          </div>
+          <div className="ram-copy">
+            <span className="status-pill blue">RAM Usage</span>
+            <h2>Ram Usage</h2>
+            <p>Memory usage for this hosting plan. (Click refresh to update)</p>
+            <div className="ram-actions">
+              <button className="secondary-button compact" type="button" disabled={isRunningPoolAction} onClick={() => runPoolAction("recycle")}>
+                {isRunningPoolAction ? <LoadingIcon label="Recycling pool" /> : "Recycle Pool"}
+              </button>
+              <button className="secondary-button compact" type="button" onClick={() => openPoolDrawer("manage")}>Manage Pool</button>
+              <button className="primary-button compact" type="button" onClick={() => openPoolDrawer("ram")}>+ Ram</button>
+            </div>
+            {poolMessage && <p className="ram-action-result">{poolMessage}</p>}
+          </div>
         </div>
-        <div className="ram-copy">
-          <span className="status-pill blue">RAM Usage</span>
-          <h2>Ram Usage</h2>
-          <p>Current memory usage for this hosting plan.</p>
-          <div className="ram-actions">
-            <button className="secondary-button compact" type="button" onClick={() => openPoolDrawer("recycle")}>Recycle Pool</button>
-            <button className="secondary-button compact" type="button" onClick={() => openPoolDrawer("manage")}>Manage Pool</button>
-            <button className="primary-button compact" type="button" onClick={() => openPoolDrawer("ram")}>+ Ram</button>
+        <div className="health-summary-pane">
+          <span className={healthIssueCount > 0 ? "status-pill warning" : "status-pill blue"}>Past 7 Days</span>
+          <h2>{healthIssueCount} Health Issue{healthIssueCount === 1 ? "" : "s"}</h2>
+          {(healthIssueCount > 1 || recycleCount > 1) && (
+            <p className="health-ram-recommendation">Recommend Adding More Ram</p>
+          )}
+          <div className="health-counter-grid">
+            <div>
+              <strong>{communicationErrorCount}</strong>
+              <span>Communication Error{communicationErrorCount === 1 ? "" : "s"}</span>
+            </div>
+            <div>
+              <strong>{recycleCount}</strong>
+              <span>Recycle{recycleCount === 1 ? "" : "s"}</span>
+            </div>
           </div>
         </div>
       </article>
@@ -2287,14 +2384,21 @@ function HostingDashboard({ cpId }) {
         </dl>
       </article>
 
-      <div className="usage-grid">
-        {usageStats.map(([value, label]) => (
-          <article className="panel-card usage-stat" key={label}>
-            <strong>{value}</strong>
-            <span>{label}</span>
-          </article>
-        ))}
-      </div>
+      {!!usageStats.length && (
+        <div className="usage-grid">
+          {usageStats.map(([value, label]) => (
+            <article className="panel-card usage-stat" key={label}>
+              <span className="usage-stat-icon" aria-hidden="true">
+                <UsageMetricIcon label={label} />
+              </span>
+              <div>
+                <strong>{value}</strong>
+                <span>{label}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
 
       {serverLogs.length > 0 && (
         <article className="panel-card server-log-card">
@@ -2302,11 +2406,13 @@ function HostingDashboard({ cpId }) {
           <div className="server-log-table" role="table" aria-label="Health Log">
             <div className="server-log-head" role="row">
               <span role="columnheader">TimeCreated</span>
+              <span role="columnheader">Pool</span>
               <span role="columnheader">Message</span>
             </div>
-            {serverLogs.map((log) => (
-              <div className="server-log-row" role="row" key={log.timeCreated}>
+            {serverLogs.map((log, index) => (
+              <div className="server-log-row" role="row" key={`${log.poolName || "pool"}-${log.timeCreated}-${index}`}>
                 <time dateTime={log.timeCreated}>{log.timeCreated}</time>
+                <span>{log.poolName || dashboard?.cpLogin || "Pool"}</span>
                 <p>{log.message}</p>
               </div>
             ))}
@@ -2322,6 +2428,7 @@ function HostingDashboard({ cpId }) {
           isLoading={isLoadingPools}
           isRunning={isRunningPoolAction}
           message={poolMessage}
+          actionDetails={poolActionDetails}
           onClose={() => setPoolDrawer(null)}
           onRefresh={loadPoolRuntime}
           onRunAction={runPoolAction}
@@ -2331,9 +2438,49 @@ function HostingDashboard({ cpId }) {
   );
 }
 
-function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunning, message, onClose, onRefresh, onRunAction }) {
+function UsageMetricIcon({ label }) {
+  const normalized = String(label || "").toLowerCase();
+  if (normalized.includes("ram")) {
+    return (
+      <svg viewBox="0 0 24 24">
+        <rect x="5" y="6" width="14" height="12" rx="2" />
+        <path d="M8 10h8M8 14h5M8 3v3M12 3v3M16 3v3M8 18v3M12 18v3M16 18v3" />
+      </svg>
+    );
+  }
+
+  if (normalized.includes("bandwidth")) {
+    return (
+      <svg viewBox="0 0 24 24">
+        <path d="M4 14a8 8 0 0 1 16 0" />
+        <path d="M12 14 16 9" />
+        <path d="M6 18h12" />
+      </svg>
+    );
+  }
+
+  if (normalized.includes("disk")) {
+    return (
+      <svg viewBox="0 0 24 24">
+        <ellipse cx="12" cy="6" rx="7" ry="3" />
+        <path d="M5 6v10c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
+        <path d="M5 11c0 1.7 3.1 3 7 3s7-1.3 7-3" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M7 3h7l4 4v14H7z" />
+      <path d="M14 3v5h5M9 13h6M9 17h4" />
+    </svg>
+  );
+}
+
+function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunning, message, actionDetails, onClose, onRefresh, onRunAction }) {
   const pools = runtime?.pools ?? [];
   const cpLogin = runtime?.cpLogin || dashboard?.cpLogin || "";
+  const [ramEditorPool, setRamEditorPool] = useState(null);
   const defaultPool = pools.find((pool) => String(pool.title || "").toLowerCase().includes(String(cpLogin).toLowerCase())) || pools[0] || null;
   const ramLink = String(dashboard?.webHostType || "").includes("V68")
     ? `/account/upgrade_plan?cpid=${encodeURIComponent(cpId)}`
@@ -2348,7 +2495,7 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
           <div>
             <span className="status-pill blue">Application Pool</span>
             <h2>{mode === "recycle" ? "Recycle Pool" : mode === "ram" ? "+ Ram" : "Manage Pool"}</h2>
-            <p>{mode === "ram" ? "Upgrade RAM through the same billing route used by the old control panel." : "Manage application pools."}</p>
+            <p>{mode === "ram" ? "Upgrade RAM through the account billing flow." : "Manage application pools."}</p>
           </div>
           <div className="function-drawer-actions">
             {mode !== "ram" && <RefreshButton onClick={onRefresh} />}
@@ -2364,7 +2511,7 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
               <div>
                 <span className="status-pill blue">RAM</span>
                 <h3>Upgrade RAM</h3>
-                <p>The old dashboard sends this to the RAM add-on or plan upgrade page depending on plan type.</p>
+                <p>RAM upgrades are routed through the correct add-on or plan upgrade page for this hosting plan.</p>
               </div>
               <MenuIcon name="upgrade" />
             </div>
@@ -2379,6 +2526,12 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
           <>
             {isLoading && <LoadingState label="Loading application pools" />}
             {message && <p className="sandbox-message">{message}</p>}
+            {actionDetails?.logText && (
+              <article className="pool-log-viewer" aria-label="Application Pool Log">
+                <span className="status-pill blue">Pool Log</span>
+                <pre>{actionDetails.logText}</pre>
+              </article>
+            )}
             {mode === "recycle" && (
               <article className="panel-card settings-drawer-card">
                 <div className="database-card-header">
@@ -2395,11 +2548,44 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
               </article>
             )}
             {mode === "manage" && (
-              <div className="pool-drawer-list">
+              <div className="pool-manager-shell">
+                <div className="pool-manager-toolbar">
+                  <a className="secondary-button compact" href="/account/addon_purchase_special?cat=pool">+ Pool</a>
+                  <a className="primary-button compact" href={ramLink}>+ Ram</a>
+                </div>
                 {!pools.length && !isLoading && <p className="runtime-empty">No application pool rows found.</p>}
-                {pools.map((pool) => (
-                  <PoolManagerCard key={`${pool.title}-${pool.details?.["Pool ID"]}`} pool={pool} isRunning={isRunning} onRunAction={onRunAction} />
-                ))}
+                {!!pools.length && (
+                  <div className="table-wrap pool-manager-table-wrap">
+                    <table className="pool-manager-table">
+                      <thead>
+                        <tr>
+                          <th>Pool Name</th>
+                          <th>Current Version</th>
+                          <th>Ram Configuration</th>
+                          <th>Bit</th>
+                          <th>Load User Profile</th>
+                          <th>Websites</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pools.map((pool) => (
+                          <PoolManagerRow key={`${pool.title}-${pool.details?.["Pool ID"]}`} pool={pool} isRunning={isRunning} onRunAction={onRunAction} onEditRam={setRamEditorPool} />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {ramEditorPool && (
+                  <PoolRamEditor
+                    pool={ramEditorPool}
+                    dashboard={dashboard}
+                    isRunning={isRunning}
+                    onClose={() => setRamEditorPool(null)}
+                    onSave={(memory) => onRunAction("ram", ramEditorPool, { memory })}
+                  />
+                )}
+                <PoolManagerTips />
               </div>
             )}
           </>
@@ -2409,45 +2595,147 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
   );
 }
 
-function PoolManagerCard({ pool, isRunning, onRunAction }) {
-  const [memory, setMemory] = useState(String(pool.details?.["Private Memory"] || "").replace(/[^\d]/g, "") || "1024");
+function PoolManagerRow({ pool, isRunning, onRunAction, onEditRam }) {
+  const [selectedAction, setSelectedAction] = useState("");
+  const details = pool.details ?? {};
+  const poolName = details["Pool Name"] || pool.title || "-";
+  const websites = details.Websites || "";
+  const websiteCount = details["Website Count"] || (websites ? String(websites.split(",").length) : "0");
+  const privateMemory = String(details["Private Memory"] || pool.subtitle || "").replace(/private memory/i, "").trim() || "-";
+
+  function submitSelectedAction() {
+    if (!selectedAction) return;
+    if (selectedAction === "ram") {
+      onEditRam(pool);
+      return;
+    }
+    onRunAction(selectedAction, pool);
+  }
+
   return (
-    <article className="panel-card settings-drawer-card pool-manager-card">
-      <div className="database-card-header">
-        <div>
-          <span className="status-pill blue">{pool.status || "Pool"}</span>
-          <h3>{pool.title}</h3>
-          <p>{pool.subtitle}</p>
+    <tr>
+      <td>{poolName}</td>
+      <td>{details.Runtime || pool.status || "Runtime pending"}</td>
+      <td>
+        <span className="pool-memory-display">
+          <span>{privateMemory}</span>
+          <button className="secondary-button compact icon-only-button" type="button" onClick={() => onEditRam(pool)} title="Edit RAM" aria-label="Edit RAM">
+            <MenuIcon name="edit" />
+          </button>
+        </span>
+      </td>
+      <td>{details.Bit || "-"}</td>
+      <td>{details["Load User Profile"] || "-"}</td>
+      <td>
+        <span className="pool-websites" title={websites || "No websites assigned"}>
+          {websiteCount === "0" ? "No websites" : `${websiteCount} site${websiteCount === "1" ? "" : "s"}`}
+        </span>
+      </td>
+      <td>
+        <div className="pool-table-actions">
+          <select value={selectedAction} onChange={(event) => setSelectedAction(event.target.value)} disabled={isRunning}>
+            <option value="">Action</option>
+            <option value="recycle">Restart Pool</option>
+            <option value="stop">Stop Pool</option>
+            <option value="start">Start Pool</option>
+            <option value="environment-variables">Environment Variables</option>
+            <option value="net-core">Change to .Net Core</option>
+            <option value="aspnet-4-integrated">Change to ASP.NET 4.X Integrated</option>
+            <option value="aspnet-4-classic">Change to ASP.NET 4.X Classic</option>
+            <option value="aspnet-2-integrated">Change to ASP.NET 2.0/3.0/3.5 SP1 Integrated</option>
+            <option value="aspnet-2-classic">Change to ASP.NET 2.0/3.0/3.5 SP1 Classic</option>
+            <option value="32-bit">Change to 32-bit</option>
+            <option value="64-bit">Change to 64-bit</option>
+            <option value="enable-load-user-profile">Enable Load User Profile</option>
+            <option value="disable-load-user-profile">Disable Load User Profile</option>
+            <option value="view-log">View Pool Log</option>
+            <option value="delete">Delete Pool</option>
+            <option value="ram">Update RAM</option>
+          </select>
+          <button className="primary-button compact icon-only-button" type="button" disabled={isRunning || !selectedAction} onClick={submitSelectedAction} title="Run action" aria-label="Run action">
+            {isRunning ? <LoadingIcon label="Running pool action" /> : <MenuIcon name="check" />}
+          </button>
         </div>
-        <MenuIcon name="server" />
-      </div>
-      <dl className="cp-context-meta drawer-meta">
-        {Object.entries(pool.details ?? {}).map(([key, value]) => (
-          <div key={key}><dt>{key}</dt><dd>{String(value || "-")}</dd></div>
-        ))}
-      </dl>
-      <div className="pool-action-grid">
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("recycle", pool)}>Recycle</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("stop", pool)}>Stop</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("start", pool)}>Start</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("aspnet-4-integrated", pool)}>4.x Integrated</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("aspnet-4-classic", pool)}>4.x Classic</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("net-core", pool)}>.NET Core</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("32-bit", pool)}>32-bit</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("64-bit", pool)}>64-bit</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("enable-load-user-profile", pool)}>Enable Profile</button>
-        <button className="secondary-button compact" type="button" disabled={isRunning} onClick={() => onRunAction("disable-load-user-profile", pool)}>Disable Profile</button>
-      </div>
-      <form className="pool-memory-form" onSubmit={(event) => {
-        event.preventDefault();
-        onRunAction("ram", pool, { memory });
-      }}>
+      </td>
+    </tr>
+  );
+}
+
+function PoolRamEditor({ pool, dashboard, isRunning, onClose, onSave }) {
+  const details = pool.details ?? {};
+  const poolName = details["Pool Name"] || pool.title || "-";
+  const currentQuota = Number(String(details["Private Memory"] || "").replace(/[^\d.]/g, "")) || 1024;
+  const usageMb = Number(dashboard?.ramUsedMb ?? 0);
+  const usagePercent = currentQuota > 0 ? (usageMb / currentQuota) * 100 : 0;
+  const hasNoMax = String(dashboard?.webHostType || "").startsWith("W2") || String(dashboard?.webHostType || "").includes("V68");
+  const maxQuota = hasNoMax ? 40960 : currentQuota;
+  const [memory, setMemory] = useState(String(currentQuota || 1024));
+  const [error, setError] = useState("");
+
+  function submitRam(event) {
+    event.preventDefault();
+    const parsed = Number(memory);
+    if (!Number.isFinite(parsed)) {
+      setError("New Quota cannot be empty.");
+      return;
+    }
+    if (parsed < 256) {
+      setError("Minimum 256 MB.");
+      return;
+    }
+    if (!hasNoMax && parsed > maxQuota) {
+      setError(`Maximum ${maxQuota} MB.`);
+      return;
+    }
+    onSave(String(Math.round(parsed)));
+  }
+
+  return (
+    <div className="pool-ram-modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <form className="pool-ram-modal panel-card" onSubmit={submitRam}>
+        <header>
+          <span className="status-pill blue">Pool Memory</span>
+          <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <MenuIcon name="Close" />
+          </button>
+        </header>
+        <p><strong>Pool Name</strong>: {poolName}</p>
+        <p><strong>Ram Usage Report</strong>: {usagePercent.toFixed(2)}% ({usageMb.toFixed(2)} / {currentQuota} MB)</p>
         <label>
-          Pool Memory
-          <input type="number" min="256" max="40960" value={memory} onChange={(event) => setMemory(event.target.value)} />
+          <strong>New Quota in MB:</strong>
+          <input
+            inputMode="numeric"
+            maxLength={5}
+            min={256}
+            max={maxQuota}
+            type="number"
+            value={memory}
+            onChange={(event) => setMemory(event.target.value.replace(/[^\d]/g, ""))}
+          />
         </label>
-        <button className="primary-button compact" type="submit" disabled={isRunning}>{isRunning ? <LoadingIcon label="Updating pool" /> : "Update RAM"}</button>
+        <p className="pool-ram-limits">{hasNoMax ? "(Minimum 256 MB)" : `(Minimum 256 MB, Maximum ${maxQuota} MB)`}</p>
+        {error && <p className="sandbox-message danger">{error}</p>}
+        <button className="primary-button compact drawer-full-button" disabled={isRunning} type="submit">
+          {isRunning ? <LoadingIcon label="Updating RAM" /> : "Submit"}
+        </button>
       </form>
+    </div>
+  );
+}
+
+function PoolManagerTips() {
+  return (
+    <article className="pool-tips-card">
+      <h3>Tips</h3>
+      <p>For performance reason, each hosting account only have 1 application pool and each application pool can only support one .net version. If you need multiple version, please purchase another hosting account.</p>
+      <p><strong>How to fix High memory usage for ASP.NET Core?</strong><br />Configure the .net core application to use workstation garbage collection will lower the memory consumption. You don't require rebuilding the project, just set the value in the runtimeconfig.json file: "System.GC.Server": false</p>
+      <p><strong>How to choose .net version of pool for ASP.NET Core?</strong><br />It is not necessary to change IIS pool setting, because asp.net core IIS module will load .NET Core CLR itself, without IIS intervention.</p>
+      <p><strong>Can I run multiple ASP.NET Core APPs?</strong><br />Yes, you can do it as long as you use Out-of-process hosting model in all your core apps.</p>
+      <a href="http://www.smarterasp.net/support/kb/a1999/what-should-we-do-when-get-http-error-500_34-ancm-mixed-hosting-models-not-supported.aspx" target="_blank" rel="noreferrer">
+        [KB Article] ASP.NET Core does not support multiple apps in the same app pool
+      </a>
     </article>
   );
 }
@@ -2462,7 +2750,7 @@ function HostingCpPlaceholder({ title }) {
   );
 }
 
-function WebsitesSection({ cpId }) {
+function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager }) {
   const { reload: reloadActivity } = useHostingActivity(cpId);
   const sitesRequestId = useRef(0);
   const [siteRecords, setSiteRecords] = useState([]);
@@ -2472,7 +2760,18 @@ function WebsitesSection({ cpId }) {
   const [sitesError, setSitesError] = useState("");
   const [websiteMessage, setWebsiteMessage] = useState("");
   const [selectedSiteKey, setSelectedSiteKey] = useState("");
-  const [newSiteDraft, setNewSiteDraft] = useState({ name: "codex-test-site", domain: "codex-test.local", folder: "www\\codex-test-site", runtime: "v4.0" });
+  const [newSiteDraft, setNewSiteDraft] = useState({ name: "", disablePhp: true });
+  const [isNewSiteDrawerOpen, setIsNewSiteDrawerOpen] = useState(false);
+  const [isCreatingNewSite, setIsCreatingNewSite] = useState(false);
+  const [newSiteMessage, setNewSiteMessage] = useState("");
+  const [subdomainDraft, setSubdomainDraft] = useState({ host: "", parentDomainUid: "", sitePath: "{create new folder}" });
+  const [isSubdomainDrawerOpen, setIsSubdomainDrawerOpen] = useState(false);
+  const [isCreatingSubdomain, setIsCreatingSubdomain] = useState(false);
+  const [subdomainMessage, setSubdomainMessage] = useState("");
+  const [subdomainFolderPicker, setSubdomainFolderPicker] = useState(null);
+  const [isSubdomainFolderPickerOpen, setIsSubdomainFolderPickerOpen] = useState(false);
+  const [isLoadingSubdomainFolders, setIsLoadingSubdomainFolders] = useState(false);
+  const [subdomainFolderError, setSubdomainFolderError] = useState("");
   const [domainDraft, setDomainDraft] = useState({ domain: "newdomain.com", mode: "Add Domain", createDns: true });
   const [pathDraft, setPathDraft] = useState({ path: "/www/sample.com", runtime: "ASP.NET 4.x Integrated", coreMode: "In Process" });
   const [ipDenyDraft, setIpDenyDraft] = useState({ ip: "203.0.113.10", mask: "255.255.255.255", mode: "Deny IP" });
@@ -2483,13 +2782,86 @@ function WebsitesSection({ cpId }) {
   const [websiteFunctionError, setWebsiteFunctionError] = useState("");
   const [websiteFunctionFields, setWebsiteFunctionFields] = useState({});
   const [websiteFunctionMessage, setWebsiteFunctionMessage] = useState("");
+  const [websiteFunctionBusyAction, setWebsiteFunctionBusyAction] = useState("");
+  const [websiteSearch, setWebsiteSearch] = useState("");
+  const [websiteSort, setWebsiteSort] = useState("siteName");
+  const [isWebsiteSortOpen, setIsWebsiteSortOpen] = useState(false);
+  const websiteSortRef = useRef(null);
+  const [githubDeploySite, setGithubDeploySite] = useState(null);
+  const [githubDeployMessage, setGithubDeployMessage] = useState("");
+  const [isGithubDeployBusy, setIsGithubDeployBusy] = useState(false);
+  const [moreFunctionsSite, setMoreFunctionsSite] = useState(null);
+  const [websiteFolderPicker, setWebsiteFolderPicker] = useState(null);
+  const [isWebsiteFolderPickerOpen, setIsWebsiteFolderPickerOpen] = useState(false);
+  const [isLoadingWebsiteFolders, setIsLoadingWebsiteFolders] = useState(false);
+  const [websiteFolderError, setWebsiteFolderError] = useState("");
 
-  async function loadHostingSites() {
+  function websiteCacheKey() {
+    return `cp-websites-cache:${cpId || "none"}`;
+  }
+
+  useEffect(() => {
+    if (!isWebsiteSortOpen) return undefined;
+
+    function closeWebsiteSort(event) {
+      if (websiteSortRef.current && !websiteSortRef.current.contains(event.target)) {
+        setIsWebsiteSortOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeWebsiteSort);
+    return () => document.removeEventListener("mousedown", closeWebsiteSort);
+  }, [isWebsiteSortOpen]);
+
+  function applyWebsitesDashboard(dashboard) {
+    setSitesDashboard(dashboard);
+    const loadedSites = dashboard?.sites?.map(mapHostingSiteToUi) ?? [];
+    if (loadedSites.length) {
+      setSiteRecords(loadedSites);
+      setSelectedSiteKey((current) => current || loadedSites[0].siteKey);
+    } else {
+      setSiteRecords([]);
+      setSelectedSiteKey("");
+    }
+  }
+
+  function readCachedWebsites() {
+    if (!cpId) return false;
+    try {
+      const cached = sessionStorage.getItem(websiteCacheKey());
+      if (!cached) return false;
+      const parsed = JSON.parse(cached);
+      if (!parsed?.dashboard) return false;
+      applyWebsitesDashboard(parsed.dashboard);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function writeCachedWebsites(dashboard) {
+    if (!cpId || !dashboard) return;
+    try {
+      sessionStorage.setItem(websiteCacheKey(), JSON.stringify({ dashboard, cachedAt: Date.now() }));
+    } catch {
+      // Session cache is an optimization only.
+    }
+  }
+
+  async function loadHostingSites({ force = false, keepExisting = false } = {}) {
+    if (!force && readCachedWebsites()) {
+      setSitesError("");
+      setIsLoadingSites(false);
+      return;
+    }
+
     const requestId = ++sitesRequestId.current;
     setIsLoadingSites(true);
-    setSiteRecords([]);
-    setSitesDashboard(null);
-    setSelectedSiteKey("");
+    if (!keepExisting) {
+      setSiteRecords([]);
+      setSitesDashboard(null);
+      setSelectedSiteKey("");
+    }
     setSitesError("");
     try {
       const response = await fetch(hostingApiUrl("/api/hosting/sites", cpId));
@@ -2501,15 +2873,8 @@ function WebsitesSection({ cpId }) {
         return;
       }
 
-      setSitesDashboard(result.dashboard);
-      const loadedSites = result.dashboard?.sites?.map(mapHostingSiteToUi) ?? [];
-      if (loadedSites.length) {
-        setSiteRecords(loadedSites);
-        setSelectedSiteKey((current) => current || loadedSites[0].siteKey);
-      } else {
-        setSiteRecords([]);
-        setSelectedSiteKey("");
-      }
+      applyWebsitesDashboard(result.dashboard);
+      writeCachedWebsites(result.dashboard);
     } catch {
       if (requestId !== sitesRequestId.current) return;
       setSitesError("Unable to reach website service.");
@@ -2524,17 +2889,108 @@ function WebsitesSection({ cpId }) {
     setSitesDashboard(null);
     setSelectedSiteKey("");
     setSitesError("");
-    setIsLoadingSites(true);
-    loadHostingSites();
+    if (!readCachedWebsites()) {
+      setIsLoadingSites(true);
+      loadHostingSites();
+    } else {
+      setIsLoadingSites(false);
+    }
   }, [cpId]);
 
-  function updateSiteName(index, siteName) {
-    setSiteRecords((currentSites) =>
-      currentSites.map((site, siteIndex) => (siteIndex === index ? { ...site, siteName } : site))
-    );
+  function updateCachedWebsiteName(siteKey, siteName) {
+    setSiteRecords((currentSites) => currentSites.map((site) => (site.siteKey === siteKey ? { ...site, siteName } : site)));
+    setSitesDashboard((currentDashboard) => {
+      if (!currentDashboard) return currentDashboard;
+      const nextDashboard = {
+        ...currentDashboard,
+        sites: (currentDashboard.sites ?? []).map((site) => {
+          const key = String(site.siteUid ?? site.siteName ?? site.rootName);
+          return key === String(siteKey)
+            ? { ...site, siteName, displayName: siteName }
+            : site;
+        })
+      };
+      writeCachedWebsites(nextDashboard);
+      return nextDashboard;
+    });
+  }
+
+  async function updateSiteName(siteKey, siteName) {
+    const site = siteRecords.find((item) => item.siteKey === siteKey);
+    if (!site) {
+      throw new Error("Website was not found in the current list.");
+    }
+
+    const nextName = String(siteName ?? "").trim();
+    if (!nextName || nextName === site.siteName) {
+      return site.siteName;
+    }
+
+    setWebsiteMessage("");
+    const response = await fetch(`/api/hosting/sites/${site.siteUid}/functions/site-name`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cpId, action: "save", fields: { siteName: nextName } })
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.message ?? "Unable to update site name.");
+    }
+
+    updateCachedWebsiteName(siteKey, nextName);
+    setWebsiteMessage(result.message || "Site name updated.");
+    return nextName;
   }
 
   const selectedSite = siteRecords.find((site) => site.siteKey === selectedSiteKey) ?? siteRecords[0] ?? null;
+  const visibleSites = useMemo(() => {
+    const search = websiteSearch.trim().toLowerCase();
+    const filtered = !search
+      ? siteRecords
+      : siteRecords.filter((site) => {
+        const haystack = [
+          site.siteName,
+          site.rootName,
+          site.status,
+          site.runtime,
+          ...(site.mappedDomains ?? []).map((domain) => domain.label)
+        ].join(" ").toLowerCase();
+        return haystack.includes(search);
+      });
+
+    return [...filtered].sort((first, second) => {
+      if (websiteSort === "status") {
+        const statusCompare = String(first.status || "").localeCompare(String(second.status || ""), undefined, { sensitivity: "base" });
+        if (statusCompare !== 0) return statusCompare;
+      }
+
+      return String(first.siteName || "").localeCompare(String(second.siteName || ""), undefined, { numeric: true, sensitivity: "base" });
+    });
+  }, [siteRecords, websiteSearch, websiteSort]);
+
+  const subdomainDomainOptions = useMemo(() => {
+    const seen = new Set();
+    const options = [];
+    for (const site of siteRecords) {
+      if (site.isSubdomain) continue;
+      for (const domain of site.mappedDomains ?? []) {
+        const label = String(domain.label ?? domain.domain ?? "").trim().toLowerCase();
+        const domainUid = domain.domainUid ?? domain.DomainUid ?? domain.id ?? domain.Id;
+        if (!label || label === "no mapped domains" || !domainUid || isTemporaryHostingDomain(label) || seen.has(domainUid)) {
+          continue;
+        }
+
+        seen.add(domainUid);
+        options.push({
+          domainUid: String(domainUid),
+          domain: label,
+          siteName: site.siteName
+        });
+      }
+    }
+
+    return options.sort((first, second) => first.domain.localeCompare(second.domain, undefined, { numeric: true, sensitivity: "base" }));
+  }, [siteRecords]);
 
   async function queueWebsiteTest(action, site = null, target = "", details = "") {
     setWebsiteMessage("");
@@ -2587,7 +3043,7 @@ function WebsitesSection({ cpId }) {
         server: "website-manager",
         note: details || `Website gateway required for ${action}`
       });
-      setWebsiteMessage(`${action} needs the legacy website gateway before it can run.`);
+      setWebsiteMessage(`${action} needs the website service gateway before it can run.`);
       await reloadActivity();
     } catch (error) {
       setWebsiteMessage(error.message);
@@ -2608,6 +3064,7 @@ function WebsitesSection({ cpId }) {
 
     setWebsiteFunctionError("");
     setWebsiteFunctionMessage("");
+    setWebsiteFunctionBusyAction("");
     setWebsiteFunctionFields({});
     setIsLoadingWebsiteFunction(true);
     setActiveWebsiteFunction({ site: selected, label: action, key, details: null });
@@ -2629,15 +3086,56 @@ function WebsitesSection({ cpId }) {
     }
   }
 
+  async function browseWebsiteFunctionFolders(path = websiteFunctionFields.target || "/") {
+    setIsLoadingWebsiteFolders(true);
+    setWebsiteFolderError("");
+    try {
+      const params = new URLSearchParams({
+        path: path === "/" ? "" : path,
+        sortBy: "name",
+        orderBy: "asc"
+      });
+      const response = await fetch(hostingApiUrl(`/api/hosting/files/browse?${params.toString()}`, cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setWebsiteFolderError(formatFileManagerMessage(result?.message ?? "Unable to load folders."));
+        return;
+      }
+
+      setWebsiteFolderPicker(result.fileManager);
+    } catch {
+      setWebsiteFolderError("Unable to reach folder picker API.");
+    } finally {
+      setIsLoadingWebsiteFolders(false);
+    }
+  }
+
+  function openWebsiteFolderPicker() {
+    setIsWebsiteFolderPickerOpen(true);
+    browseWebsiteFunctionFolders(websiteFunctionFields.target || activeWebsiteFunction?.site?.sitePath || "/");
+  }
+
+  function chooseWebsiteFunctionFolder(path) {
+    setWebsiteFunctionFields((current) => ({
+      ...current,
+      target: normalizeFtpPickerPath(path, sitesDashboard?.cpLogin)
+    }));
+    setIsWebsiteFolderPickerOpen(false);
+  }
+
   async function submitWebsiteFunction(action = "") {
     if (!activeWebsiteFunction?.site?.siteUid || !activeWebsiteFunction?.key) return;
     setWebsiteFunctionMessage("");
     setWebsiteFunctionError("");
+    setWebsiteFunctionBusyAction(action || "save");
     try {
+      const submitFields = activeWebsiteFunction.key === "detail-error"
+        ? { ...websiteFunctionFields, enabled: action === "disable" ? "false" : "true" }
+        : websiteFunctionFields;
       const response = await fetch(`/api/hosting/sites/${activeWebsiteFunction.site.siteUid}/functions/${activeWebsiteFunction.key}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cpId, action, fields: websiteFunctionFields })
+        body: JSON.stringify({ cpId, action, fields: submitFields })
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.success) {
@@ -2646,30 +3144,217 @@ function WebsitesSection({ cpId }) {
       }
 
       setWebsiteFunctionMessage(result.message);
-      await loadHostingSites();
-      await reloadActivity();
-      await openWebsiteFunction(activeWebsiteFunction.label, activeWebsiteFunction.site);
+      const refreshWebsiteListKeys = new Set(["domain-manager", "site-on-off", "site-name", "delete-website"]);
+      if (activeWebsiteFunction.key === "detail-error") {
+        const enabled = action !== "disable";
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              detailError: {
+                ...(current.details.data?.detailError ?? {}),
+                enabled,
+                status: enabled ? "ON" : "OFF"
+              }
+            }
+          } : current.details
+        } : current);
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "vs-webdeploy" || activeWebsiteFunction.key === "remote-iis-manager") {
+        if (action === "enable" || action === "disable") {
+          const enabled = action === "enable";
+          setActiveWebsiteFunction((current) => current ? {
+            ...current,
+            details: current.details ? {
+              ...current.details,
+              data: {
+                ...(current.details.data ?? {}),
+                webDeploy: {
+                  ...(current.details.data?.webDeploy ?? {}),
+                  enabled,
+                  status: enabled ? "On" : "Off"
+                }
+              }
+            } : current.details
+          } : current);
+        }
+        return;
+      }
+
+      if (refreshWebsiteListKeys.has(activeWebsiteFunction.key)) {
+        await loadHostingSites({ force: true, keepExisting: true });
+        await reloadActivity();
+        if (activeWebsiteFunction.key === "delete-website") {
+          setActiveWebsiteFunction(null);
+        }
+      }
     } catch {
       setWebsiteFunctionError("Unable to run website function.");
+    } finally {
+      setWebsiteFunctionBusyAction("");
     }
   }
 
   async function submitNewSiteDraft(event) {
     event?.preventDefault();
     setWebsiteMessage("");
+    setNewSiteMessage("");
+    const siteName = String(newSiteDraft.name ?? "").trim();
+    if (!siteName) {
+      setNewSiteMessage("Website/folder name cannot be empty.");
+      return;
+    }
+    if (siteName.length < 2) {
+      setNewSiteMessage("Website/folder name must be at least 2 characters.");
+      return;
+    }
+    if (siteName.length > 20) {
+      setNewSiteMessage("Website/folder name cannot be longer than 20 characters.");
+      return;
+    }
+    if (!/^[A-Za-z0-9-]+$/.test(siteName)) {
+      setNewSiteMessage("Website/folder name can only use letters, numbers, and dash.");
+      return;
+    }
+
+    setIsCreatingNewSite(true);
     try {
       const result = await provisionHosting("/api/hosting/sites/provision", cpId, {
-        siteName: newSiteDraft.name,
-        domain: newSiteDraft.domain,
-        folder: newSiteDraft.folder,
-        netVersion: newSiteDraft.runtime,
-        serverId: ""
+        siteName,
+        domain: "",
+        folder: "",
+        netVersion: "v4",
+        serverId: "",
+        disablePhp: Boolean(newSiteDraft.disablePhp)
       });
       setWebsiteMessage(result.message);
-      await loadHostingSites();
+      setNewSiteMessage(result);
+      await loadHostingSites({ force: true, keepExisting: true });
       await reloadActivity();
     } catch (error) {
-      setWebsiteMessage(error.message);
+      setNewSiteMessage(error.message);
+    } finally {
+      setIsCreatingNewSite(false);
+    }
+  }
+
+  function openAutomatedBackupsAddon() {
+    if (currentUser?.isControlPanelLogin) {
+      setWebsiteMessage("Automated Backups are managed from the Account Panel. Please sign in with the main account login to purchase or manage this add-on.");
+      return;
+    }
+
+    window.history.pushState({}, "", "/panel?section=addon");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
+  function openSubdomainDrawer() {
+    setSubdomainMessage("");
+    setSubdomainDraft((current) => ({
+      ...current,
+      parentDomainUid: current.parentDomainUid || subdomainDomainOptions[0]?.domainUid || "",
+      sitePath: current.sitePath || "{create new folder}"
+    }));
+    setIsSubdomainDrawerOpen(true);
+  }
+
+  async function browseSubdomainFolders(path = subdomainDraft.sitePath || "/") {
+    setIsLoadingSubdomainFolders(true);
+    setSubdomainFolderError("");
+    try {
+      const pickerPath = path === "{create new folder}" ? "/" : path;
+      const params = new URLSearchParams({
+        path: pickerPath === "/" ? "" : pickerPath,
+        sortBy: "name",
+        orderBy: "asc"
+      });
+      const response = await fetch(hostingApiUrl(`/api/hosting/files/browse?${params.toString()}`, cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setSubdomainFolderError(formatFileManagerMessage(result?.message ?? "Unable to load folders."));
+        return;
+      }
+
+      setSubdomainFolderPicker(result.fileManager);
+    } catch {
+      setSubdomainFolderError("Unable to reach folder picker API.");
+    } finally {
+      setIsLoadingSubdomainFolders(false);
+    }
+  }
+
+  function openSubdomainFolderPicker() {
+    setIsSubdomainFolderPickerOpen(true);
+    browseSubdomainFolders(subdomainDraft.sitePath || "/");
+  }
+
+  function chooseSubdomainFolder(path) {
+    setSubdomainDraft((current) => ({
+      ...current,
+      sitePath: normalizeFtpPickerPath(path, sitesDashboard?.cpLogin)
+    }));
+    setIsSubdomainFolderPickerOpen(false);
+  }
+
+  async function submitSubdomainDraft(event) {
+    event?.preventDefault();
+    setWebsiteMessage("");
+    setSubdomainMessage("");
+    const host = String(subdomainDraft.host ?? "").trim().toLowerCase();
+    if (!host) {
+      setSubdomainMessage("Subdomain name is required.");
+      return;
+    }
+    if (host === "www") {
+      setSubdomainMessage("Subdomain name cannot be www.");
+      return;
+    }
+    if (host.length > 30) {
+      setSubdomainMessage("Subdomain name cannot be longer than 30 characters.");
+      return;
+    }
+    if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(host)) {
+      setSubdomainMessage("Subdomain name can only use letters, numbers, and dash.");
+      return;
+    }
+    if (!subdomainDraft.parentDomainUid) {
+      setSubdomainMessage("Choose a domain name.");
+      return;
+    }
+
+    setIsCreatingSubdomain(true);
+    try {
+      const result = await provisionHosting("/api/hosting/sites/provision", cpId, {
+        isSubdomain: true,
+        host,
+        parentDomainUid: Number(subdomainDraft.parentDomainUid),
+        sitePath: subdomainDraft.sitePath || "{create new folder}",
+        siteName: "",
+        domain: "",
+        folder: "",
+        netVersion: "v4",
+        serverId: "",
+        disablePhp: false
+      });
+      setWebsiteMessage(result.message);
+      setSubdomainMessage(result.message);
+      setIsSubdomainDrawerOpen(false);
+      setSubdomainDraft({ host: "", parentDomainUid: subdomainDomainOptions[0]?.domainUid || "", sitePath: "{create new folder}" });
+      try {
+        sessionStorage.removeItem(websiteCacheKey());
+      } catch {
+        // Ignore cache cleanup failures.
+      }
+      await loadHostingSites({ force: true, keepExisting: true });
+      await reloadActivity();
+    } catch (error) {
+      setSubdomainMessage(error.message);
+    } finally {
+      setIsCreatingSubdomain(false);
     }
   }
 
@@ -2718,33 +3403,152 @@ function WebsitesSection({ cpId }) {
   }
 
   function refreshWebsitesSection() {
-    loadHostingSites();
+    try {
+      sessionStorage.removeItem(websiteCacheKey());
+    } catch {
+      // Ignore cache cleanup failures.
+    }
+    loadHostingSites({ force: true, keepExisting: true });
     reloadActivity();
+  }
+
+  function runWebsiteDeployAction(action, site) {
+    if (action === "VSDeploy") {
+      openWebsiteFunction("VS Webdeploy", site);
+      return;
+    }
+
+    if (action === "Github") {
+      setGithubDeploySite(site);
+      setGithubDeployMessage("");
+      return;
+    }
+
+    if (action === "File Manager") {
+      onOpenFileManager?.(site.sitePath);
+      return;
+    }
+
+    queueWebsiteTest(action, site);
+  }
+
+  async function submitGithubDeploy(fields) {
+    if (!githubDeploySite?.siteUid) return;
+    setGithubDeployMessage("");
+    setIsGithubDeployBusy(true);
+    try {
+      const response = await fetch(`/api/hosting/sites/${githubDeploySite.siteUid}/functions/github-deploy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId, action: "deploy", fields })
+      });
+      const result = await response.json().catch(() => null);
+      setGithubDeployMessage(result?.message ?? "GitHub deployment request completed.");
+      if (response.ok && result?.success) {
+        await reloadActivity();
+      }
+    } catch {
+      setGithubDeployMessage("Unable to reach GitHub deploy service.");
+    } finally {
+      setIsGithubDeployBusy(false);
+    }
+  }
+
+  if (githubDeploySite) {
+    return (
+      <GithubDeployPage
+        site={githubDeploySite}
+        cpLogin={sitesDashboard?.cpLogin}
+        isBusy={isGithubDeployBusy}
+        message={githubDeployMessage}
+        onBack={() => {
+          setGithubDeploySite(null);
+          setGithubDeployMessage("");
+        }}
+        onSubmit={submitGithubDeploy}
+      />
+    );
   }
 
   return (
     <section className="websites-section">
       <div className="website-toolbar panel-card">
         <div className="website-actions">
-          <button className="primary-button compact" type="button" onClick={() => submitNewSiteDraft()}>+ New Site</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueWebsiteTest("+ Sub Domain")}>+ Sub Domain</button>
-          <button className="secondary-button compact" type="button" onClick={() => queueWebsiteTest("+ Automated Backups")}>+ Automated Backups</button>
-        </div>
-        <div className="website-toolbar-summary">
-          <span className="status-pill blue">{isLoadingSites ? <LoadingIcon label="Loading hosting websites" /> : "Live websites"}</span>
-          <p>{sitesDashboard ? `${siteRecords.length} sites` : "Checking website list"}</p>
+          <button className="primary-button compact" type="button" onClick={() => {
+            setNewSiteMessage("");
+            setIsNewSiteDrawerOpen(true);
+          }}>+ New Site</button>
+          <button className="secondary-button compact" type="button" onClick={openSubdomainDrawer}>+ Sub Domain</button>
+          <button className="secondary-button compact" type="button" onClick={openAutomatedBackupsAddon}>+ Automated Backups</button>
         </div>
         <div className="website-toolbar-controls">
+          <label className="website-search-field">
+            <MenuIcon name="search" />
+            <input
+              aria-label="Search websites"
+              type="search"
+              value={websiteSearch}
+              onChange={(event) => setWebsiteSearch(event.target.value)}
+              placeholder="Search websites"
+            />
+          </label>
+          <div className="website-sort-field custom-sort-field" ref={websiteSortRef}>
+            <span>Sort</span>
+            <button
+              aria-expanded={isWebsiteSortOpen}
+              aria-haspopup="listbox"
+              className="sort-selected-value sort-menu-button"
+              type="button"
+              onClick={() => setIsWebsiteSortOpen((open) => !open)}
+            >
+              <strong>{websiteSort === "status" ? "Status" : "Site Name"}</strong>
+              <MenuIcon name="chevron-down" />
+            </button>
+            {isWebsiteSortOpen && (
+              <div className="sort-options-menu" role="listbox" aria-label="Sort websites">
+                {[
+                  { value: "siteName", label: "Site Name" },
+                  { value: "status", label: "Status" }
+                ].map((option) => (
+                  <button
+                    aria-selected={websiteSort === option.value}
+                    className={websiteSort === option.value ? "sort-option active" : "sort-option"}
+                    key={option.value}
+                    role="option"
+                    type="button"
+                    onClick={() => {
+                      setWebsiteSort(option.value);
+                      setIsWebsiteSortOpen(false);
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label="Website view mode" />
           <RefreshButton onClick={refreshWebsitesSection} />
         </div>
       </div>
 
-      {websiteMessage && <p className="sandbox-message">{websiteMessage}</p>}
+      {websiteMessage && (
+        <div className="website-message-stack">
+          <p className="sandbox-message">{websiteMessage}</p>
+          {shouldShowTemporaryUrlWaitTip(websiteMessage) && (
+            <p className="orange-tip">Please wait 10 to 15 minutes before visiting this URL.</p>
+          )}
+        </div>
+      )}
       {sitesError && (
         <div className="panel-card dashboard-error-panel">
           <p>{sitesError}</p>
           <IconActionButton label="Retry" onClick={loadHostingSites} />
+        </div>
+      )}
+      {isLoadingSites && !sitesError && (
+        <div className="panel-card website-list-loading">
+          <LoadingIcon label="Loading websites" />
         </div>
       )}
       {!isLoadingSites && !sitesError && !siteRecords.length && (
@@ -2754,178 +3558,19 @@ function WebsitesSection({ cpId }) {
           <p>This hosting account does not have any visible website rows in cp_config_Sites.</p>
         </div>
       )}
-
-      {!!siteRecords.length && (viewMode === "cards" ? (
-        <WebsiteCards sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} onFunctionAction={openWebsiteFunction} />
-      ) : (
-        <WebsiteTable sites={siteRecords} onUpdateSiteName={updateSiteName} onQueueAction={queueWebsiteTest} onFunctionAction={openWebsiteFunction} />
-      ))}
-
-      {!!siteRecords.length && (
-        <section className="panel-card website-more-functions">
-          <div className="website-more-header">
-            <div>
-              <span className="status-pill blue">More Functions</span>
-              <h2>Website Tools</h2>
-              <p>Worker-backed actions queue immediately. IIS/domain/provider actions stay gated until their remote helper is mapped.</p>
-            </div>
-            <label>
-              Site
-              <select value={selectedSite?.siteKey || ""} onChange={(event) => setSelectedSiteKey(event.target.value)}>
-                {siteRecords.map((site) => (
-                  <option key={site.siteKey} value={site.siteKey}>{site.siteName}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="website-function-form-grid">
-            <form className="website-function-form" onSubmit={submitNewSiteDraft}>
-              <span className="status-pill blue">New Site</span>
-              <label>
-                Site Name
-                <input value={newSiteDraft.name} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, name: event.target.value }))} />
-              </label>
-              <label>
-                Domain
-                <input value={newSiteDraft.domain} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, domain: event.target.value }))} />
-              </label>
-              <label>
-                Folder
-                <input value={newSiteDraft.folder} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, folder: event.target.value }))} />
-              </label>
-              <label>
-                Runtime
-                <select value={newSiteDraft.runtime} onChange={(event) => setNewSiteDraft((draft) => ({ ...draft, runtime: event.target.value }))}>
-                  <option value="v4.0">ASP.NET 4.x Integrated</option>
-                  <option value="v4.0-Classic">ASP.NET 4.x Classic</option>
-                  <option value="core">.NET Core</option>
-                  <option value="php">PHP</option>
-                </select>
-              </label>
-              <button className="primary-button compact" type="submit">Create Site</button>
-            </form>
-
-            <form className="website-function-form" onSubmit={submitDomainDraft}>
-              <span className="status-pill blue">Domain Binding</span>
-              <label>
-                Domain
-                <input value={domainDraft.domain} onChange={(event) => setDomainDraft((draft) => ({ ...draft, domain: event.target.value }))} />
-              </label>
-              <label>
-                Action
-                <select value={domainDraft.mode} onChange={(event) => setDomainDraft((draft) => ({ ...draft, mode: event.target.value }))}>
-                  <option>Add Domain</option>
-                  <option>Add Subdomain</option>
-                  <option>Move Domain</option>
-                  <option>Remove Domain</option>
-                  <option>Bind VPS Domain</option>
-                </select>
-              </label>
-              <label className="checkbox-line">
-                <input type="checkbox" checked={domainDraft.createDns} onChange={(event) => setDomainDraft((draft) => ({ ...draft, createDns: event.target.checked }))} />
-                Create DNS zone
-              </label>
-              <button className="primary-button compact" type="submit">Review Action</button>
-            </form>
-
-            <form className="website-function-form" onSubmit={submitPathRuntimeDraft}>
-              <span className="status-pill blue">Path / Runtime</span>
-              <label>
-                Site Path
-                <input value={pathDraft.path} onChange={(event) => setPathDraft((draft) => ({ ...draft, path: event.target.value }))} />
-              </label>
-              <label>
-                Runtime
-                <select value={pathDraft.runtime} onChange={(event) => setPathDraft((draft) => ({ ...draft, runtime: event.target.value }))}>
-                  <option>ASP.NET 4.x Integrated</option>
-                  <option>ASP.NET 4.x Classic</option>
-                  <option>ASP.NET 2.0 Classic</option>
-                  <option>.NET Core</option>
-                  <option>PHP 8.x</option>
-                </select>
-              </label>
-              <label>
-                Core Mode
-                <select value={pathDraft.coreMode} onChange={(event) => setPathDraft((draft) => ({ ...draft, coreMode: event.target.value }))}>
-                  <option>In Process</option>
-                  <option>Out of Process</option>
-                </select>
-              </label>
-              <button className="primary-button compact" type="submit">Review Action</button>
-            </form>
-
-            <form className="website-function-form" onSubmit={submitIpDenyDraft}>
-              <span className="status-pill blue">IP Restrictions</span>
-              <label>
-                IP Address
-                <input value={ipDenyDraft.ip} onChange={(event) => setIpDenyDraft((draft) => ({ ...draft, ip: event.target.value }))} />
-              </label>
-              <label>
-                Subnet Mask
-                <input value={ipDenyDraft.mask} onChange={(event) => setIpDenyDraft((draft) => ({ ...draft, mask: event.target.value }))} />
-              </label>
-              <label>
-                Mode
-                <select value={ipDenyDraft.mode} onChange={(event) => setIpDenyDraft((draft) => ({ ...draft, mode: event.target.value }))}>
-                  <option>Deny IP</option>
-                  <option>Remove Deny Rule</option>
-                  <option>Dynamic IP Protection</option>
-                </select>
-              </label>
-              <button className="primary-button compact" type="submit">Review Action</button>
-            </form>
-
-            <form className="website-function-form" onSubmit={submitEnvDraft}>
-              <span className="status-pill blue">Environment</span>
-              <label>
-                Key
-                <input value={envDraft.key} onChange={(event) => setEnvDraft((draft) => ({ ...draft, key: event.target.value }))} />
-              </label>
-              <label>
-                Value
-                <input value={envDraft.value} onChange={(event) => setEnvDraft((draft) => ({ ...draft, value: event.target.value }))} />
-              </label>
-              <label>
-                Scope
-                <select value={envDraft.scope} onChange={(event) => setEnvDraft((draft) => ({ ...draft, scope: event.target.value }))}>
-                  <option>Site</option>
-                  <option>Application Pool</option>
-                </select>
-              </label>
-              <button className="primary-button compact" type="submit">Review Action</button>
-            </form>
-
-            <form className="website-function-form" onSubmit={submitPoolDraft}>
-              <span className="status-pill blue">App Pool</span>
-              <label>
-                Action
-                <select value={poolDraft.action} onChange={(event) => setPoolDraft((draft) => ({ ...draft, action: event.target.value }))}>
-                  <option>Recycle Pool</option>
-                  <option>Start Pool</option>
-                  <option>Stop Pool</option>
-                  <option>Create Dedicated Pool</option>
-                  <option>Delete Pool</option>
-                  <option>Enable Load User Profile</option>
-                </select>
-              </label>
-              <label>
-                Memory MB
-                <input type="number" min="128" max="8192" value={poolDraft.memory} onChange={(event) => setPoolDraft((draft) => ({ ...draft, memory: event.target.value }))} />
-              </label>
-              <label>
-                Mode
-                <select value={poolDraft.mode} onChange={(event) => setPoolDraft((draft) => ({ ...draft, mode: event.target.value }))}>
-                  <option>64-bit</option>
-                  <option>32-bit</option>
-                  <option>.NET Core</option>
-                </select>
-              </label>
-              <button className="primary-button compact" type="submit">Queue / Check Action</button>
-            </form>
-          </div>
-        </section>
+      {!isLoadingSites && !sitesError && !!siteRecords.length && !visibleSites.length && (
+        <div className="panel-card cp-placeholder">
+          <span className="status-pill muted">No matches</span>
+          <h2>No websites match your search</h2>
+          <p>Try a different site name, domain, runtime, or status.</p>
+        </div>
       )}
+
+      {!!visibleSites.length && (viewMode === "cards" ? (
+        <WebsiteCards sites={visibleSites} onUpdateSiteName={updateSiteName} onQueueAction={runWebsiteDeployAction} onFunctionAction={openWebsiteFunction} onMoreFunctions={setMoreFunctionsSite} onChangeSection={onChangeSection} />
+      ) : (
+        <WebsiteTable sites={visibleSites} onUpdateSiteName={updateSiteName} onQueueAction={runWebsiteDeployAction} onFunctionAction={openWebsiteFunction} onMoreFunctions={setMoreFunctionsSite} onChangeSection={onChangeSection} />
+      ))}
 
       {activeWebsiteFunction && (
         <WebsiteFunctionDrawer
@@ -2933,11 +3578,80 @@ function WebsitesSection({ cpId }) {
           fields={websiteFunctionFields}
           error={websiteFunctionError}
           isLoading={isLoadingWebsiteFunction}
+          busyAction={websiteFunctionBusyAction}
           message={websiteFunctionMessage}
           onChangeField={(field, value) => setWebsiteFunctionFields((current) => ({ ...current, [field]: value }))}
           onClose={() => setActiveWebsiteFunction(null)}
           onRefresh={() => openWebsiteFunction(activeWebsiteFunction.label, activeWebsiteFunction.site)}
           onSubmit={submitWebsiteFunction}
+          onOpenFolderPicker={openWebsiteFolderPicker}
+        />
+      )}
+      {isNewSiteDrawerOpen && (
+        <NewSiteDrawer
+          draft={newSiteDraft}
+          message={newSiteMessage}
+          isBusy={isCreatingNewSite}
+          cpLogin={sitesDashboard?.cpLogin}
+          onChange={setNewSiteDraft}
+          onClose={() => {
+            if (isCreatingNewSite) return;
+            setIsNewSiteDrawerOpen(false);
+            setNewSiteMessage("");
+          }}
+          onSubmit={submitNewSiteDraft}
+        />
+      )}
+      {isSubdomainDrawerOpen && (
+        <SubdomainDrawer
+          draft={subdomainDraft}
+          domains={subdomainDomainOptions}
+          message={subdomainMessage}
+          isBusy={isCreatingSubdomain}
+          onChange={setSubdomainDraft}
+          onClose={() => {
+            if (isCreatingSubdomain) return;
+            setIsSubdomainDrawerOpen(false);
+            setSubdomainMessage("");
+          }}
+          onSubmit={submitSubdomainDraft}
+          onOpenFolderPicker={openSubdomainFolderPicker}
+        />
+      )}
+      {isWebsiteFolderPickerOpen && (
+        <FolderPickerModal
+          title="Select Target Folder"
+          currentPath={normalizeFtpPickerPath(websiteFolderPicker?.currentPath || websiteFunctionFields.target || "/", sitesDashboard?.cpLogin)}
+          folders={websiteFolderPicker?.folders ?? []}
+          parentPath={websiteFolderPicker?.parentPath || ""}
+          isLoading={isLoadingWebsiteFolders}
+          error={websiteFolderError}
+          onBrowse={browseWebsiteFunctionFolders}
+          onChoose={() => chooseWebsiteFunctionFolder(websiteFolderPicker?.currentPath || websiteFunctionFields.target || "/")}
+          onClose={() => setIsWebsiteFolderPickerOpen(false)}
+        />
+      )}
+      {isSubdomainFolderPickerOpen && (
+        <FolderPickerModal
+          title="Select Subdomain Folder"
+          currentPath={normalizeFtpPickerPath(subdomainFolderPicker?.currentPath || subdomainDraft.sitePath || "/", sitesDashboard?.cpLogin)}
+          folders={subdomainFolderPicker?.folders ?? []}
+          parentPath={subdomainFolderPicker?.parentPath || ""}
+          isLoading={isLoadingSubdomainFolders}
+          error={subdomainFolderError}
+          onBrowse={browseSubdomainFolders}
+          onChoose={() => chooseSubdomainFolder(subdomainFolderPicker?.currentPath || subdomainDraft.sitePath || "/")}
+          onClose={() => setIsSubdomainFolderPickerOpen(false)}
+        />
+      )}
+      {moreFunctionsSite && (
+        <WebsiteMoreFunctionsDrawer
+          site={moreFunctionsSite}
+          onClose={() => setMoreFunctionsSite(null)}
+          onAction={(action) => {
+            setMoreFunctionsSite(null);
+            openWebsiteFunction(action, moreFunctionsSite);
+          }}
         />
       )}
 
@@ -2959,6 +3673,7 @@ function mapHostingSiteToUi(site) {
     siteUid: site.siteUid,
     rootName: site.rootName,
     sitePath: site.sitePath,
+    isSubdomain: Boolean(site.isSubdomain),
     siteName: site.siteName || site.rootName || `site-${site.siteUid}`,
     mappedDomains: site.mappedDomains?.length
       ? site.mappedDomains
@@ -2968,17 +3683,351 @@ function mapHostingSiteToUi(site) {
   };
 }
 
-function WebsiteCards({ sites, onUpdateSiteName, onQueueAction, onFunctionAction }) {
+function NewSiteDrawer({ draft, message, isBusy, cpLogin, onChange, onClose, onSubmit }) {
+  const resultMessage = typeof message === "string" ? message : message?.message || "";
+  const steps = Array.isArray(message?.details?.steps) ? message.details.steps : [];
+  const isSuccess = Boolean(message?.success) || resultMessage.toLowerCase().includes("created");
+  const hasSubmitted = isBusy || Boolean(resultMessage);
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !isBusy) onClose();
+    }}>
+      <aside className="function-drawer panel-card" aria-label="New Site" role="dialog" aria-modal="true">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">Website</span>
+            <h2>+ New Site</h2>
+            <p>Create a new website.</p>
+          </div>
+          <div className="function-drawer-actions">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} title="Close" aria-label="Close">
+              <MenuIcon name="x" />
+            </button>
+          </div>
+        </header>
+
+        <form className="function-field-form compact-site-name-form" onSubmit={onSubmit}>
+          <label>
+            Website / Folder Name
+            <input
+              autoFocus
+              maxLength={20}
+              value={draft.name ?? ""}
+              onChange={(event) => onChange((current) => ({ ...current, name: event.target.value.replace(/[^A-Za-z0-9-]/g, "") }))}
+              placeholder="site name"
+              disabled={hasSubmitted}
+            />
+          </label>
+          <p className="drawer-helper-text">You can change this name later.</p>
+          <label className="file-action-checkbox">
+            <input
+              type="checkbox"
+              checked={Boolean(draft.disablePhp)}
+              onChange={(event) => onChange((current) => ({ ...current, disablePhp: event.target.checked }))}
+              disabled={hasSubmitted}
+            />
+            Disable PHP Support
+          </label>
+          {resultMessage && (
+            <div className="website-message-stack">
+              <p className={isSuccess ? "sandbox-message" : "sandbox-message danger"}>{resultMessage}</p>
+              {isSuccess && shouldShowTemporaryUrlWaitTip(resultMessage) && (
+                <p className="orange-tip">Please wait 10 to 15 minutes before visiting this URL.</p>
+              )}
+            </div>
+          )}
+          {!!steps.length && (
+            <div className="provision-step-list" aria-label="Website creation steps">
+              {steps.map((step, index) => (
+                <div className={`provision-step ${step.status || "ok"}`} key={`${step.title || "step"}-${index}`}>
+                  <span className="provision-step-index">{index + 1}</span>
+                  <div>
+                    <strong>{step.title}</strong>
+                    <p>{step.detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {!hasSubmitted && (
+            <div className="function-submit-row">
+              <button className="primary-button compact" type="submit">
+                Submit
+              </button>
+            </div>
+          )}
+          {isBusy && <LoadingIcon label="Creating website" />}
+        </form>
+      </aside>
+    </div>
+  );
+}
+
+function SubdomainDrawer({ draft, domains, message, isBusy, onChange, onClose, onSubmit, onOpenFolderPicker }) {
+  const selectedDomain = domains.find((domain) => domain.domainUid === String(draft.parentDomainUid));
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !isBusy) onClose();
+    }}>
+      <aside className="function-drawer panel-card" aria-label="New Subdomain" role="dialog" aria-modal="true">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">Subdomain</span>
+            <h2>+ Sub Domain</h2>
+            <p>Create a subdomain site from one owned mapped domain.</p>
+          </div>
+          <div className="function-drawer-actions">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} title="Close" aria-label="Close">
+              <MenuIcon name="x" />
+            </button>
+          </div>
+        </header>
+
+        <form className="function-field-form compact-site-name-form" onSubmit={onSubmit}>
+          <label>
+            Subdomain Name
+            <input
+              autoFocus
+              maxLength={30}
+              value={draft.host ?? ""}
+              onChange={(event) => onChange((current) => ({ ...current, host: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") }))}
+              placeholder="blog"
+            />
+          </label>
+          <label>
+            Domain
+            <span className="subdomain-domain-select">
+              <select
+                value={draft.parentDomainUid ?? ""}
+                onChange={(event) => onChange((current) => ({ ...current, parentDomainUid: event.target.value }))}
+                disabled={!domains.length}
+              >
+                {!domains.length && <option value="">No mapped domains available</option>}
+                {domains.map((domain) => (
+                  <option key={domain.domainUid} value={domain.domainUid}>
+                    {domain.domain}
+                  </option>
+                ))}
+              </select>
+              <MenuIcon name="chevron-down" />
+            </span>
+          </label>
+          <label>
+            Target Folder
+            <div className="folder-picker-input-row">
+              <input
+                value={draft.sitePath || "{create new folder}"}
+                readOnly
+                aria-label="Target folder"
+              />
+              <IconActionButton label="Select Folder" icon="folder" onClick={onOpenFolderPicker} disabled={isBusy} />
+            </div>
+          </label>
+          {selectedDomain && draft.host && (
+            <p className="drawer-helper-text">{draft.host}.{selectedDomain.domain}</p>
+          )}
+          {message && <p className={message.toLowerCase().includes("created") ? "sandbox-message" : "sandbox-message danger"}>{message}</p>}
+          <div className="function-submit-row">
+            <button className="primary-button compact" type="submit" disabled={isBusy || !domains.length}>
+              {isBusy ? <LoadingIcon label="Creating subdomain" /> : "Submit"}
+            </button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
+function GithubDeployPage({ site, cpLogin, isBusy, message, onBack, onSubmit }) {
+  const [deployMethod, setDeployMethod] = useState("git");
+  const [gitMethod, setGitMethod] = useState("token");
+  const [showMore, setShowMore] = useState(false);
+  const [draft, setDraft] = useState({
+    repourl: "https://github.com/User/MyRepository.git",
+    gitBranch: "",
+    gitToken: "",
+    gitPassphrase: "",
+    buildcmd: "",
+    startcmd: "",
+    createDeployhook: false
+  });
+  const sitePath = simplifySitePath(site?.sitePath, cpLogin);
+
+  function updateDraft(field, value) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function openGitHubPopup(action) {
+    const url = `/github/callback?action=${encodeURIComponent(action)}`;
+    const title = "GitHub Authentication";
+    const w = 600;
+    const h = 700;
+    const dualScreenLeft = window.screenLeft !== undefined ? window.screenLeft : window.screen.left;
+    const dualScreenTop = window.screenTop !== undefined ? window.screenTop : window.screen.top;
+    const width = window.innerWidth || document.documentElement.clientWidth || screen.width;
+    const height = window.innerHeight || document.documentElement.clientHeight || screen.height;
+    const systemZoom = width / window.screen.availWidth;
+    const left = (width - w) / 2 / systemZoom + dualScreenLeft;
+    const top = (height - h) / 2 / systemZoom + dualScreenTop;
+    const popup = window.open(url, title, `scrollbars=yes,width=${w / systemZoom},height=${h / systemZoom},top=${top},left=${left}`);
+    if (window.focus && popup) popup.focus();
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    const fields = {
+      source: deployMethod === "git" ? draft.repourl : "uploaded-zip",
+      target: site?.sitePath || sitePath || "/",
+      deployMethod,
+      gitMethod,
+      gitBranch: draft.gitBranch || "main",
+      gitToken: draft.gitToken,
+      gitPassphrase: draft.gitPassphrase,
+      buildcmd: draft.buildcmd,
+      startcmd: draft.startcmd,
+      createDeployhook: draft.createDeployhook ? "true" : "false"
+    };
+    onSubmit(fields);
+  }
+
+  return (
+    <section className="github-deploy-page">
+      <div className="panel-card github-deploy-header">
+        <div>
+          <span className="status-pill blue">Github Deploy</span>
+          <h2>Auto Build and Deploy</h2>
+          <p>Build and deploy frontend, backend, and full-stack projects by connecting to a Git repository or uploading a ZIP file.</p>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={onBack}>Back to Websites</button>
+      </div>
+
+      <div className="panel-card github-connect-card">
+        <div>
+          <h3>{site?.siteName}</h3>
+          <p>Deploy target: {sitePath}</p>
+        </div>
+        <div className="github-connect-actions">
+          <button className="secondary-button compact" type="button" onClick={() => openGitHubPopup("install")}>Connect GitHub Account</button>
+          <button className="secondary-button compact danger" type="button" onClick={() => openGitHubPopup("disconnect")}>Disconnect GitHub Account</button>
+          <button className="secondary-button compact" type="button">Deploy Hooks</button>
+        </div>
+      </div>
+
+      {message && <p className="sandbox-message">{message}</p>}
+
+      <form className="panel-card github-deploy-form" onSubmit={submit}>
+        <fieldset className="choice-fieldset">
+          <legend>Deployment Method</legend>
+          <label className="radio-card">
+            <input type="radio" checked={deployMethod === "git"} onChange={() => setDeployMethod("git")} />
+            <span>Git Repository</span>
+            <small>Recommended for GitHub, GitLab, Bitbucket, and private repositories.</small>
+          </label>
+          <label className="radio-card">
+            <input type="radio" checked={deployMethod === "zip"} onChange={() => setDeployMethod("zip")} />
+            <span>Upload A Zip File</span>
+            <small>Max size 200MB. Only .zip files are allowed.</small>
+          </label>
+        </fieldset>
+
+        {deployMethod === "git" ? (
+          <label>
+            Git Repository URL
+            <input value={draft.repourl} onChange={(event) => updateDraft("repourl", event.target.value)} placeholder="https://github.com/User/MyRepository.git" required />
+            <small>Access token or deploy key is needed for private repositories.</small>
+          </label>
+        ) : (
+          <label>
+            Select ZIP File
+            <input type="file" accept=".zip" />
+            <small>ZIP upload is prepared here; deployment still follows the old nodejs_action flow.</small>
+          </label>
+        )}
+
+        <button className="secondary-button compact show-more-button" type="button" onClick={() => setShowMore((visible) => !visible)}>
+          {showMore ? "Show Less" : "Show More Options"}
+        </button>
+
+        {showMore && (
+          <div className="github-more-fields">
+            {deployMethod === "git" && (
+              <>
+                <label>
+                  Git Branch
+                  <input value={draft.gitBranch} onChange={(event) => updateDraft("gitBranch", event.target.value)} placeholder="main" />
+                  <small>The default branch is usually main or master.</small>
+                </label>
+                <fieldset className="choice-fieldset compact-choice">
+                  <legend>Deployment Key</legend>
+                  <label className="radio-line">
+                    <input type="radio" checked={gitMethod === "token"} onChange={() => setGitMethod("token")} />
+                    Personal Access Token
+                  </label>
+                  <label className="radio-line">
+                    <input type="radio" checked={gitMethod === "key"} onChange={() => setGitMethod("key")} />
+                    Deploy Key
+                  </label>
+                </fieldset>
+                {gitMethod === "token" ? (
+                  <label>
+                    Personal Access Token
+                    <input value={draft.gitToken} onChange={(event) => updateDraft("gitToken", event.target.value)} placeholder="ghp_XXXXXXXXXXXXXX" />
+                    <small>Needed only for private repositories.</small>
+                  </label>
+                ) : (
+                  <>
+                    <label>
+                      Select Deploy Key
+                      <input type="file" />
+                      <small>Deploy keys grant access to one repository.</small>
+                    </label>
+                    <label>
+                      Passphrase
+                      <input value={draft.gitPassphrase} onChange={(event) => updateDraft("gitPassphrase", event.target.value)} />
+                    </label>
+                  </>
+                )}
+              </>
+            )}
+            <label>
+              Build Command
+              <input value={draft.buildcmd} onChange={(event) => updateDraft("buildcmd", event.target.value)} placeholder="npm run build" />
+              <small>Automatically detected if left blank for most frameworks.</small>
+            </label>
+            <label>
+              Start Command
+              <input value={draft.startcmd} onChange={(event) => updateDraft("startcmd", event.target.value)} placeholder="npm run start" />
+              <small>Automatically detected if left blank.</small>
+            </label>
+            {deployMethod === "git" && (
+              <label className="checkbox-line">
+                <input type="checkbox" checked={draft.createDeployhook} onChange={(event) => updateDraft("createDeployhook", event.target.checked)} />
+                Create Deploy Hook
+              </label>
+            )}
+          </div>
+        )}
+
+        <div className="function-submit-row">
+          <button className="primary-button compact" type="submit" disabled={isBusy}>
+            {isBusy ? <LoadingIcon label="Deploying from Github" /> : "Deploy Now"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function WebsiteCards({ sites, onUpdateSiteName, onQueueAction, onFunctionAction, onMoreFunctions, onChangeSection }) {
   return (
     <div className="website-card-grid">
-      {sites.map((site, siteIndex) => (
-        <article className="panel-card website-card" key={`${site.siteName}-${siteIndex}`}>
+      {sites.map((site) => (
+        <article className="panel-card website-card" key={site.siteKey}>
           <div className="website-card-header">
             <div className="website-title-group">
               <span className="status-pill">{site.status}</span>
               <div className="website-title-row">
-                <SiteNameEditor siteName={site.siteName} onChange={(siteName) => onUpdateSiteName(siteIndex, siteName)} />
-                <DeployButtons onAction={(action) => onQueueAction(action, site)} />
+                <SiteNameEditor siteName={site.siteName} onChange={(siteName) => onUpdateSiteName(site.siteKey, siteName)} />
               </div>
             </div>
             <span className="runtime-pill">{site.runtime}</span>
@@ -2989,10 +4038,10 @@ function WebsiteCards({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
               {site.mappedDomains.map((domain) => (
                 <a href={domain.url} key={domain.label}>
                   <span>{domain.label}</span>
-                  <span className="ssl-domain-badge">SSL</span>
+                  {domain.ssl && <span className="ssl-domain-badge">SSL</span>}
                 </a>
               ))}
-              <button className="add-domain-chip" type="button" title="+ Add Domain" aria-label="+ Add Domain" onClick={() => onQueueAction("+ Add Domain", site)}>
+              <button className="add-domain-chip" type="button" aria-label="+ Add Domain" onClick={() => onQueueAction("+ Add Domain", site)}>
                 <MenuIcon name="add-domain" />
               </button>
             </div>
@@ -3000,6 +4049,8 @@ function WebsiteCards({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
           <WebsiteActionButtons
             onAction={(action) => onQueueAction(action, site)}
             onFunctionAction={(action) => onFunctionAction(action, site)}
+            onMoreFunctions={() => onMoreFunctions(site)}
+            onChangeSection={onChangeSection}
           />
         </article>
       ))}
@@ -3007,7 +4058,7 @@ function WebsiteCards({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
   );
 }
 
-function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction }) {
+function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction, onMoreFunctions, onChangeSection }) {
   return (
     <div className="table-wrap website-table">
       <table>
@@ -3015,18 +4066,16 @@ function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
           <tr>
             <th>Site Name</th>
             <th>Mapped Domains</th>
-            <th>Runtime</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {sites.map((site, siteIndex) => (
-            <tr key={`${site.siteName}-${siteIndex}`}>
+          {sites.map((site) => (
+            <tr key={site.siteKey}>
               <td>
                 <div className="website-table-name">
-                  <SiteNameEditor siteName={site.siteName} onChange={(siteName) => onUpdateSiteName(siteIndex, siteName)} />
-                  <DeployButtons onAction={(action) => onQueueAction(action, site)} />
+                  <SiteNameEditor siteName={site.siteName} onChange={(siteName) => onUpdateSiteName(site.siteKey, siteName)} />
                 </div>
               </td>
               <td>
@@ -3034,21 +4083,22 @@ function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
                   {site.mappedDomains.map((domain) => (
                     <a href={domain.url} key={domain.label}>
                       <span>{domain.label}</span>
-                      <span className="ssl-domain-badge">SSL</span>
+                      {domain.ssl && <span className="ssl-domain-badge">SSL</span>}
                     </a>
                   ))}
-                  <button className="add-domain-chip" type="button" title="+ Add Domain" aria-label="+ Add Domain" onClick={() => onQueueAction("+ Add Domain", site)}>
+                  <button className="add-domain-chip" type="button" aria-label="+ Add Domain" onClick={() => onQueueAction("+ Add Domain", site)}>
                     <MenuIcon name="add-domain" />
                   </button>
                 </div>
               </td>
-              <td>{site.runtime}</td>
               <td>{site.status}</td>
               <td>
                 <WebsiteActionButtons
                   compact
                   onAction={(action) => onQueueAction(action, site)}
                   onFunctionAction={(action) => onFunctionAction(action, site)}
+                  onMoreFunctions={() => onMoreFunctions(site)}
+                  onChangeSection={onChangeSection}
                 />
               </td>
             </tr>
@@ -3062,30 +4112,58 @@ function WebsiteTable({ sites, onUpdateSiteName, onQueueAction, onFunctionAction
 function SiteNameEditor({ siteName, onChange }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(siteName);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  function commitName() {
+  useEffect(() => {
+    if (!isEditing) setDraftName(siteName);
+  }, [siteName, isEditing]);
+
+  async function commitName() {
     const nextName = draftName.trim();
-    onChange(nextName || siteName);
-    setDraftName(nextName || siteName);
-    setIsEditing(false);
+    if (!nextName || nextName === siteName) {
+      setDraftName(siteName);
+      setIsEditing(false);
+      setError("");
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+    try {
+      const savedName = await onChange(nextName);
+      setDraftName(savedName || nextName);
+      setIsEditing(false);
+    } catch (saveError) {
+      setError(saveError.message || "Unable to update site name.");
+      setDraftName(siteName);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   if (isEditing) {
     return (
-      <input
-        autoFocus
-        className="site-name-input"
-        value={draftName}
-        onBlur={commitName}
-        onChange={(event) => setDraftName(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commitName();
-          if (event.key === "Escape") {
-            setDraftName(siteName);
-            setIsEditing(false);
-          }
-        }}
-      />
+      <span className="site-name-edit-wrap">
+        <input
+          autoFocus
+          className="site-name-input"
+          disabled={isSaving}
+          value={draftName}
+          onBlur={commitName}
+          onChange={(event) => setDraftName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commitName();
+            if (event.key === "Escape") {
+              setDraftName(siteName);
+              setIsEditing(false);
+              setError("");
+            }
+          }}
+        />
+        {isSaving && <LoadingIcon label="Saving site name" />}
+        {error && <small className="site-name-error">{error}</small>}
+      </span>
     );
   }
 
@@ -3096,121 +4174,114 @@ function SiteNameEditor({ siteName, onChange }) {
   );
 }
 
-function DeployButtons({ onAction }) {
-  return (
-    <div className="deploy-buttons" aria-label="Deploy options">
-      {deployActions.map((action) => (
-        <button className="deploy-button" type="button" key={action.label} onClick={() => onAction(action.label)}>
-          <MenuIcon name={action.icon} />
-          <span>{action.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
+function WebsiteActionButtons({ compact = false, onAction, onFunctionAction, onMoreFunctions, onChangeSection }) {
+  const runAction = (label) => {
+    if (label === "SSL" && onChangeSection) {
+      onChangeSection("ssl");
+      return;
+    }
 
-function WebsiteActionButtons({ compact = false, onAction, onFunctionAction }) {
-  const [morePopoverStyle, setMorePopoverStyle] = useState(null);
+    if (label === "CDN" && onChangeSection) {
+      onChangeSection("cdn");
+      return;
+    }
 
-  const openMorePopover = (event) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const sidebar = document.querySelector(".cp-sidebar, .sidebar, aside");
-    const sidebarRight = sidebar?.getBoundingClientRect().right ?? 0;
-    const gutter = 24;
-    const minLeft = Math.max(sidebarRight + 28, gutter);
-    const availableWidth = window.innerWidth - minLeft - gutter;
-    const width = Math.min(720, Math.max(360, availableWidth));
-    const left = Math.min(Math.max(rect.right - width, minLeft), window.innerWidth - width - gutter);
-    const estimatedHeight = 520;
-    const preferredTop = rect.bottom + 12;
-    const top = Math.min(preferredTop, Math.max(gutter, window.innerHeight - estimatedHeight - gutter));
+    if (onFunctionAction && websiteMoreFunctionKeyByLabel[label]) {
+      onFunctionAction(label);
+      return;
+    }
 
-    setMorePopoverStyle({
-      "--popover-arrow-left": `${Math.min(Math.max(rect.left + rect.width / 2 - left - 7, 18), width - 32)}px`,
-      left: `${left}px`,
-      maxHeight: `calc(100vh - ${Math.round(top + gutter)}px)`,
-      top: `${top}px`,
-      width: `${width}px`
-    });
+    onAction(label);
   };
-
-  const closeMorePopover = () => setMorePopoverStyle(null);
 
   return (
     <div className={compact ? "website-action-buttons compact-actions" : "website-action-buttons"}>
       {websiteActions.map((action) => action.label === "More Functions" ? (
-        <div
-          className="website-action-more"
+        <button
+          aria-label={action.label}
+          className="secondary-button compact icon-only-button"
+          type="button"
           key={action.label}
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) {
-              closeMorePopover();
-            }
-          }}
-          onFocus={openMorePopover}
-          onMouseEnter={openMorePopover}
-          onMouseLeave={closeMorePopover}
+          onClick={onMoreFunctions}
         >
-          <button
-            aria-label={action.label}
-            className="secondary-button compact icon-only-button"
-            title={action.label}
-            type="button"
-          >
-            <MenuIcon name={action.icon} />
-          </button>
-          <WebsiteMoreFunctionsPopover isOpen={Boolean(morePopoverStyle)} onAction={onFunctionAction ?? onAction} style={morePopoverStyle} />
-        </div>
+          <MenuIcon name={action.icon} />
+        </button>
       ) : (
         <button
           aria-label={action.label}
           className="secondary-button compact icon-only-button"
-          title={action.label}
+          type="button"
+          key={action.label}
+          onClick={() => runAction(action.label)}
+        >
+          <MenuIcon name={action.icon} />
+        </button>
+      ))}
+      {deployActions.map((action) => (
+        <button
+          className="secondary-button compact deploy-action-text-button"
           type="button"
           key={action.label}
           onClick={() => onAction(action.label)}
         >
-          <MenuIcon name={action.icon} />
+          {action.label}
         </button>
       ))}
     </div>
   );
 }
 
-function WebsiteMoreFunctionsPopover({ isOpen, onAction, style }) {
+function WebsiteMoreFunctionsDrawer({ site, onAction, onClose }) {
   return (
-    <div
-      className={`website-more-popover${isOpen ? " is-open" : ""}`}
-      role="menu"
-      aria-label="More website functions"
-      style={style ?? undefined}
-    >
-      {websiteMoreFunctionColumns.map((column) => (
-        <section className="website-more-column" key={column.title}>
-          <h3>{column.title}</h3>
-          <div className="website-more-list">
-            {column.items.map((item) => (
-              <button type="button" role="menuitem" key={item.label} onClick={() => onAction(item.label)}>
-                <MenuIcon name={item.icon} />
-                <span>{item.label}</span>
-              </button>
-            ))}
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="function-drawer panel-card" aria-label="More website functions" role="dialog">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">More Functions</span>
+            <h2>Website Tools</h2>
+            <p>{site?.siteName || "Selected website"}</p>
           </div>
-        </section>
-      ))}
+          <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} aria-label="Close">
+            <MenuIcon name="x" />
+          </button>
+        </header>
+        <div className="website-more-drawer-list">
+          {websiteMoreFunctionColumns.map((column) => (
+            <section className="website-more-column" key={column.title}>
+              <h3>{column.title}</h3>
+              <div className="website-more-list">
+                {column.items.map((item) => (
+                  <button type="button" key={item.label} onClick={() => onAction(item.label)}>
+                    <MenuIcon name={item.icon} />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </aside>
     </div>
   );
 }
 
-function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, message, onChangeField, onClose, onRefresh, onSubmit }) {
+function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyAction, message, onChangeField, onClose, onRefresh, onSubmit, onOpenFolderPicker }) {
   const details = activeFunction.details;
   const data = details?.data ?? {};
   const isSiteNameEditor = details?.key === "site-name" || activeFunction.key === "site-name";
-  const visibleGroups = Object.entries(data).filter(([, value]) => {
-    if (Array.isArray(value)) return value.length > 0;
-    if (value && typeof value === "object") return Object.keys(value).length > 0;
-    return value !== null && value !== undefined && value !== "";
-  });
+  const isDetailError = details?.key === "detail-error" || activeFunction.key === "detail-error";
+  const functionKey = details?.key ?? activeFunction.key;
+  const isMappedPath = functionKey === "mapped-path";
+  const isDomainManager = functionKey === "domain-manager";
+  const isDeleteWebsite = functionKey === "delete-website";
+  const actionResult = (
+    <>
+      {error && <p className="sandbox-message danger function-action-message">{error}</p>}
+      {message && <p className="sandbox-message function-action-message">{message}</p>}
+    </>
+  );
 
   return (
     <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
@@ -3232,8 +4303,7 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, messa
         </header>
 
         {isLoading && <LoadingState label="Loading live website data" />}
-        {error && <p className="sandbox-message danger">{error}</p>}
-        {message && <p className="sandbox-message">{message}</p>}
+        {!details && actionResult}
 
         {isSiteNameEditor && (
           <form className="function-field-form compact-site-name-form" onSubmit={(event) => {
@@ -3257,71 +4327,228 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, messa
                 Submit
               </button>
             </div>
+            {actionResult}
           </form>
         )}
 
         {details && !isSiteNameEditor && (
           <>
-            <dl className="function-meta">
-              <div><dt>Site</dt><dd>{activeFunction.site?.siteName}</dd></div>
-              <div><dt>Legacy Entry</dt><dd>{details.legacyEntry}</dd></div>
-              <div><dt>Underlying API</dt><dd>{details.underlyingApi}</dd></div>
-              <div><dt>Remote Agent</dt><dd>{details.usesRemoteAgent ? "Required" : "Not required"}</dd></div>
-            </dl>
-
             {!!details.warnings?.length && (
               <div className="function-warning-list">
                 {details.warnings.map((warning) => <p key={warning}>{warning}</p>)}
               </div>
             )}
 
-            {!!details.fields?.length && (
+            {isDetailError && (
+              <section className="function-field-form detail-error-panel">
+                <div className="detail-error-status-row">
+                  <div>
+                    <h3>Detail Error Message Display</h3>
+                    <p>When enabled, IIS shows detailed diagnostic errors instead of a generic error page.</p>
+                  </div>
+                  <span className={data.detailError?.enabled ? "status-pill blue" : "status-pill muted"}>
+                    {data.detailError?.status ?? "OFF"}
+                  </span>
+                </div>
+                <div className="function-tip-box">
+                  <p>For .NET Core and Node.js apps, application logs are saved in the <strong>/logs</strong> folder at the site root.</p>
+                  <p>Restarting the application pool usually resolves most unexpected issues.</p>
+                </div>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("enable")}>
+                    {busyAction === "enable" ? <LoadingIcon label="Turning on detail error message display" /> : "Turn On"}
+                  </button>
+                  <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("disable")}>
+                    {busyAction === "disable" ? <LoadingIcon label="Turning off detail error message display" /> : "Turn Off"}
+                  </button>
+                </div>
+                {actionResult}
+              </section>
+            )}
+
+            {isDomainManager && (
               <form className="function-field-form" onSubmit={(event) => {
                 event.preventDefault();
-                onSubmit(fields.action || "save");
+                onSubmit("add");
+              }}>
+                <h3>Domain Manager</h3>
+                <p>Add or remove a mapped domain for this website.</p>
+                <label>
+                  Domain
+                  <input
+                    value={fields.domain ?? ""}
+                    onChange={(event) => onChangeField("domain", event.target.value)}
+                    placeholder="example.com"
+                  />
+                </label>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="submit" disabled={Boolean(busyAction) || !(fields.domain ?? "").trim()}>
+                    {busyAction === "add" ? <LoadingIcon label="Adding domain" /> : "Add Domain"}
+                  </button>
+                  <button className="secondary-button compact danger-button" type="button" disabled={Boolean(busyAction) || !(fields.domain ?? "").trim()} onClick={() => onSubmit("delete")}>
+                    {busyAction === "delete" ? <LoadingIcon label="Removing domain" /> : "Remove Domain"}
+                  </button>
+                </div>
+                {actionResult}
+              </form>
+            )}
+
+            {isDeleteWebsite && (
+              <form className="function-field-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit("delete");
+              }}>
+                <h3>Delete Website</h3>
+                <p>This removes the IIS website and its domain records. Any related databases remain available for separate cleanup.</p>
+                <label className="file-action-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={fields.confirmDelete === "true"}
+                    onChange={(event) => onChangeField("confirmDelete", event.target.checked ? "true" : "false")}
+                  />
+                  I understand and want to delete this website.
+                </label>
+                <label className="file-action-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={fields.deleteFiles === "true"}
+                    onChange={(event) => onChangeField("deleteFiles", event.target.checked ? "true" : "false")}
+                  />
+                  Also delete the website folder.
+                </label>
+                <div className="function-submit-row">
+                  <button className="danger-button compact" type="submit" disabled={Boolean(busyAction) || fields.confirmDelete !== "true"}>
+                    {busyAction === "delete" ? <LoadingIcon label="Deleting website" /> : "Delete Website"}
+                  </button>
+                </div>
+                {actionResult}
+              </form>
+            )}
+
+            {(details.key === "vs-webdeploy" || details.key === "remote-iis-manager") && (
+              <section className="function-field-form webdeploy-info-panel">
+                <div className="detail-error-status-row">
+                  <div>
+                    <h3>Visual Studio Web Deploy</h3>
+                    <p>Use these settings in your Visual Studio publish profile.</p>
+                  </div>
+                  <span className={data.webDeploy?.enabled ? "status-pill blue" : "status-pill muted"}>
+                    {data.webDeploy?.status ?? "Off"}
+                  </span>
+                </div>
+                <dl className="webdeploy-info-list">
+                  <div>
+                    <dt>Service URL</dt>
+                    <dd>{data.webDeploy?.serviceUrl ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt>Site Name</dt>
+                    <dd>{data.webDeploy?.siteName ?? activeFunction.site?.siteName ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt>Username</dt>
+                    <dd>{data.webDeploy?.username ?? "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt>Password</dt>
+                    <dd>
+                      <button className="secondary-button compact" type="button" onClick={() => window.location.href = "/panel?section=settings"}>
+                        Modify
+                      </button>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Publish Setting XML</dt>
+                    <dd>
+                      <button className="secondary-button compact" type="button" disabled>
+                        Get Publish Setting
+                      </button>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>KB Article</dt>
+                    <dd>
+                      <a href="http://www.smarterasp.net/support/kb/a2211/core-to-core-converting-a-framework-dependent-app-to-self-contained-in-visual-studio-2022.aspx" target="_blank" rel="noreferrer">
+                        How to publish ASP.NET site?
+                      </a>
+                    </dd>
+                  </div>
+                </dl>
+                <div className="function-tip-box warning-tip">
+                  <p>Restarting the application pool before deploying the site can help prevent file lock issues.</p>
+                </div>
+                <div className="function-submit-row">
+                  <button className="primary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("fix-acl")}>
+                    {busyAction === "fix-acl" ? <LoadingIcon label="Fixing ACL" /> : "Fix ACL"}
+                  </button>
+                  <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("enable")}>
+                    {busyAction === "enable" ? <LoadingIcon label="Turning on WebDeploy" /> : "Turn On"}
+                  </button>
+                  <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("disable")}>
+                    {busyAction === "disable" ? <LoadingIcon label="Turning off WebDeploy" /> : "Turn Off"}
+                  </button>
+                </div>
+                {actionResult}
+              </section>
+            )}
+
+            {!!details.fields?.length && !isDetailError && !isDomainManager && !isDeleteWebsite && details.key !== "vs-webdeploy" && details.key !== "remote-iis-manager" && (
+              <form className="function-field-form" onSubmit={(event) => {
+                event.preventDefault();
+                onSubmit(fields.action || defaultWebsiteFunctionAction(details.key));
               }}>
                 <h3>Action Fields</h3>
                 {details.fields.map((field) => (
                   <label key={field}>
                     {humanizeFunctionField(field)}
-                    <input
-                      value={fields[field] ?? ""}
-                      onChange={(event) => onChangeField(field, event.target.value)}
-                      placeholder={humanizeFunctionField(field)}
-                    />
+                    {isMappedPath && field === "target" ? (
+                      <span className="ftp-path-control">
+                        <input
+                          value={fields[field] ?? ""}
+                          readOnly
+                          placeholder={humanizeFunctionField(field)}
+                        />
+                        <button className="secondary-button compact icon-only-button" type="button" onClick={onOpenFolderPicker} title="Select folder" aria-label="Select folder">
+                          <MenuIcon name="folder" />
+                        </button>
+                      </span>
+                    ) : (
+                      <input
+                        value={fields[field] ?? ""}
+                        onChange={(event) => onChangeField(field, event.target.value)}
+                        placeholder={humanizeFunctionField(field)}
+                      />
+                    )}
                   </label>
                 ))}
                 <div className="function-submit-row">
                   {details.key === "site-on-off" ? (
                     <>
-                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("start")}>Start</button>
-                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("stop")}>Stop</button>
+                      <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("start")}>{busyAction === "start" ? <LoadingIcon label="Starting site" /> : "Start"}</button>
+                      <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("stop")}>{busyAction === "stop" ? <LoadingIcon label="Stopping site" /> : "Stop"}</button>
                     </>
                   ) : details.key === "outgoing-port" ? (
                     <>
-                      <button className="primary-button compact" type="button" onClick={() => onSubmit("add")}>Add Rule</button>
-                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("delete")}>Remove Rule</button>
+                      <button className="primary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("add")}>{busyAction === "add" ? <LoadingIcon label="Adding rule" /> : "Add Rule"}</button>
+                      <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("delete")}>{busyAction === "delete" ? <LoadingIcon label="Removing rule" /> : "Remove Rule"}</button>
                     </>
                   ) : details.key === "vs-webdeploy" || details.key === "remote-iis-manager" ? (
                     <>
-                      <button className="primary-button compact" type="button" onClick={() => onSubmit("fix-acl")}>Fix ACL</button>
-                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("enable")}>Turn On</button>
-                      <button className="secondary-button compact" type="button" onClick={() => onSubmit("disable")}>Turn Off</button>
+                      <button className="primary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("fix-acl")}>{busyAction === "fix-acl" ? <LoadingIcon label="Fixing ACL" /> : "Fix ACL"}</button>
+                      <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("enable")}>{busyAction === "enable" ? <LoadingIcon label="Turning on" /> : "Turn On"}</button>
+                      <button className="secondary-button compact" type="button" disabled={Boolean(busyAction)} onClick={() => onSubmit("disable")}>{busyAction === "disable" ? <LoadingIcon label="Turning off" /> : "Turn Off"}</button>
                     </>
                   ) : details.supportsWrite ? (
-                    <button className="primary-button compact" type="submit">Run Function</button>
+                    <button className="primary-button compact" type="submit" disabled={Boolean(busyAction)}>
+                      {busyAction ? <LoadingIcon label={isMappedPath ? "Saving mapped path" : "Running function"} /> : isMappedPath ? "Save" : "Run Function"}
+                    </button>
                   ) : (
                     <span className="status-pill muted">Read only</span>
                   )}
                 </div>
+                {actionResult}
               </form>
             )}
-
-            <div className="function-data-stack">
-              {visibleGroups.map(([name, value]) => (
-                <WebsiteFunctionDataGroup key={name} name={name} value={value} />
-              ))}
-            </div>
           </>
         )}
       </aside>
@@ -3373,10 +4600,32 @@ function defaultWebsiteFunctionField(field, site) {
   if (field === "siteName") return site?.siteName ?? "";
   if (field === "source" || field === "target" || field === "path" || field === "physicalPath") return site?.sitePath ?? "";
   if (field === "enabled") return "true";
+  if (field === "confirmDelete" || field === "deleteFiles") return "false";
   if (field === "action") return "save";
   if (field === "permission") return "write";
   if (field === "password") return "";
+  if (field === "appPath") return "/codex-test-app";
+  if (field === "virtualPath") return "codex-test-vdir";
+  if (field === "extension") return "cdx";
+  if (field === "processor") return "1";
+  if (field === "mimeType") return "text/plain";
+  if (field === "documents") return "index.aspx\r\nindex.php\r\nindex.asp\r\nDefault.htm\r\nDefault.asp\r\nindex.htm\r\nindex.html\r\niisstart.htm\r\ndefault.aspx";
+  if (field === "statusCode") return "404";
   return "";
+}
+
+function defaultWebsiteFunctionAction(key) {
+  return {
+    "create-net-app": "create",
+    "virtual-dir": "create",
+    "mime-type": "add",
+    "script-map": "add",
+    "outgoing-port": "add",
+    "schedule-tasks": "create",
+    "visitor-stats": "enable",
+    "site-guard": "enable",
+    "force-https": "enable"
+  }[key] ?? "save";
 }
 
 function humanizeFunctionField(value) {
@@ -3453,7 +4702,7 @@ function DatabasesSection({ cpId }) {
         server: "database-manager",
         note: details || `Database gateway required for ${action}`
       });
-      setDatabaseMessage(`${action} needs the legacy database gateway before it can run.`);
+      setDatabaseMessage(`${action} needs the database service gateway before it can run.`);
       await reloadActivity();
     } catch (error) {
       setDatabaseMessage(error.message);
@@ -3638,12 +4887,12 @@ function DatabasesSection({ cpId }) {
     }
 
     if (database.engine !== "MSSQL") {
-      setDatabaseMessage("Run SQL File is mapped for MSSQL worker jobs. MySQL import still needs the exact legacy gateway.");
+      setDatabaseMessage("Run SQL File is available for MSSQL worker jobs. MySQL import is not enabled yet.");
       return;
     }
 
     if (sqlDraft.action !== "Run SQL File") {
-      setDatabaseMessage(`${sqlDraft.action} is not mapped to a legacy worker job yet.`);
+      setDatabaseMessage(`${sqlDraft.action} is not enabled for worker jobs yet.`);
       return;
     }
 
@@ -3683,7 +4932,7 @@ function DatabasesSection({ cpId }) {
 
       <div className="database-toolbar panel-card">
         <div className="database-actions">
-          <button className="primary-button compact" type="button" onClick={() => setDatabaseMessage("Create Database form is ready below. Fill in the database details and submit to call the legacy database create gateway.")}>+ Database</button>
+          <button className="primary-button compact" type="button" onClick={() => setDatabaseMessage("Create Database form is ready below. Fill in the database details and submit.")}>+ Database</button>
           <button className="secondary-button compact" type="button" onClick={() => setDatabaseMessage("Database quota changes are handled through Add-On purchases and product quota mapping. Use Account Panel > Add-On for extra database quota.")}>+ Quota</button>
           <button className="secondary-button compact" type="button" onClick={() => setDatabaseMessage("Automated Backups form is ready above. Choose a database, hour, and retention window.")}>+ Advanced Backup</button>
           <button className="secondary-button compact" type="button" onClick={() => setDatabaseMessage("Run SQL form is ready below. Choose an MSSQL database and SQL file path.")}>Run SQL File</button>
@@ -3709,7 +4958,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Scheduled database backups</span>
             <h3>Automated Backups</h3>
-            <p>Enable the legacy custom database backup schedule for a selected MSSQL or MySQL database.</p>
+            <p>Enable a custom database backup schedule for a selected MSSQL or MySQL database.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitBackupDraft}>
             <label>
@@ -3751,7 +5000,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Create Database</span>
             <h3>MSSQL / MySQL Draft</h3>
-            <p>Needs the legacy database create gateway for CP prefix, login, quota, and remote server provisioning.</p>
+            <p>Creates a database with the correct account prefix, login, quota, and server assignment.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitNewDatabaseDraft}>
             <label>
@@ -3789,7 +5038,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Restore / Backup</span>
             <h3>Server Backup</h3>
-            <p>Queues backup, restore, and compatible database worker jobs through the legacy worker.</p>
+            <p>Queues backup, restore, and compatible database worker jobs.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitRestoreDraft}>
             <label>
@@ -3822,7 +5071,7 @@ function DatabasesSection({ cpId }) {
           <div>
             <span className="status-pill blue">Run SQL</span>
             <h3>SQL File Worker</h3>
-            <p>Queues a legacy MSSQL file execution job for the selected database.</p>
+            <p>Queues an MSSQL file execution job for the selected database.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitSqlDraft}>
             <label>
@@ -3883,7 +5132,7 @@ function DatabasesSection({ cpId }) {
             <div>
               <span className="status-pill orange">Recovery</span>
               <h3>Deleted Databases</h3>
-              <p>Recoverable deleted database rows from the seven-day legacy recovery window.</p>
+              <p>Recoverable deleted database rows from the seven-day recovery window.</p>
             </div>
             <button className="secondary-button compact" type="button" onClick={() => setShowDeletedDatabases(false)}>Close</button>
           </div>
@@ -3975,7 +5224,7 @@ function DatabasesSection({ cpId }) {
                       }
 
                       setSqlDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}` }));
-                      setDatabaseMessage(database.engine === "MSSQL" ? "Use Run SQL to queue a SQL file for this database." : "MySQL import needs the exact legacy import gateway before it can be enabled.");
+                      setDatabaseMessage(database.engine === "MSSQL" ? "Use Run SQL to queue a SQL file for this database." : "MySQL import is not enabled yet.");
                     }}
                   />
                 ))}
@@ -4019,7 +5268,7 @@ function DatabasesSection({ cpId }) {
                       <IconActionButton label="Connection" onClick={() => showConnectionString(database)} />
                       <IconActionButton label="More" onClick={() => {
                         setSqlDraft((draft) => ({ ...draft, databaseKey: `${database.engine}:${database.databaseId}` }));
-                        setDatabaseMessage(database.engine === "MSSQL" ? "Use Run SQL to queue a SQL file for this database." : "MySQL import needs the exact legacy import gateway before it can be enabled.");
+                        setDatabaseMessage(database.engine === "MSSQL" ? "Use Run SQL to queue a SQL file for this database." : "MySQL import is not enabled yet.");
                       }} />
                       <IconActionButton label="Delete" onClick={() => deleteDatabase(database)} />
                     </div>
@@ -4207,7 +5456,7 @@ function EmailsSection({ cpId }) {
   }
 
   function deleteEmailDomain(domain) {
-    if (!window.confirm(`Delete email domain ${domain.domain}? This calls the legacy SmarterMail delete flow and then removes the hosted email DB row.`)) return;
+    if (!window.confirm(`Delete email domain ${domain.domain}? This removes the mail service domain and its hosted email record.`)) return;
     runEmailDomainRequest(
       domain,
       `/api/hosting/emails/${encodeURIComponent(domain.domain)}?cpId=${encodeURIComponent(cpId)}`,
@@ -4524,7 +5773,7 @@ function FtpSection({ cpId }) {
   const [isLoadingFtp, setIsLoadingFtp] = useState(true);
   const [ftpError, setFtpError] = useState("");
   const [ftpMessage, setFtpMessage] = useState("");
-  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", password: "CodexFtp123!", path: "/" });
+  const [ftpDraft, setFtpDraft] = useState({ login: "codex-test-ftp", password: "CodexFtp123!", confirmPassword: "CodexFtp123!", path: "/" });
   const [isFtpCreateOpen, setIsFtpCreateOpen] = useState(false);
   const [isFtpMutating, setIsFtpMutating] = useState(false);
   const [isFtpFolderPickerOpen, setIsFtpFolderPickerOpen] = useState(false);
@@ -4556,6 +5805,7 @@ function FtpSection({ cpId }) {
   }, [cpId]);
 
   const users = ftpDashboard?.users ?? [];
+  const visibleUsers = users.filter((user) => !user.isRootUser);
   const totals = ftpDashboard?.totals ?? { total: 0, rootUsers: 0, extraUsers: 0 };
   useEffect(() => {
     if (!ftpDashboard?.cpLogin) return;
@@ -4623,6 +5873,12 @@ function FtpSection({ cpId }) {
   async function submitFtpDraft(event) {
     event.preventDefault();
     setFtpMessage("");
+    if (ftpDraft.password !== ftpDraft.confirmPassword) {
+      setFtpMessage("FTP passwords do not match.");
+      return;
+    }
+
+    setIsFtpMutating(true);
     try {
       const payload = {
         cpId,
@@ -4634,11 +5890,13 @@ function FtpSection({ cpId }) {
       };
       const result = await provisionHosting("/api/hosting/ftp/users", cpId, payload);
       setFtpMessage(result.message);
-      setFtpDraft((draft) => ({ ...draft, login: "codex-test-ftp", password: "CodexFtp123!", path: "/" }));
+      setFtpDraft((draft) => ({ ...draft, login: "codex-test-ftp", password: "CodexFtp123!", confirmPassword: "CodexFtp123!", path: "/" }));
       setIsFtpCreateOpen(false);
       await loadFtp();
     } catch (error) {
       setFtpMessage(error.message);
+    } finally {
+      setIsFtpMutating(false);
     }
   }
 
@@ -4648,7 +5906,7 @@ function FtpSection({ cpId }) {
       return;
     }
 
-    if (!window.confirm(`Delete FTP user ${displayFtpLogin(user.login, ftpDashboard?.cpLogin)}? This deletes the cp_config_FTP row, matching active Classic ASP behavior.`)) return;
+    if (!window.confirm(`Delete FTP user ${displayFtpLogin(user.login, ftpDashboard?.cpLogin)}? This removes the FTP account record.`)) return;
     try {
       await runFtpRequest(`/api/hosting/ftp/users/${encodeURIComponent(user.login)}?cpId=${encodeURIComponent(cpId)}`, {
         method: "DELETE"
@@ -4668,7 +5926,7 @@ function FtpSection({ cpId }) {
         <div>
           <span className="status-pill blue">Live FTP</span>
           <h2>FTP Manager</h2>
-          <p>FTP account inventory from cp_config_FTP. Create and delete follow the active Classic ASP DB flow.</p>
+          <p>FTP account inventory for this hosting plan. Create and delete update the live FTP account records.</p>
         </div>
         <div className="database-total-grid">
           <div><span>Total</span><strong>{totals.total}</strong></div>
@@ -4681,87 +5939,38 @@ function FtpSection({ cpId }) {
       <div className="database-toolbar panel-card">
         <div className="database-actions">
           <button className="primary-button compact" type="button" onClick={() => {
-            setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", path: "/" });
+            setFtpDraft({ login: "codex-test-ftp", password: "CodexFtp123!", confirmPassword: "CodexFtp123!", path: "/" });
             setIsFtpCreateOpen(true);
           }}>+ FTP User</button>
         </div>
       </div>
 
-      {isFtpCreateOpen && <article className="panel-card advance-form-card">
-        <div>
-          <span className="status-pill blue">FTP User Draft</span>
-          <h3>Create FTP User</h3>
-          <p>Matches the active Classic ASP Add FTP User form: login, password, confirm password, and folder.</p>
-        </div>
-        <form className="advance-inline-form" onSubmit={submitFtpDraft}>
-          <label>
-            Login
-            <input value={ftpDraft.login} onChange={(event) => setFtpDraft((draft) => ({ ...draft, login: event.target.value }))} />
-          </label>
-          <label>
-            Password
-            <input type="password" value={ftpDraft.password} onChange={(event) => setFtpDraft((draft) => ({ ...draft, password: event.target.value }))} />
-          </label>
-          <label>
-            Path
-            <span className="ftp-path-control">
-              <input value={ftpDraft.path} readOnly />
-              <IconActionButton label="Select Folder" icon="folder" onClick={openFtpFolderPicker} />
-            </span>
-          </label>
-          <button className="primary-button compact" type="submit" disabled={isFtpMutating}>Create FTP User</button>
-          <button className="secondary-button compact" type="button" onClick={() => setIsFtpCreateOpen(false)}>Cancel</button>
-        </form>
-      </article>}
+      {isFtpCreateOpen && (
+        <FtpCreateDrawer
+          draft={ftpDraft}
+          isBusy={isFtpMutating}
+          onChange={setFtpDraft}
+          onClose={() => {
+            if (isFtpMutating) return;
+            setIsFtpCreateOpen(false);
+          }}
+          onOpenFolderPicker={openFtpFolderPicker}
+          onSubmit={submitFtpDraft}
+        />
+      )}
 
       {isFtpFolderPickerOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setIsFtpFolderPickerOpen(false);
-        }}>
-          <article className="panel-card confirm-modal ftp-folder-modal" role="dialog" aria-modal="true" aria-label="Select FTP folder">
-            <div className="ftp-folder-modal-header">
-              <div>
-                <span className="status-pill blue">Folder</span>
-                <h2>Select FTP Root Folder</h2>
-                <p>{normalizeFtpPickerPath(ftpFolderPicker?.currentPath || ftpDraft.path || "/", ftpDashboard?.cpLogin)}</p>
-              </div>
-              <button className="secondary-button compact icon-only-button" type="button" title="Close" aria-label="Close" onClick={() => setIsFtpFolderPickerOpen(false)}>
-                <MenuIcon name="close" />
-              </button>
-            </div>
-            <div className="ftp-folder-actions">
-              <button className="secondary-button compact" type="button" disabled={isLoadingFtpFolders} onClick={() => browseFtpFolders("/")}>
-                <MenuIcon name="folder" />
-                Root
-              </button>
-              <button className="secondary-button compact" type="button" disabled={isLoadingFtpFolders || !ftpFolderPicker?.parentPath} onClick={() => browseFtpFolders(ftpFolderPicker?.parentPath || "/")}>
-                <MenuIcon name="back" />
-                Parent
-              </button>
-              <button className="primary-button compact" type="button" onClick={() => chooseFtpFolder(ftpFolderPicker?.currentPath || "/")}>
-                Select This Folder
-              </button>
-            </div>
-            {isLoadingFtpFolders && <LoadingState label="Loading folders" />}
-            {ftpFolderError && <p className="renewal-action-message">{ftpFolderError}</p>}
-            {!isLoadingFtpFolders && !ftpFolderError && (
-              <div className="ftp-folder-list">
-                {(ftpFolderPicker?.folders ?? []).length === 0 && <p className="empty-state-text">No folders found here.</p>}
-                {(ftpFolderPicker?.folders ?? []).map((folder) => (
-                  <button
-                    className="ftp-folder-row"
-                    key={folder.relativePath || folder.name}
-                    type="button"
-                    onClick={() => browseFtpFolders(folder.relativePath || folder.name)}
-                  >
-                    <MenuIcon name="folder" />
-                    <span>{folder.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </article>
-        </div>
+        <FolderPickerModal
+          title="Select FTP Root Folder"
+          currentPath={normalizeFtpPickerPath(ftpFolderPicker?.currentPath || ftpDraft.path || "/", ftpDashboard?.cpLogin)}
+          folders={ftpFolderPicker?.folders ?? []}
+          parentPath={ftpFolderPicker?.parentPath || ""}
+          isLoading={isLoadingFtpFolders}
+          error={ftpFolderError}
+          onBrowse={browseFtpFolders}
+          onChoose={() => chooseFtpFolder(ftpFolderPicker?.currentPath || "/")}
+          onClose={() => setIsFtpFolderPickerOpen(false)}
+        />
       )}
 
       {isLoadingFtp && <LoadingState label="Loading FTP users" />}
@@ -4772,7 +5981,7 @@ function FtpSection({ cpId }) {
           <IconActionButton label="Retry" onClick={loadFtp} />
         </div>
       )}
-      {!isLoadingFtp && !ftpError && !users.length && (
+      {!isLoadingFtp && !ftpError && !visibleUsers.length && (
         <div className="panel-card cp-placeholder">
           <span className="status-pill muted">No FTP users</span>
           <h2>No FTP users found</h2>
@@ -4780,7 +5989,7 @@ function FtpSection({ cpId }) {
         </div>
       )}
 
-      {!!users.length && (
+      {!!visibleUsers.length && (
         <div className="table-wrap website-table">
           <table>
             <thead>
@@ -4793,7 +6002,7 @@ function FtpSection({ cpId }) {
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
+              {visibleUsers.map((user) => (
                 <tr key={user.login}>
                   <td>
                     <span className="ftp-login-cell">
@@ -4829,6 +6038,58 @@ function FtpSection({ cpId }) {
   );
 }
 
+function FtpCreateDrawer({ draft, isBusy, onChange, onClose, onOpenFolderPicker, onSubmit }) {
+  const passwordMismatch = Boolean(draft.password || draft.confirmPassword) && draft.password !== draft.confirmPassword;
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !isBusy) onClose();
+    }}>
+      <aside className="function-drawer panel-card settings-drawer" aria-label="Create FTP User" role="dialog" aria-modal="true">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">FTP</span>
+            <h2>Create FTP User</h2>
+            <p>Create an FTP user with login, password, confirm password, and folder access.</p>
+          </div>
+          <div className="function-drawer-actions">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} title="Close" aria-label="Close">
+              <MenuIcon name="x" />
+            </button>
+          </div>
+        </header>
+
+        <form className="function-field-form compact-site-name-form" onSubmit={onSubmit}>
+          <label>
+            Login
+            <input value={draft.login} onChange={(event) => onChange((current) => ({ ...current, login: event.target.value }))} />
+          </label>
+          <label>
+            Password
+            <input type="password" value={draft.password} onChange={(event) => onChange((current) => ({ ...current, password: event.target.value }))} />
+          </label>
+          <label>
+            Confirm Password
+            <input type="password" value={draft.confirmPassword ?? ""} onChange={(event) => onChange((current) => ({ ...current, confirmPassword: event.target.value }))} />
+          </label>
+          {passwordMismatch && <p className="field-warning">Passwords do not match.</p>}
+          <label>
+            Path
+            <span className="ftp-path-control">
+              <input value={draft.path} readOnly />
+              <IconActionButton label="Select Folder" icon="folder" onClick={onOpenFolderPicker} disabled={isBusy} />
+            </span>
+          </label>
+          <div className="function-submit-row">
+            <button className="primary-button compact" type="submit" disabled={isBusy || passwordMismatch}>
+              {isBusy ? <LoadingIcon label="Creating FTP user" /> : "Create FTP User"}
+            </button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
 function displayFtpLogin(login, cpLogin) {
   const text = String(login ?? "").trim();
   if (cpLogin && text.toLowerCase() === String(cpLogin).toLowerCase()) {
@@ -4858,36 +6119,35 @@ function escapeRegExp(value) {
   return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function FilesSection({ cpId }) {
+function FilesSection({ cpId, initialPath = "", showBackToWebsites = false, onBackToWebsites }) {
   const { activity, isLoading, error, reload } = useHostingActivity(cpId);
   const fileUploadInputRef = useRef(null);
+  const initialPathRef = useRef("");
   const [sitesDashboard, setSitesDashboard] = useState(null);
   const [securityDashboard, setSecurityDashboard] = useState(null);
-  const [fileAgentHealth, setFileAgentHealth] = useState(null);
   const [sitesError, setSitesError] = useState("");
   const [filesMessage, setFilesMessage] = useState("");
   const [fileManagerPreview, setFileManagerPreview] = useState(null);
   const [currentFilePath, setCurrentFilePath] = useState("");
-  const [fileSearch, setFileSearch] = useState("");
   const [fileEditor, setFileEditor] = useState(null);
   const [isFileSaving, setIsFileSaving] = useState(false);
-  const [protectionDraft, setProtectionDraft] = useState({
-    site: "sample.com",
-    path: "/www/sample.com",
-    action: "Enable Password Protection",
-    username: "protected-user"
-  });
-  const [migrationDraft, setMigrationDraft] = useState({
-    source: "legacy-panel",
-    target: "/www/sample.com",
-    action: "Repair Migration Permissions"
-  });
+  const [isFileManagerBrowsing, setIsFileManagerBrowsing] = useState(false);
+  const [isFileManagerMutating, setIsFileManagerMutating] = useState(false);
+  const [fileAction, setFileAction] = useState(null);
+  const [fileActionDraft, setFileActionDraft] = useState({});
+  const [isFileFolderPickerOpen, setIsFileFolderPickerOpen] = useState(false);
+  const [isLoadingFileFolders, setIsLoadingFileFolders] = useState(false);
+  const [fileFolderPicker, setFileFolderPicker] = useState(null);
+  const [fileFolderError, setFileFolderError] = useState("");
+  const [deleteFileItem, setDeleteFileItem] = useState(null);
+  const [isFileWorkQueueOpen, setIsFileWorkQueueOpen] = useState(false);
+  const [deletingQueueId, setDeletingQueueId] = useState(0);
   const fileJobs = (activity?.jobs ?? []).filter((job) =>
     ["zip", "Unzip", "perm", "scanvirus"].includes(job.type) ||
     job.server === "file-manager" ||
     String(job.from ?? "").toLowerCase().startsWith("/www/")
   );
-  const totals = activity?.totals ?? { total: 0, pending: 0, running: 0, errors: 0 };
+  const activeFileQueueCount = fileJobs.filter((job) => job.statusCode === 0 || job.statusCode === 1).length;
 
   async function loadFileSites() {
     setSitesError("");
@@ -4908,10 +6168,6 @@ function FilesSection({ cpId }) {
           }
         })
         .catch(() => { });
-      fetch(hostingApiUrl("/api/hosting/files/agent-health", cpId))
-        .then((response) => response.json().then((healthResult) => ({ response, healthResult })))
-        .then(({ healthResult }) => setFileAgentHealth(healthResult))
-        .catch(() => setFileAgentHealth({ success: false, message: "Unable to reach file-manager agent health check." }));
     } catch {
       setSitesError("Unable to reach site folder service.");
     }
@@ -4922,12 +6178,10 @@ function FilesSection({ cpId }) {
   }, [cpId]);
 
   const siteFolders = (sitesDashboard?.sites ?? []).slice(0, 12);
-  const [viewMode, setViewMode] = useSectionViewMode("cp-files", siteFolders.length);
   const securityBySite = new Map((securityDashboard?.siteSecurityRows ?? []).map((row) => [String(row.siteUid), row]));
   const managerFolders = fileManagerPreview?.folders ?? [];
   const managerFiles = fileManagerPreview?.files ?? [];
   const managerItems = [...managerFolders, ...managerFiles];
-  const [managerViewMode, setManagerViewMode] = useSectionViewMode("cp-file-manager", managerItems.length);
 
   async function queueFileTest(action, site = null, details = "") {
     setFilesMessage("");
@@ -4944,7 +6198,7 @@ function FilesSection({ cpId }) {
       const targetSite = site ?? siteFolders[0] ?? null;
       const sourcePath = targetSite
         ? legacySitePath(targetSite, sitesDashboard?.cpLogin)
-        : migrationDraft.source || protectionDraft.path || "\\www";
+        : "\\www";
       const destination = action === "Zip"
         ? `${sourcePath}.zip`
         : action === "Unzip"
@@ -4986,12 +6240,26 @@ function FilesSection({ cpId }) {
     }
   }
 
-  async function browseFileManager(path = currentFilePath, searchValue = fileSearch) {
+  async function deleteFileQueueItem(id) {
     setFilesMessage("");
+    setDeletingQueueId(id);
+    try {
+      const result = await deleteHostingWorkqueue(cpId, id);
+      setFilesMessage(result.message);
+      await reload();
+    } catch (error) {
+      setFilesMessage(error.message);
+    } finally {
+      setDeletingQueueId(0);
+    }
+  }
+
+  async function browseFileManager(path = currentFilePath) {
+    setFilesMessage("");
+    setIsFileManagerBrowsing(true);
     const nextPath = path ?? "";
     const params = new URLSearchParams();
     params.set("path", nextPath);
-    if (searchValue) params.set("search", searchValue);
     try {
       const response = await fetch(hostingApiUrl(`/api/hosting/files/browse?${params.toString()}`, cpId));
       const result = await response.json().catch(() => null);
@@ -5000,15 +6268,22 @@ function FilesSection({ cpId }) {
         setCurrentFilePath(result.fileManager.relativePath || nextPath);
       }
       setFilesMessage(formatFileManagerMessage(result?.message ?? "File manager browse completed."));
-    } catch {
-      setFilesMessage("Unable to reach file manager API.");
+    } catch (error) {
+      setFilesMessage(error.message);
+    } finally {
+      setIsFileManagerBrowsing(false);
     }
   }
 
-  function submitFileSearch(event) {
-    event.preventDefault();
-    browseFileManager(currentFilePath, fileSearch);
-  }
+  useEffect(() => {
+    const nextInitialPath = String(initialPath ?? "").trim();
+    const browseKey = `${cpId}:${nextInitialPath || "/"}`;
+    if (!cpId || initialPathRef.current === browseKey) return;
+
+    initialPathRef.current = browseKey;
+    setCurrentFilePath(nextInitialPath);
+    browseFileManager(nextInitialPath);
+  }, [cpId, initialPath]);
 
   function openFileManagerItem(item) {
     if (item?.isFolder) {
@@ -5016,28 +6291,131 @@ function FilesSection({ cpId }) {
     }
   }
 
-  async function createTestFolder() {
-    setFilesMessage("");
-    try {
-      const response = await fetch("/api/hosting/files/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cpId,
-          action: "new-folder",
-          path: "",
-          name: `codex-test-${Date.now()}`,
-          targetPath: "",
-          targetName: "",
-          overwrite: false
-        })
-      });
-      const result = await response.json().catch(() => null);
-      setFileManagerPreview(result?.fileManager ?? null);
-      setFilesMessage(formatFileManagerMessage(result?.message ?? "File manager action completed."));
-    } catch {
-      setFilesMessage("Unable to reach file manager API.");
+  async function createNewFolder(event) {
+    event?.preventDefault();
+    const folderName = String(fileActionDraft.name ?? "").trim();
+    if (!folderName) {
+      setFilesMessage("Folder name is required.");
+      return;
     }
+
+    setFilesMessage("");
+    setIsFileManagerMutating(true);
+    try {
+      const result = await runFileManagerAction({
+        action: "new-folder",
+        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        name: folderName,
+        targetPath: "",
+        targetName: "",
+        overwrite: false
+      });
+      setFilesMessage(result.message);
+      await browseFileManager(currentFilePath);
+      closeFileAction();
+    } catch (error) {
+      setFilesMessage(error.message);
+    } finally {
+      setIsFileManagerMutating(false);
+    }
+  }
+
+  async function createNewFile() {
+    const fileName = String(fileActionDraft.name ?? "").trim();
+    if (!fileName) {
+      setFilesMessage("File name is required.");
+      return;
+    }
+
+    setFilesMessage("");
+    setIsFileManagerMutating(true);
+    try {
+      const result = await runFileManagerAction({
+        action: "new-file",
+        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        name: fileName,
+        targetPath: "",
+        targetName: fileName,
+        overwrite: false,
+        content: ""
+      });
+      setFilesMessage(result.message);
+      await browseFileManager(currentFilePath);
+      setFileEditor({
+        name: fileName,
+        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        content: "",
+        originalContent: ""
+      });
+      closeFileAction();
+    } catch (error) {
+      setFilesMessage(error.message);
+    } finally {
+      setIsFileManagerMutating(false);
+    }
+  }
+
+  function openFileAction(action, item = null) {
+    const basePath = currentFilePath || fileManagerPreview?.relativePath || "/";
+    const defaults = {
+      name: "",
+      targetName: "",
+      targetPath: basePath || "/",
+      overwrite: false
+    };
+
+    if (action === "new-file") {
+      defaults.name = "";
+    } else if (action === "rename") {
+      defaults.targetName = item?.name ?? "";
+    } else if (action === "zip") {
+      defaults.targetName = item?.name ? `${item.name}.zip` : "";
+    }
+
+    setFilesMessage("");
+    setFileAction({ action, item });
+    setFileActionDraft(defaults);
+  }
+
+  function closeFileAction() {
+    setFileAction(null);
+    setFileActionDraft({});
+    setIsFileFolderPickerOpen(false);
+    setFileFolderError("");
+  }
+
+  async function browseFileActionFolders(path = fileActionDraft.targetPath || "/") {
+    setIsLoadingFileFolders(true);
+    setFileFolderError("");
+    try {
+      const params = new URLSearchParams({
+        path: path === "/" ? "" : path,
+        sortBy: "name",
+        orderBy: "asc"
+      });
+      const response = await fetch(hostingApiUrl(`/api/hosting/files/browse?${params.toString()}`, cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setFileFolderError(formatFileManagerMessage(result?.message ?? "Unable to load folders."));
+        return;
+      }
+
+      setFileFolderPicker(result.fileManager);
+    } catch {
+      setFileFolderError("Unable to reach file manager folder API.");
+    } finally {
+      setIsLoadingFileFolders(false);
+    }
+  }
+
+  function openFileFolderPicker() {
+    setIsFileFolderPickerOpen(true);
+    browseFileActionFolders(fileActionDraft.targetPath || "/");
+  }
+
+  function chooseFileActionFolder(path) {
+    setFileActionDraft((draft) => ({ ...draft, targetPath: normalizeFtpPickerPath(path, sitesDashboard?.cpLogin) }));
+    setIsFileFolderPickerOpen(false);
   }
 
   async function runFileManagerAction(payload) {
@@ -5130,32 +6508,80 @@ function FilesSection({ cpId }) {
         encoding: ""
       });
       setFilesMessage(result.message);
-      await browseFileManager(currentFilePath, fileSearch);
+      await browseFileManager(currentFilePath);
     } catch (error) {
       setFilesMessage(error.message);
     }
   }
 
   async function runFileItemAction(action, item) {
+    if (!item) return false;
+    const folderToReload = currentFilePath || fileManagerPreview?.relativePath || "";
+    let targetPath = folderToReload;
+    let targetName = "";
+    let overwrite = false;
+
+    if (action === "rename") {
+      const nextName = String(fileActionDraft.targetName ?? "").trim();
+      if (!nextName || nextName === item.name) {
+        setFilesMessage("Enter a new file or folder name.");
+        return false;
+      }
+      targetName = nextName;
+    }
+
+    if (action === "copy" || action === "move") {
+      const destination = String(fileActionDraft.targetPath ?? "").trim();
+      if (!destination) {
+        setFilesMessage("Choose a destination folder path.");
+        return false;
+      }
+      targetPath = destination;
+      overwrite = Boolean(fileActionDraft.overwrite);
+    }
+
+    if (action === "zip") {
+      const zipName = String(fileActionDraft.targetName ?? "").trim();
+      if (!zipName) {
+        setFilesMessage("Zip file name is required.");
+        return false;
+      }
+      targetName = zipName;
+    }
+
+    if (action === "unzip") {
+      const destination = String(fileActionDraft.targetPath ?? "").trim();
+      if (!destination) {
+        setFilesMessage("Choose a destination folder path.");
+        return false;
+      }
+      targetPath = destination;
+    }
+
     setFilesMessage("");
+    setIsFileManagerMutating(true);
     try {
       const result = await runFileManagerAction({
         action,
-        path: currentFilePath || fileManagerPreview?.relativePath || "",
+        path: folderToReload,
         name: item.name,
-        targetPath: currentFilePath || fileManagerPreview?.relativePath || "",
-        targetName: action === "zip" ? `${item.name}.zip` : "",
-        overwrite: false
+        targetPath,
+        targetName,
+        overwrite
       });
       setFileManagerPreview(result?.fileManager ?? fileManagerPreview);
       setFilesMessage(result.message);
       if (action === "zip" || action === "unzip") {
         await reload();
-      } else {
-        await browseFileManager(currentFilePath, fileSearch);
       }
+      await browseFileManager(folderToReload);
+      closeFileAction();
+      return true;
     } catch (error) {
       setFilesMessage(error.message);
+      return false;
+    } finally {
+      setIsFileManagerMutating(false);
     }
   }
 
@@ -5177,7 +6603,7 @@ function FilesSection({ cpId }) {
       });
       setFilesMessage(result.message);
       setFileEditor((editor) => editor ? { ...editor, originalContent: editor.content } : editor);
-      await browseFileManager(fileEditor.path, fileSearch);
+      await browseFileManager(fileEditor.path);
     } catch (error) {
       setFilesMessage(error.message);
     } finally {
@@ -5185,41 +6611,8 @@ function FilesSection({ cpId }) {
     }
   }
 
-  function submitProtectionDraft(event) {
-    event.preventDefault();
-    queueFileTest(
-      protectionDraft.action,
-      null,
-      `Site protection request: site ${protectionDraft.site}; path ${protectionDraft.path}; user ${protectionDraft.username}; action ${protectionDraft.action}`
-    );
-  }
-
-  function submitMigrationDraft(event) {
-    event.preventDefault();
-    queueFileTest(
-      migrationDraft.action,
-      null,
-      `Migration repair request: source ${migrationDraft.source}; target ${migrationDraft.target}; action ${migrationDraft.action}`
-    );
-  }
-
   return (
     <section className="cp-inventory-section">
-      <article className="panel-card cp-inventory-summary">
-        <div>
-          <span className="status-pill blue">File Manager</span>
-          <h2>File Manager</h2>
-          <p>File operations use the legacy work queue for long-running zip, unzip, permission, and scan jobs.</p>
-        </div>
-        <div className="database-total-grid">
-          <div><span>Recent Jobs</span><strong>{fileJobs.length}</strong></div>
-          <div><span>Pending</span><strong>{totals.pending}</strong></div>
-          <div><span>Running</span><strong>{totals.running}</strong></div>
-          <div><span>Errors</span><strong>{totals.errors}</strong></div>
-        </div>
-        <RefreshButton onClick={() => { reload(); loadFileSites(); }} />
-      </article>
-
       {!!securityDashboard?.siteSecurityRows?.length && (
         <article className="panel-card site-security-summary-card">
           <div className="database-card-header">
@@ -5247,41 +6640,23 @@ function FilesSection({ cpId }) {
         </article>
       )}
 
-      {fileAgentHealth && (
-        <article className="panel-card site-security-summary-card">
-          <div className="database-card-header">
-            <div>
-              <span className={fileAgentHealth.success ? "status-pill" : "status-pill muted"}>
-                {fileAgentHealth.success ? "Agents healthy" : "Agent attention"}
-              </span>
-              <h3>File Manager Agents</h3>
-              <p>{fileAgentHealth.message}</p>
-            </div>
-            <MenuIcon name="server" />
-          </div>
-          <div className="service-status-grid">
-            {[
-              ["Browse", fileAgentHealth.browse],
-              ["Action", fileAgentHealth.action]
-            ].map(([label, agent]) => (
-              <div className="service-status-card" key={label}>
-                <div><span>{label}</span><strong>{agent?.success ? "OK" : "Check"}</strong></div>
-                <p>{agent?.path || "Agent path not available"}</p>
-              </div>
-            ))}
-          </div>
-        </article>
-      )}
-
       <div className="database-toolbar panel-card">
         <div className="database-actions">
+          {showBackToWebsites && (
+            <button className="secondary-button compact file-manager-back-button" type="button" onClick={onBackToWebsites}>
+              <MenuIcon name="back" />
+              <span>Back to Websites</span>
+            </button>
+          )}
           <IconActionButton label="Browse Root" className="primary-button compact icon-only-button" onClick={() => browseFileManager("")} />
           <IconActionButton label="Parent Folder" disabled={!fileManagerPreview?.parentPath} onClick={() => browseFileManager(fileManagerPreview?.parentPath || "")} />
-          <IconActionButton label="New Folder" onClick={createTestFolder} />
+          <IconActionButton label="New Folder" icon="new-folder" disabled={isFileManagerMutating} onClick={() => openFileAction("new-folder")} />
+          <IconActionButton label="New File" icon="new-file" disabled={isFileManagerMutating} onClick={() => openFileAction("new-file")} />
           <IconActionButton label="Upload" onClick={openUploadPicker} />
-          {["Zip", "Unzip", "Permissions", "Scan Virus", "Lock Site", "Unlock Site", "Raw Logs"].map((action) => (
-            <IconActionButton label={action} key={action} onClick={() => queueFileTest(action)} />
-          ))}
+          <button className="secondary-button compact icon-only-button badge-icon-button" type="button" title="Work Queue" aria-label="Work Queue" onClick={() => setIsFileWorkQueueOpen(true)}>
+            <MenuIcon name="work-queue" />
+            {activeFileQueueCount > 0 && <span className="icon-count-badge">{activeFileQueueCount}</span>}
+          </button>
           <input
             ref={fileUploadInputRef}
             type="file"
@@ -5289,17 +6664,66 @@ function FilesSection({ cpId }) {
             onChange={uploadFileManagerItem}
           />
         </div>
-        <form className="file-search-form" onSubmit={submitFileSearch}>
-          <MenuIcon name="search" />
-          <input
-            value={fileSearch}
-            onChange={(event) => setFileSearch(event.target.value)}
-            placeholder="Search files..."
-          />
-          <IconActionButton label="Search" className="primary-button compact icon-only-button" type="submit" />
-        </form>
-        <ViewModeToggle viewMode={managerViewMode} onChange={setManagerViewMode} label="File manager view mode" />
+        <RefreshButton onClick={() => { reload(); loadFileSites(); browseFileManager(currentFilePath); }} />
       </div>
+      {fileAction && (
+        <FileManagerActionDrawer
+          action={fileAction.action}
+          item={fileAction.item}
+          draft={fileActionDraft}
+          isBusy={isFileManagerMutating}
+          onChange={setFileActionDraft}
+          onCancel={closeFileAction}
+          onOpenFolderPicker={openFileFolderPicker}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (fileAction.action === "new-file") {
+              createNewFile();
+              return;
+            }
+            if (fileAction.action === "new-folder") {
+              createNewFolder(event);
+              return;
+            }
+            runFileItemAction(fileAction.action, fileAction.item);
+          }}
+        />
+      )}
+      {isFileFolderPickerOpen && (
+        <FolderPickerModal
+          title="Select Destination Folder"
+          currentPath={normalizeFtpPickerPath(fileFolderPicker?.currentPath || fileActionDraft.targetPath || "/", sitesDashboard?.cpLogin)}
+          folders={fileFolderPicker?.folders ?? []}
+          parentPath={fileFolderPicker?.parentPath || ""}
+          isLoading={isLoadingFileFolders}
+          error={fileFolderError}
+          onBrowse={browseFileActionFolders}
+          onChoose={() => chooseFileActionFolder(fileFolderPicker?.currentPath || "/")}
+          onClose={() => setIsFileFolderPickerOpen(false)}
+        />
+      )}
+      {deleteFileItem && (
+        <FileDeleteConfirmModal
+          item={deleteFileItem}
+          isBusy={isFileManagerMutating}
+          onClose={() => setDeleteFileItem(null)}
+          onConfirm={async () => {
+            const didDelete = await runFileItemAction("delete", deleteFileItem);
+            if (didDelete) setDeleteFileItem(null);
+          }}
+        />
+      )}
+      {isFileWorkQueueOpen && (
+        <FileWorkQueueDrawer
+          jobs={fileJobs}
+          isLoading={isLoading}
+          error={error}
+          deletingId={deletingQueueId}
+          onClose={() => setIsFileWorkQueueOpen(false)}
+          onRetry={reload}
+          onDelete={deleteFileQueueItem}
+        />
+      )}
       {filesMessage && <p className="sandbox-message">{filesMessage}</p>}
 
       <article className="panel-card file-root-card">
@@ -5307,65 +6731,40 @@ function FilesSection({ cpId }) {
           <div>
             <span className="status-pill">Root</span>
             <h3>{fileManagerPreview?.relativePath || currentFilePath || "/www"}</h3>
-            <p>Remote browsing and guarded file actions use encrypted JSON agents on the hosting server.</p>
           </div>
           <MenuIcon name="folder" />
         </div>
         <div className="file-manager-meta">
           <span>{managerFolders.length} folders</span>
           <span>{managerFiles.length} files</span>
-          <span>{fileManagerPreview?.url || "Gateway not called yet"}</span>
         </div>
 
-        {!fileManagerPreview && (
+        {isFileManagerBrowsing && (
+          <div className="panel-card website-list-loading file-manager-loading">
+            <LoadingIcon label="Loading files" />
+          </div>
+        )}
+        {isFileManagerMutating && (
+          <div className="panel-card website-list-loading file-manager-loading">
+            <LoadingIcon label="Running file action" />
+          </div>
+        )}
+
+        {!isFileManagerBrowsing && !isFileManagerMutating && !fileManagerPreview && (
           <div className="empty-state file-empty-state">
             <MenuIcon name="folder-search" />
             <p>Use the folder icon to browse the hosting root once the server agent is uploaded.</p>
           </div>
         )}
 
-        {fileManagerPreview && managerItems.length === 0 && (
+        {!isFileManagerBrowsing && !isFileManagerMutating && fileManagerPreview && managerItems.length === 0 && (
           <div className="empty-state file-empty-state">
             <MenuIcon name="folder" />
             <p>No files or folders returned for this path.</p>
           </div>
         )}
 
-        {!!managerItems.length && managerViewMode === "cards" && (
-          <div className="file-manager-grid">
-            {managerItems.map((item) => (
-              <article className="file-item-card" key={`${item.type}-${item.relativePath}-${item.name}`}>
-                <button
-                  className="file-item-main"
-                  type="button"
-                  onClick={() => openFileManagerItem(item)}
-                  disabled={!item.isFolder}
-                  title={item.isFolder ? "Open folder" : item.name}
-                >
-                  <MenuIcon name={item.isFolder ? "folder" : "invoice"} />
-                  <span>{item.name}</span>
-                </button>
-                <dl>
-                  <div><dt>Type</dt><dd>{item.isFolder ? "Folder" : item.extension ? `.${item.extension}` : "File"}</dd></div>
-                  <div><dt>Size</dt><dd>{item.isFolder ? "-" : formatFileSize(item.size)}</dd></div>
-                  <div><dt>Modified</dt><dd>{formatDateTime(item.modified)}</dd></div>
-                </dl>
-                <div className="website-action-buttons compact-actions">
-                  {item.isFolder && <IconActionButton label="Open" onClick={() => openFileManagerItem(item)} />}
-                  {!item.isFolder && item.isEditable && <IconActionButton label="Edit" onClick={() => readFileForEdit(item)} />}
-                  {!item.isFolder && item.isEditable && <IconActionButton label="Download" onClick={() => downloadFileManagerItem(item)} />}
-                  <IconActionButton label="Permissions" onClick={() => queueFileTest("Permissions", null, `Permissions for ${item.relativePath}`)} />
-                  <IconActionButton label="Copy" onClick={() => runFileItemAction("copy", item)} />
-                  <IconActionButton label="Move" onClick={() => runFileItemAction("move", item)} />
-                  <IconActionButton label="Zip" onClick={() => runFileItemAction("zip", item)} />
-                  {!item.isFolder && item.extension?.toLowerCase() === "zip" && <IconActionButton label="Unzip" onClick={() => runFileItemAction("unzip", item)} />}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-
-        {!!managerItems.length && managerViewMode === "table" && (
+        {!isFileManagerBrowsing && !isFileManagerMutating && !!managerItems.length && (
           <div className="table-wrap file-manager-table">
             <table>
               <thead>
@@ -5400,11 +6799,12 @@ function FilesSection({ cpId }) {
                         {item.isFolder && <IconActionButton label="Open" onClick={() => openFileManagerItem(item)} />}
                         {!item.isFolder && item.isEditable && <IconActionButton label="Edit" onClick={() => readFileForEdit(item)} />}
                         {!item.isFolder && item.isEditable && <IconActionButton label="Download" onClick={() => downloadFileManagerItem(item)} />}
-                        <IconActionButton label="Permissions" onClick={() => queueFileTest("Permissions", null, `Permissions for ${item.relativePath}`)} />
-                        <IconActionButton label="Copy" onClick={() => runFileItemAction("copy", item)} />
-                        <IconActionButton label="Move" onClick={() => runFileItemAction("move", item)} />
-                        <IconActionButton label="Zip" onClick={() => runFileItemAction("zip", item)} />
-                        {!item.isFolder && item.extension?.toLowerCase() === "zip" && <IconActionButton label="Unzip" onClick={() => runFileItemAction("unzip", item)} />}
+                        <IconActionButton label="Rename" onClick={() => openFileAction("rename", item)} />
+                        <IconActionButton label="Copy" onClick={() => openFileAction("copy", item)} />
+                        <IconActionButton label="Move" onClick={() => openFileAction("move", item)} />
+                        <IconActionButton label="Zip" onClick={() => openFileAction("zip", item)} />
+                        {!item.isFolder && item.extension?.toLowerCase() === "zip" && <IconActionButton label="Unzip" onClick={() => openFileAction("unzip", item)} />}
+                        <IconActionButton label="Delete" onClick={() => setDeleteFileItem(item)} />
                       </div>
                     </td>
                   </tr>
@@ -5414,97 +6814,41 @@ function FilesSection({ cpId }) {
           </div>
         )}
 
-        {fileManagerPreview?.preview && <pre className="gateway-preview">{fileManagerPreview.preview}</pre>}
       </article>
 
       {fileEditor && (
-        <article className="panel-card file-editor-card">
-          <div className="database-card-header">
-            <div>
-              <span className="status-pill blue">Editor</span>
-              <h3>{fileEditor.name}</h3>
-              <p>{fileEditor.path || "Hosting root"}</p>
-            </div>
-            <IconActionButton label="Close" onClick={() => setFileEditor(null)} />
-          </div>
-          <form className="file-editor-form" onSubmit={saveFileEditor}>
-            <textarea
-              value={fileEditor.content}
-              onChange={(event) => setFileEditor((editor) => editor ? { ...editor, content: event.target.value } : editor)}
-              spellCheck="false"
-            />
-            <div className="file-editor-actions">
-              <span>{fileEditor.content === fileEditor.originalContent ? "No unsaved changes" : "Unsaved changes"}</span>
-              <button className="primary-button compact" disabled={isFileSaving} type="submit">
-                {isFileSaving ? <LoadingIcon label="Saving file" /> : "Save"}
-              </button>
-            </div>
-          </form>
-        </article>
+        <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setFileEditor(null);
+        }}>
+          <aside className="function-drawer panel-card settings-drawer file-editor-drawer" role="dialog" aria-modal="true" aria-label={`Edit ${fileEditor.name}`}>
+            <header className="function-drawer-header">
+              <div>
+                <span className="status-pill blue">Editor</span>
+                <h2>{fileEditor.name}</h2>
+                <p>{fileEditor.path || "Hosting root"}</p>
+              </div>
+              <div className="function-drawer-actions">
+                <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={() => setFileEditor(null)} title="Close" aria-label="Close">
+                  <MenuIcon name="x" />
+                </button>
+              </div>
+            </header>
+            <form className="file-editor-form file-editor-drawer-form" onSubmit={saveFileEditor}>
+              <textarea
+                value={fileEditor.content}
+                onChange={(event) => setFileEditor((editor) => editor ? { ...editor, content: event.target.value } : editor)}
+                spellCheck="false"
+              />
+              <div className="file-editor-actions">
+                <span>{fileEditor.content === fileEditor.originalContent ? "No unsaved changes" : "Unsaved changes"}</span>
+                <button className="primary-button compact" disabled={isFileSaving} type="submit">
+                  {isFileSaving ? <LoadingIcon label="Saving file" /> : "Save"}
+                </button>
+              </div>
+            </form>
+          </aside>
+        </div>
       )}
-
-      <div className="advance-form-grid">
-        <article className="panel-card advance-form-card">
-          <div>
-            <span className="status-pill blue">Site Protection Draft</span>
-            <h3>Password Protection</h3>
-            <p>Permission repair can queue to the legacy worker. Password protection still needs the file gateway mapping.</p>
-          </div>
-          <form className="advance-inline-form" onSubmit={submitProtectionDraft}>
-            <label>
-              Site
-              <input value={protectionDraft.site} onChange={(event) => setProtectionDraft((draft) => ({ ...draft, site: event.target.value }))} />
-            </label>
-            <label>
-              Path
-              <input value={protectionDraft.path} onChange={(event) => setProtectionDraft((draft) => ({ ...draft, path: event.target.value }))} />
-            </label>
-            <label>
-              User
-              <input value={protectionDraft.username} onChange={(event) => setProtectionDraft((draft) => ({ ...draft, username: event.target.value }))} />
-            </label>
-            <label>
-              Action
-              <select value={protectionDraft.action} onChange={(event) => setProtectionDraft((draft) => ({ ...draft, action: event.target.value }))}>
-                <option value="Enable Password Protection">Enable Password Protection</option>
-                <option value="Disable Password Protection">Disable Password Protection</option>
-                <option value="Lock Site">Lock Site</option>
-                <option value="Unlock Site">Unlock Site</option>
-                <option value="Allow FB API">Allow FB API</option>
-              </select>
-            </label>
-            <button className="primary-button compact" type="submit">Queue / Check Action</button>
-          </form>
-        </article>
-
-        <article className="panel-card advance-form-card">
-          <div>
-            <span className="status-pill blue">Migration Draft</span>
-            <h3>Repair Queue</h3>
-            <p>Permission repair and scans queue through the legacy worker; migration status remains read-only.</p>
-          </div>
-          <form className="advance-inline-form" onSubmit={submitMigrationDraft}>
-            <label>
-              Source
-              <input value={migrationDraft.source} onChange={(event) => setMigrationDraft((draft) => ({ ...draft, source: event.target.value }))} />
-            </label>
-            <label>
-              Target
-              <input value={migrationDraft.target} onChange={(event) => setMigrationDraft((draft) => ({ ...draft, target: event.target.value }))} />
-            </label>
-            <label>
-              Action
-              <select value={migrationDraft.action} onChange={(event) => setMigrationDraft((draft) => ({ ...draft, action: event.target.value }))}>
-                <option value="Repair Migration Permissions">Repair Permissions</option>
-                <option value="Check Migration Status">Check Migration Status</option>
-                <option value="Rescan Migrated Files">Rescan Migrated Files</option>
-                <option value="Queue Migration Notice">Queue Migration Notice</option>
-              </select>
-            </label>
-            <button className="primary-button compact" type="submit">Queue / Check Action</button>
-          </form>
-        </article>
-      </div>
 
       {sitesError && (
         <div className="panel-card dashboard-error-panel">
@@ -5512,97 +6856,334 @@ function FilesSection({ cpId }) {
           <IconActionButton label="Retry" onClick={loadFileSites} />
         </div>
       )}
-
-      {!!siteFolders.length && viewMode === "cards" && (
-        <div className="domain-service-grid">
-          {siteFolders.map((site) => {
-            const security = securityBySite.get(String(site.siteUid));
-            const locked = !!security?.hasAuditRow && !security?.isWritable;
-            return (
-              <article className="panel-card domain-service-card" key={site.siteUid}>
-                <div className="database-card-header">
-                  <div>
-                    <span className={locked ? "status-pill warning" : site.status === "Running" ? "status-pill" : "status-pill muted"}>
-                      {locked ? "Locked" : site.status}
-                    </span>
-                    <h3>{site.siteName}</h3>
-                    <p>{site.rootName || "Website folder"}</p>
-                  </div>
-                  <MenuIcon name="folder" />
-                </div>
-                <dl className="card-meta single">
-                  <div><dt>Path</dt><dd>{simplifySitePath(site.sitePath, sitesDashboard?.cpLogin)}</dd></div>
-                  <div><dt>Runtime</dt><dd>{site.version ? `.NET ${site.version}` : site.phpVersion ? `PHP ${site.phpVersion}` : "Website"}</dd></div>
-                  <div><dt>Domains</dt><dd>{site.mappedDomains?.length ?? 0}</dd></div>
-                  <div><dt>Firewall</dt><dd>{security?.webKnight ? "Enabled" : "Off"}</dd></div>
-                  <div><dt>Writable</dt><dd>{security?.hasAuditRow ? security.isWritable ? "Yes" : "No" : "No audit row"}</dd></div>
-                </dl>
-                <div className="database-action-row">
-                  {["Open", "Upload", "Permissions", "Lock Site"].map((action) => (
-                    <IconActionButton
-                      label={action}
-                      key={action}
-                      onClick={() => action === "Open" ? browseFileManager(site.sitePath) : queueFileTest(action, site)}
-                    />
-                  ))}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-      {!!siteFolders.length && viewMode === "table" && (
-        <div className="table-wrap website-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Site</th>
-                <th>Root</th>
-                <th>Path</th>
-                <th>Status</th>
-                <th>Security</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {siteFolders.map((site) => {
-                const security = securityBySite.get(String(site.siteUid));
-                const locked = !!security?.hasAuditRow && !security?.isWritable;
-                return (
-                  <tr key={site.siteUid}>
-                    <td>{site.siteName}</td>
-                    <td>{site.rootName || "Website folder"}</td>
-                    <td>{simplifySitePath(site.sitePath, sitesDashboard?.cpLogin)}</td>
-                    <td><span className={site.status === "Running" ? "status-pill" : "status-pill muted"}>{site.status}</span></td>
-                    <td>{locked ? "Locked" : security?.webKnight ? "Firewall on" : "Standard"}</td>
-                    <td>
-                      <div className="website-action-buttons compact-actions">
-                        <IconActionButton label="Open" onClick={() => browseFileManager(site.sitePath)} />
-                        {["Zip", "Unzip", "Permissions", "Scan Virus"].map((action) => (
-                          <IconActionButton label={action} key={action} onClick={() => queueFileTest(action, site)} />
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <ActivityList activity={activity} jobs={fileJobs} isLoading={isLoading} error={error} emptyTitle="No recent file jobs" onRetry={reload} />
     </section>
+  );
+}
+
+function FileManagerActionDrawer(props) {
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !props.isBusy) props.onCancel();
+    }}>
+      <aside className="function-drawer panel-card settings-drawer file-action-drawer" role="dialog" aria-modal="true" aria-label="File manager action">
+        <FileManagerActionPanel {...props} />
+      </aside>
+    </div>
+  );
+}
+
+function FileWorkQueueDrawer({ jobs, isLoading, error, deletingId, onClose, onRetry, onDelete }) {
+  const pending = jobs.filter((job) => job.statusCode === 0).length;
+  const running = jobs.filter((job) => job.statusCode === 1).length;
+  const errors = jobs.filter((job) => job.statusCode === 3).length;
+
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="function-drawer panel-card settings-drawer file-workqueue-drawer" role="dialog" aria-modal="true" aria-label="File Manager Work Queue">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">Work Queue</span>
+            <h2>File Manager Queue</h2>
+            <p>Recent queued file jobs for this hosting plan.</p>
+          </div>
+          <div className="function-drawer-actions">
+            <IconActionButton label="Refresh" onClick={onRetry} />
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+              <MenuIcon name="x" />
+            </button>
+          </div>
+        </header>
+        <div className="queue-summary-row">
+          <span><strong>{pending}</strong> Pending</span>
+          <span><strong>{running}</strong> Running</span>
+          <span><strong>{errors}</strong> Errors</span>
+        </div>
+        <FileWorkQueueCards jobs={jobs} isLoading={isLoading} error={error} deletingId={deletingId} onRetry={onRetry} onDelete={onDelete} />
+      </aside>
+    </div>
+  );
+}
+
+function FileWorkQueueCards({ jobs, isLoading, error, deletingId, onRetry, onDelete }) {
+  if (isLoading) return <LoadingState label="Loading workqueue activity" />;
+  if (error) {
+    return (
+      <div className="panel-card dashboard-error-panel">
+        <p>{error}</p>
+        <IconActionButton label="Retry" onClick={onRetry} />
+      </div>
+    );
+  }
+
+  if (!jobs.length) {
+    return (
+      <div className="panel-card cp-placeholder">
+        <span className="status-pill muted">No jobs</span>
+        <h2>No file workqueue activity</h2>
+        <p>No File Manager workqueue rows were found for this hosting plan.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="file-workqueue-card-list">
+      {jobs.map((job) => (
+        <article className="file-workqueue-card" key={job.id}>
+          <div className="file-workqueue-card-main">
+            <div>
+              <span className={job.statusCode === 3 ? "status-pill danger" : job.statusCode === 2 ? "status-pill" : "status-pill blue"}>
+                {job.status}
+              </span>
+              <h3>#{job.id} {job.type || "Job"}</h3>
+              <p>{job.from || "No source path"}</p>
+            </div>
+            <div className="file-workqueue-card-actions">
+              <time>{formatDateTime(job.enterDate)}</time>
+              <IconActionButton
+                label={job.statusCode === 0 ? "Delete" : "Delete disabled"}
+                icon="trash"
+                disabled={job.statusCode !== 0 || deletingId === job.id}
+                onClick={() => onDelete(job.id)}
+              />
+            </div>
+          </div>
+          <dl className="file-workqueue-meta">
+            <div>
+              <dt>To</dt>
+              <dd>{job.to || "-"}</dd>
+            </div>
+            <div>
+              <dt>Server</dt>
+              <dd>{job.server || "-"}</dd>
+            </div>
+            <div>
+              <dt>Owner</dt>
+              <dd>{job.siteOwner || "-"}</dd>
+            </div>
+            <div>
+              <dt>Notify</dt>
+              <dd>{job.notifyEmail || "-"}</dd>
+            </div>
+          </dl>
+          {job.data1 && <p className="file-workqueue-note">{job.data1}</p>}
+          {job.errorMessage && <p className="job-error-message">{job.errorMessage}</p>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function FileManagerActionPanel({ action, item, draft, isBusy, onChange, onCancel, onOpenFolderPicker, onSubmit }) {
+  const titleMap = {
+    "new-folder": "Create Folder",
+    "new-file": "Create New File",
+    rename: "Rename",
+    copy: "Copy",
+    move: "Move",
+    zip: "Zip",
+    unzip: "Unzip"
+  };
+  const title = titleMap[action] ?? "File Action";
+  const currentName = item?.name ?? "";
+  const needsDestination = action === "copy" || action === "move" || action === "unzip";
+  const needsTargetName = action === "rename" || action === "zip";
+  const isSubmitDisabled = isBusy ||
+    (action === "new-folder" && !String(draft.name ?? "").trim()) ||
+    (action === "new-file" && !String(draft.name ?? "").trim()) ||
+    (needsTargetName && !String(draft.targetName ?? "").trim()) ||
+    (needsDestination && !String(draft.targetPath ?? "").trim());
+
+  return (
+    <form className="file-action-panel" onSubmit={onSubmit}>
+      <header className="function-drawer-header file-action-drawer-header">
+        <div>
+          <span className="status-pill blue">File Manager</span>
+          <h2>{title}</h2>
+          {currentName && <p>{currentName}</p>}
+        </div>
+        <div className="function-drawer-actions">
+          <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onCancel} title="Close" aria-label="Close">
+            <MenuIcon name="x" />
+          </button>
+        </div>
+      </header>
+
+      <div className="file-action-fields">
+        {action === "new-file" && (
+          <label>
+            File Name
+            <input
+              autoFocus
+              value={draft.name ?? ""}
+              onChange={(event) => onChange((current) => ({ ...current, name: event.target.value }))}
+              placeholder="example.txt"
+            />
+          </label>
+        )}
+
+        {action === "new-folder" && (
+          <label>
+            Folder Name
+            <input
+              autoFocus
+              value={draft.name ?? ""}
+              onChange={(event) => onChange((current) => ({ ...current, name: event.target.value }))}
+              placeholder="folder-name"
+            />
+          </label>
+        )}
+
+        {action === "rename" && (
+          <>
+            <label>
+              Current Name
+              <input value={currentName} readOnly />
+            </label>
+            <label>
+              New Name
+              <input
+                autoFocus
+                value={draft.targetName ?? ""}
+                onChange={(event) => onChange((current) => ({ ...current, targetName: event.target.value }))}
+                placeholder="new-name"
+              />
+            </label>
+          </>
+        )}
+
+        {needsDestination && (
+          <label>
+            Destination Folder
+            <span className="ftp-path-control">
+              <input
+                autoFocus
+                value={draft.targetPath ?? ""}
+                readOnly
+                placeholder="/"
+              />
+              <IconActionButton label="Select Folder" icon="folder" onClick={onOpenFolderPicker} />
+            </span>
+          </label>
+        )}
+
+        {action === "zip" && (
+          <label>
+            Zip File Name
+            <input
+              autoFocus
+              value={draft.targetName ?? ""}
+              onChange={(event) => onChange((current) => ({ ...current, targetName: event.target.value }))}
+              placeholder={`${currentName || "archive"}.zip`}
+            />
+          </label>
+        )}
+
+        {(action === "copy" || action === "move") && (
+          <label className="file-action-checkbox">
+            <input
+              type="checkbox"
+              checked={Boolean(draft.overwrite)}
+              onChange={(event) => onChange((current) => ({ ...current, overwrite: event.target.checked }))}
+            />
+            Overwrite if target exists
+          </label>
+        )}
+      </div>
+
+      <div className="file-action-buttons">
+        <button className="primary-button compact" type="submit" disabled={isSubmitDisabled}>
+          {isBusy ? <LoadingIcon label={`Running ${title}`} /> : title}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function FileDeleteConfirmModal({ item, isBusy, onClose, onConfirm }) {
+  const itemType = item?.isFolder ? "Folder" : "File";
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !isBusy) onClose();
+    }}>
+      <article className="panel-card confirm-modal" role="dialog" aria-modal="true" aria-labelledby="file-delete-title">
+        <span className="status-pill warning">Delete</span>
+        <h2 id="file-delete-title">Delete {itemType}</h2>
+        <p>Are you sure you want to delete <strong>{item?.name}</strong>? This cannot be undone.</p>
+        <div className="confirm-actions">
+          <button className="secondary-button compact" type="button" disabled={isBusy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="danger-button compact" type="button" disabled={isBusy} onClick={onConfirm}>
+            {isBusy ? <LoadingIcon label="Deleting item" /> : "Delete"}
+          </button>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function FolderPickerModal({ title, currentPath, folders, parentPath, isLoading, error, onBrowse, onChoose, onClose }) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <article className="panel-card confirm-modal ftp-folder-modal" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="ftp-folder-modal-header">
+          <div>
+            <span className="status-pill blue">Folder</span>
+            <h2>{title}</h2>
+            <p>{currentPath}</p>
+          </div>
+          <button className="secondary-button compact icon-only-button" type="button" title="Close" aria-label="Close" onClick={onClose}>
+            <MenuIcon name="x" />
+          </button>
+        </div>
+        <div className="ftp-folder-actions">
+          <button className="secondary-button compact" type="button" disabled={isLoading} onClick={() => onBrowse("/")}>
+            <MenuIcon name="folder" />
+            Root
+          </button>
+          <button className="secondary-button compact" type="button" disabled={isLoading || !parentPath} onClick={() => onBrowse(parentPath || "/")}>
+            <MenuIcon name="back" />
+            Parent
+          </button>
+          <button className="primary-button compact" type="button" onClick={onChoose}>
+            Select This Folder
+          </button>
+        </div>
+        {isLoading && <LoadingState label="Loading folders" />}
+        {error && <p className="renewal-action-message">{error}</p>}
+        {!isLoading && !error && (
+          <div className="ftp-folder-list">
+            {folders.length === 0 && <p className="empty-state-text">No folders found here.</p>}
+            {folders.map((folder) => (
+              <button
+                className="ftp-folder-row"
+                key={folder.relativePath || folder.name}
+                type="button"
+                onClick={() => onBrowse(folder.relativePath || folder.name)}
+              >
+                <MenuIcon name="folder" />
+                <span>{folder.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </article>
+    </div>
   );
 }
 
 function formatFileManagerMessage(message) {
   const text = message || "";
   if (text.includes("Legacy JSON agent rejected the request")) {
-    return "File Manager agent rejected the encrypted request. Upload the latest getFilesFolder.asp/fileManagerAction.asp pair and confirm FILE_MANAGER_ENCRYPT_KEY matches.";
+    return "File Manager agent rejected the encrypted request.";
   }
   if (text.includes("Legacy agent rejected the request")) {
-    return "Legacy File Manager action was rejected by the hosting server. Upload the latest encrypted fileManagerAction.asp agent.";
+    return "File Manager action was rejected by the hosting server.";
   }
   return text;
 }
@@ -5825,9 +7406,9 @@ function AppsSection({ cpId }) {
         <article className="panel-card app-requirements-panel">
           <div className="database-card-header">
             <div>
-              <span className="status-pill blue">Legacy Requirements</span>
+              <span className="status-pill blue">Requirements</span>
               <h3>{appRequirements.plugin?.name} {appRequirements.plugin?.version}</h3>
-              <p>Read from the same plugin tables used by the Classic ASP installer flow.</p>
+              <p>Plugin requirements loaded from the installer configuration tables.</p>
             </div>
             <button className="secondary-button compact" type="button" onClick={() => setAppRequirements(null)}>Close</button>
           </div>
@@ -5847,7 +7428,6 @@ function AppsSection({ cpId }) {
           </div>
           <WebsiteFunctionDataGroup name="configFiles" value={appRequirements.configFiles ?? []} />
           <WebsiteFunctionDataGroup name="permissions" value={appRequirements.permissions ?? []} />
-          <WebsiteFunctionDataGroup name="legacySources" value={(appRequirements.legacySources ?? []).map((source) => ({ source }))} />
         </article>
       )}
 
@@ -5856,7 +7436,7 @@ function AppsSection({ cpId }) {
           <div>
             <span className="status-pill blue">Node.js Deploy</span>
             <h3>IISNode / HTTP Platform</h3>
-            <p>Queues Node.js deploy and runtime jobs through the legacy worker.</p>
+            <p>Queues Node.js deploy and runtime jobs.</p>
           </div>
           <MenuIcon name="deploy" />
         </div>
@@ -5915,7 +7495,7 @@ function AppsSection({ cpId }) {
                   {plugin.usesDatabase && <li>Choose database engine and create a database/user pair.</li>}
                   <li>Apply {plugin.configFiles || "the"} config template{plugin.configFiles === 1 ? "" : "s"} and collect installer parameters.</li>
                   <li>Apply {plugin.permissionRules || "required"} file permission rule{plugin.permissionRules === 1 ? "" : "s"}.</li>
-                  <li>Create legacy worker-compatible install job and track deploy progress.</li>
+                  <li>Create an install job and track deploy progress.</li>
                 </ol>
               )}
               <div className="database-action-row">
@@ -6081,15 +7661,15 @@ function AdvanceSection({ cpId }) {
 
   async function submitSandboxJob(event) {
     event.preventDefault();
-    setSandboxMessage("This legacy test queue is read-only now. Use the real test forms above, which only allow codex-test-* rows.");
+    setSandboxMessage("This test queue is read-only now. Use the real test forms above, which only allow codex-test-* rows.");
   }
 
   async function updateSandboxJob(job) {
-    setSandboxMessage(`Legacy test job #${job.id} is read-only. Real tests must create codex-test-* rows through the forms above.`);
+    setSandboxMessage(`Test job #${job.id} is read-only. Real tests must create codex-test-* rows through the forms above.`);
   }
 
   async function deleteSandboxJob(job) {
-    setSandboxMessage(`Legacy test job #${job.id} was not deleted automatically. Existing rows are protected.`);
+    setSandboxMessage(`Test job #${job.id} was not deleted automatically. Existing rows are protected.`);
   }
 
   async function queueAdvanceTool(action, details = "") {
@@ -6131,7 +7711,7 @@ function AdvanceSection({ cpId }) {
         server: "advanced-manager",
         note: details || `Advanced gateway required for ${action}`
       });
-      setSandboxMessage(`${action} needs the legacy advanced gateway before it can run.`);
+      setSandboxMessage(`${action} needs the advanced service gateway before it can run.`);
       await reload();
     } catch (error) {
       setSandboxMessage(error.message);
@@ -6237,7 +7817,7 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Read-only inventory</span>
             <h3>Runtime Inventory</h3>
-            <p>Legacy runtime tables loaded without changing IIS, DNS, task, or deploy settings.</p>
+            <p>Runtime inventory loaded without changing IIS, DNS, task, or deploy settings.</p>
           </div>
           <MenuIcon name="advance" />
         </div>
@@ -6311,7 +7891,7 @@ function AdvanceSection({ cpId }) {
           <div>
             <span className="status-pill blue">Scheduled Task Draft</span>
             <h3>HTTP / Windows Task</h3>
-            <p>Needs the legacy task gateway before writing to the production task tables.</p>
+            <p>Task scheduling needs the task service gateway before writing production task rows.</p>
           </div>
           <form className="advance-inline-form" onSubmit={submitTaskDraft}>
             <label>
@@ -6460,7 +8040,7 @@ function AdvanceSection({ cpId }) {
       {!!testJobs.length && (
         <article className="panel-card sandbox-card">
           <div>
-            <span className="status-pill blue">Legacy Test Queue</span>
+            <span className="status-pill blue">Test Queue</span>
             <h3>Read Only</h3>
             <p>Old test queue rows are shown for reference only. New testing uses real `codex-test-*` rows above.</p>
           </div>
@@ -6604,7 +8184,7 @@ function ActivityList({ jobs, isLoading, error, emptyTitle, onRetry }) {
 
 function advancedToolDescription(action) {
   const descriptions = {
-    "Application Pool": "Recycle, isolate, or create application pools through the legacy worker path.",
+    "Application Pool": "Recycle, isolate, or create application pools.",
     "ASP.NET Version": "Review .NET runtime selection and prepare version-change jobs.",
     "PHP Settings": "Manage PHP runtime and handler settings per website.",
     "Node.js App": "Prepare IISNode configuration and deployment jobs.",
@@ -6663,7 +8243,7 @@ function buildAdvanceWorkflowGroups(runtimeDashboard) {
       title: "Team Access",
       description: "CP alias users and permission review before real cp_loginAlias writes are enabled.",
       meta: [
-        ["Legacy Table", "cp_loginAlias"],
+        ["Access Table", "cp_loginAlias"],
         ["Alias Users", totals.aliases],
         ["Permission Mode", "Review first"],
         ["Static IPs", totals.staticIps]
@@ -6914,7 +8494,6 @@ function SslLegacyContent({ securityDashboard, actionableDomains, runDomainServi
     <>
       <article className="panel-card ssl-legacy-notice">
         <div>
-          <span className="status-pill warning">SSL List</span>
           <h3>SSL Validity Notice</h3>
           {sslValidityNotice.map((line) => <p key={line}>{line}</p>)}
         </div>
@@ -7051,7 +8630,7 @@ function SslActionDrawer({ activeWorkflow, firstDomain, sslDraft, setSslDraft, d
           <div>
             <span className="status-pill blue">{badge}</span>
             <h2>{title}</h2>
-            <p>{isCsr ? "Creates the CSR through the same legacy cert_request.asp flow." : isImport ? "The old CP opens ssl_import_1 and uploads a .cer/.crt or .pfx before installing it." : "Runs the selected SSL action through the old CP compatible backend."}</p>
+            <p>{isCsr ? "Creates a certificate signing request for this domain." : isImport ? "Upload a .cer, .crt, or .pfx certificate before installing it." : "Runs the selected SSL action for this domain."}</p>
           </div>
           <div className="function-drawer-actions">
             <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
@@ -7173,6 +8752,20 @@ function DomainServicesSection({ mode, cpId }) {
   const [securityError, setSecurityError] = useState("");
   const [domainMessage, setDomainMessage] = useState("");
   const [serviceResult, setServiceResult] = useState(null);
+  const [selectedCpDnsDomain, setSelectedCpDnsDomain] = useState(null);
+  const [cpDnsManager, setCpDnsManager] = useState(null);
+  const [cpDnsMessage, setCpDnsMessage] = useState("");
+  const [isCpDnsLoading, setIsCpDnsLoading] = useState(false);
+  const [isCpDnsBusy, setIsCpDnsBusy] = useState(false);
+  const [cpDnsDraft, setCpDnsDraft] = useState({
+    recordType: "A",
+    name: "@",
+    value: "208.98.35.146",
+    ttl: "300",
+    priority: "10",
+    weight: "1",
+    port: "443"
+  });
   const [dnsDraft, setDnsDraft] = useState({
     host: "@",
     type: "A",
@@ -7250,12 +8843,21 @@ function DomainServicesSection({ mode, cpId }) {
       runtime: site.version ? `.NET ${site.version}` : site.phpVersion ? `PHP ${site.phpVersion}` : "Website"
     }))
   );
-  const actionableDomains = domains.filter((domain) => !isTemporaryHostingDomain(domain.label));
+  const dnsDomains = domains.filter((domain) => {
+    const label = String(domain.label ?? "").trim().replace(/\.$/, "");
+    return label && !isTemporaryHostingDomain(label) && (label.match(/\./g) ?? []).length === 1;
+  });
+  const cdnDomains = domains.filter((domain) => {
+    const label = String(domain.label ?? "").trim();
+    return label && !isTemporaryHostingDomain(label);
+  });
+  const visibleDomains = mode === "dns" ? dnsDomains : mode === "cdn" ? cdnDomains : domains;
+  const actionableDomains = visibleDomains.filter((domain) => !isTemporaryHostingDomain(domain.label));
   const modeCopy = {
     dns: {
       title: "DNS",
       label: "Live DNS",
-      description: "DNS record add flow from cp/dns/editdns.asp using the same legacy DNS server helpers.",
+      description: "Manage DNS records for mapped customer domains.",
       actions: ["Add Record"],
       statOne: "Domains",
       statTwo: "Default Domains",
@@ -7273,7 +8875,7 @@ function DomainServicesSection({ mode, cpId }) {
     ssl: {
       title: "SSL",
       label: "Live SSL",
-      description: "SSL certificate inventory, free SSL requests, imports, install actions, and SSL order guidance from the legacy SSL manager.",
+      description: "SSL certificate inventory, free SSL requests, imports, install actions, and SSL order guidance.",
       actions: ["CSR Request", "Request Free SSL", "Buy SSL", "Import SSL"],
       statOne: "Domains",
       statTwo: "SSL Ready",
@@ -7284,14 +8886,15 @@ function DomainServicesSection({ mode, cpId }) {
     ? securityDashboard?.totals?.cdnEnabled ?? domains.filter((domain) => domain.cdn).length
     : mode === "ssl"
       ? securityDashboard?.totals?.sslOrders ?? domains.filter((domain) => domain.ssl).length
-      : domains.filter((domain) => domain.isDefault).length;
-  const uniqueSites = new Set(domains.map((domain) => domain.siteName)).size;
+      : visibleDomains.filter((domain) => domain.isDefault).length;
+  const uniqueSites = new Set(visibleDomains.map((domain) => domain.siteName)).size;
   const securityRows = buildSecurityRows(mode, securityDashboard);
   const domainJobs = (activity?.jobs ?? []).filter((job) =>
     job.server === `${mode}-manager` ||
     String(job.from ?? "").toLowerCase().startsWith(`${mode}:`)
   );
-  const [viewMode, setViewMode] = useSectionViewMode(`cp-${mode}`, domains.length);
+  const [viewMode, setViewMode] = useSectionViewMode(`cp-${mode}`, visibleDomains.length);
+  const effectiveViewMode = mode === "dns" ? "table" : viewMode;
 
   const selectedDnsDomain = actionableDomains.find((domain) => domain.label === dnsDraft.domain) || actionableDomains[0] || null;
   const selectedSslDomain = actionableDomains.find((domain) => domain.label === sslDraft.domain) || actionableDomains[0] || null;
@@ -7314,7 +8917,8 @@ function DomainServicesSection({ mode, cpId }) {
     setServiceResult(null);
     const targetDomain = domain?.label || fields.domain || fields.commonName || "";
     const canRunWithoutMappedDomain = area === "ssl" && ["CSR Request", "Re-install SSL Cert", "Export SSL Cert", "Delete SSL", "Re-import SSL", "Resend Approver Email"].includes(action);
-    if (!domain && !canRunWithoutMappedDomain) {
+    const canRunCdnAccountAction = area === "cdn" && ["Enable Account", "Resend Invite"].includes(action);
+    if (!domain && !canRunWithoutMappedDomain && !canRunCdnAccountAction) {
       setDomainMessage(`${area.toUpperCase()} actions need a mapped customer domain. Temporary hosting URLs are skipped.`);
       return;
     }
@@ -7375,6 +8979,234 @@ function DomainServicesSection({ mode, cpId }) {
     reloadActivity();
   }
 
+  async function openCpDnsManager(domain) {
+    if (!domain || isTemporaryHostingDomain(domain.label)) {
+      setDomainMessage("DNS changes are blocked for temporary URL domains.");
+      return;
+    }
+
+    setSelectedCpDnsDomain(domain);
+    setCpDnsManager(null);
+    setCpDnsMessage("");
+    setCpDnsDraft((draft) => ({
+      ...draft,
+      recordType: "A",
+      name: "@",
+      value: "208.98.35.146",
+      ttl: "300"
+    }));
+    await loadCpDnsManager(domain);
+  }
+
+  async function loadCpDnsManager(domain = selectedCpDnsDomain) {
+    if (!domain?.domainUid) return;
+
+    setIsCpDnsLoading(true);
+    setCpDnsMessage("");
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/domains/${domain.domainUid}/dns`, cpId));
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setCpDnsManager(null);
+        setCpDnsMessage(result?.message ?? "Unable to load DNS manager.");
+        return;
+      }
+
+      setCpDnsManager(result.manager);
+    } catch {
+      setCpDnsMessage("Unable to reach DNS manager service.");
+    } finally {
+      setIsCpDnsLoading(false);
+    }
+  }
+
+  async function submitCpDnsAction(action, recordIndex = null, recordDraft = null) {
+    if (!selectedCpDnsDomain?.domainUid) return;
+
+    const draft = recordDraft ?? cpDnsDraft;
+    setIsCpDnsBusy(true);
+    setCpDnsMessage("");
+    try {
+      const response = await fetch(hostingApiUrl(`/api/hosting/domains/${selectedCpDnsDomain.domainUid}/dns/action`, cpId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          recordType: draft.recordType,
+          name: draft.name,
+          value: draft.value,
+          ttl: Number(draft.ttl) || 300,
+          priority: draft.priority === "" ? null : Number(draft.priority),
+          weight: draft.weight === "" ? null : Number(draft.weight),
+          port: draft.port === "" ? null : Number(draft.port),
+          recordIndex
+        })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setCpDnsMessage(result?.message ?? "Unable to run DNS action.");
+        return;
+      }
+
+      setCpDnsManager((current) => current ? { ...current, records: result.records ?? [] } : current);
+      setCpDnsMessage(result.message);
+    } catch {
+      setCpDnsMessage("Unable to reach DNS action service.");
+    } finally {
+      setIsCpDnsBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (mode !== "dns" || isLoadingDomains) return;
+
+    if (!dnsDomains.length) {
+      setSelectedCpDnsDomain(null);
+      setCpDnsManager(null);
+      return;
+    }
+
+    const selectedStillExists = selectedCpDnsDomain?.domainUid &&
+      dnsDomains.some((domain) => String(domain.domainUid) === String(selectedCpDnsDomain.domainUid));
+    if (!selectedStillExists) {
+      openCpDnsManager(dnsDomains[0]);
+    }
+  }, [mode, isLoadingDomains, dnsDomains.map((domain) => domain.domainUid).join("|"), selectedCpDnsDomain?.domainUid]);
+
+  function handleCpDnsDomainChange(domainUid) {
+    const nextDomain = dnsDomains.find((domain) => String(domain.domainUid) === String(domainUid));
+    if (nextDomain) {
+      openCpDnsManager(nextDomain);
+    }
+  }
+
+  if (mode === "dns") {
+    return (
+      <section className="cp-inventory-section">
+        {selectedCpDnsDomain ? (
+          <DnsManagementPage
+            domain={{ domainName: selectedCpDnsDomain.label }}
+            manager={cpDnsManager}
+            isLoading={isCpDnsLoading || isLoadingDomains}
+            message={cpDnsMessage}
+            recordsPreview={[]}
+            busy={isCpDnsBusy}
+            draft={cpDnsDraft}
+            onDraftChange={setCpDnsDraft}
+            onReload={() => loadCpDnsManager(selectedCpDnsDomain)}
+            onSubmitAction={submitCpDnsAction}
+            domainOptions={dnsDomains}
+            selectedDomainId={String(selectedCpDnsDomain.domainUid)}
+            onDomainChange={handleCpDnsDomainChange}
+          />
+        ) : isLoadingDomains ? (
+          <LoadingState label="Loading DNS domains" />
+        ) : (
+          <div className="panel-card cp-placeholder">
+            <span className="status-pill muted">No domains</span>
+            <h2>No root domains found</h2>
+            <p>This hosting account does not have a DNS-manageable root domain.</p>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  if (mode === "cdn") {
+    const cloudflareAccount = securityDashboard?.cloudflareAccounts?.[0] ?? null;
+    return (
+      <section className="cp-inventory-section cdn-legacy-section">
+        {isLoadingSecurity && <LoadingState label="Loading CDN account" />}
+        {isLoadingDomains && <LoadingState label="Loading CDN domains" />}
+        {securityError && <p className="inline-status">{securityError}</p>}
+        {domainError && (
+          <div className="panel-card dashboard-error-panel">
+            <p>{domainError}</p>
+            <IconActionButton label="Retry" onClick={loadDomainServices} />
+          </div>
+        )}
+
+        {!cloudflareAccount && (
+          <article className="panel-card cdn-account-card">
+            <div>
+              <h3>Enable CDN Service</h3>
+              <p>After enabling CDN, Cloudflare will send an invitation to your account contact email. Please accept the invitation from Cloudflare to complete setup.</p>
+            </div>
+            <button className="primary-button compact" type="button" onClick={() => runDomainServiceAction("cdn", "Enable Account", null, {})}>
+              Enable
+            </button>
+          </article>
+        )}
+
+        {domainMessage && <p className="sandbox-message">{domainMessage}</p>}
+        {!isLoadingDomains && !domainError && !visibleDomains.length && (
+          <div className="panel-card cp-placeholder">
+            <span className="status-pill muted">No domains</span>
+            <h2>No mapped domains found</h2>
+            <p>This hosting account does not have domains available for CDN.</p>
+          </div>
+        )}
+        {!!visibleDomains.length && (
+          <div className="cdn-workspace-grid">
+            <div className="table-wrap website-table cdn-domain-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Domain To Enable</th>
+                    <th>CDN</th>
+                    <th>Purge Cache Files</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleDomains.map((domain) => (
+                    <tr key={`cdn-${domain.domainUid}-${domain.label}`}>
+                      <td>{domain.label}</td>
+                      <td>
+                        <button
+                          className={domain.cdn ? "toggle-pill is-on" : "toggle-pill"}
+                          type="button"
+                          onClick={() => runDomainServiceAction("cdn", domain.cdn ? "Disable CDN" : "Enable CDN", domain)}
+                        >
+                          {domain.cdn ? "On" : "Off"}
+                        </button>
+                      </td>
+                      <td>
+                        {domain.cdn ? (
+                          <button className="secondary-button compact" type="button" onClick={() => runDomainServiceAction("cdn", "Purge Cache", domain)}>
+                            Purge
+                          </button>
+                        ) : (
+                          <span className="muted-cell">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="cdn-side-column">
+              <article className="panel-card cdn-account-card">
+                <h3>Cloudflare Login Info</h3>
+                <dl className="card-meta single">
+                  <div><dt>Login Name</dt><dd>{cloudflareAccount?.email || "Same as Account Contact"}</dd></div>
+                  <div><dt>Password</dt><dd>{cloudflareAccount?.password || "-"}</dd></div>
+                  <div><dt>URL</dt><dd><a href="https://www.cloudflare.com" target="_blank" rel="noreferrer">https://www.cloudflare.com</a></dd></div>
+                </dl>
+              </article>
+              <article className="panel-card knowledge-card">
+                <span className="status-pill muted">KB Article</span>
+                <a href="http://www.smarterasp.net/support/KB/a1688/how-do-i-test-if-my-domain-name-is-now-on-cloudflare.aspx" target="_blank" rel="noreferrer">How do I test if my domain name is now on Cloudflare?</a>
+                <a href="http://www.smarterasp.net/support/kb/a300/301-redirect-www-redirect-domain-redirect.aspx" target="_blank" rel="noreferrer">How do I redirect all requests from non-www to www domain?</a>
+                <a href="http://www.smarterasp.net/support/kb/a1691/how-do-i-add-ssl-to-my-cdn.aspx" target="_blank" rel="noreferrer">How do I activate free SSL from CloudFlare?</a>
+                <a href="http://www.smarterasp.net/support/kb/a345/redirect-http-to-https.aspx" target="_blank" rel="noreferrer">How do I force using https?</a>
+              </article>
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section className="cp-inventory-section">
       {mode !== "ssl" && <article className="panel-card cp-inventory-summary">
@@ -7383,88 +9215,22 @@ function DomainServicesSection({ mode, cpId }) {
           <h2>{modeCopy.title} Manager</h2>
           <p>{modeCopy.description}</p>
         </div>
-        <div className="database-total-grid">
-          <div><span>{modeCopy.statOne}</span><strong>{domains.length}</strong></div>
-          <div><span>{modeCopy.statTwo}</span><strong>{enabledCount}</strong></div>
-          <div><span>{modeCopy.statThree}</span><strong>{uniqueSites}</strong></div>
-        </div>
+        {mode !== "dns" && (
+          <div className="database-total-grid">
+            <div><span>{modeCopy.statOne}</span><strong>{visibleDomains.length}</strong></div>
+            <div><span>{modeCopy.statTwo}</span><strong>{enabledCount}</strong></div>
+            <div><span>{modeCopy.statThree}</span><strong>{uniqueSites}</strong></div>
+          </div>
+        )}
         <RefreshButton onClick={refreshDomainServiceSection} />
       </article>}
 
-      {mode !== "ssl" && <div className="database-toolbar panel-card">
+      {mode !== "ssl" && mode !== "dns" && <div className="database-toolbar panel-card">
         <div className="database-actions">
-          {mode === "dns" && <span className="inline-status">Add A, AAAA, CNAME, MX, SPF/TXT, and SRV records just like the old DNS editor.</span>}
           {mode === "cdn" && <span className="inline-status">Use the per-domain table actions below. Tenant enable/resend invite follows the old Cloudflare tenant page.</span>}
         </div>
         <ViewModeToggle viewMode={viewMode} onChange={setViewMode} label={`${modeCopy.title} view mode`} />
       </div>}
-
-      {mode === "dns" && (
-        <article className="panel-card dns-record-draft-card">
-          <div className="database-card-header">
-            <div>
-              <span className="status-pill blue">DNS Draft</span>
-              <h3>Record Editor</h3>
-              <p>Add A, AAAA, CNAME, MX, SPF/TXT, and SRV records through the live DNS agent.</p>
-            </div>
-            <MenuIcon name="dns" />
-          </div>
-          <form className="advance-inline-form" onSubmit={submitDnsDraft}>
-            <label>
-              Domain
-              <select value={dnsDraft.domain || selectedDnsDomain?.label || ""} onChange={(event) => setDnsDraft((draft) => ({ ...draft, domain: event.target.value }))}>
-                {actionableDomains.map((domain) => <option key={domain.domainUid} value={domain.label}>{domain.label}</option>)}
-              </select>
-            </label>
-            <label>
-              Host
-              <input value={dnsDraft.host} onChange={(event) => setDnsDraft((draft) => ({ ...draft, host: event.target.value }))} />
-            </label>
-            <label>
-              Type
-              <select value={dnsDraft.type} onChange={(event) => setDnsDraft((draft) => ({ ...draft, type: event.target.value }))}>
-                <option value="A">A</option>
-                <option value="AAAA">AAAA</option>
-                <option value="CNAME">CNAME</option>
-                <option value="MX">MX</option>
-                <option value="TXT">SPF/TXT</option>
-                <option value="SRV">SRV</option>
-              </select>
-            </label>
-            <label>
-              Value
-              <input value={dnsDraft.value} onChange={(event) => setDnsDraft((draft) => ({ ...draft, value: event.target.value }))} />
-            </label>
-            <label>
-              TTL
-              <input type="number" min="300" max="86400" value={dnsDraft.ttl} onChange={(event) => setDnsDraft((draft) => ({ ...draft, ttl: event.target.value }))} />
-            </label>
-            {["MX", "SRV"].includes(dnsDraft.type) && (
-              <label>
-                Priority
-                <input type="number" min="0" max="100" value={dnsDraft.priority} onChange={(event) => setDnsDraft((draft) => ({ ...draft, priority: event.target.value }))} />
-              </label>
-            )}
-            {dnsDraft.type === "SRV" && (
-              <>
-                <label>
-                  Weight
-                  <input type="number" min="0" max="100" value={dnsDraft.weight} onChange={(event) => setDnsDraft((draft) => ({ ...draft, weight: event.target.value }))} />
-                </label>
-                <label>
-                  Port
-                  <input type="number" min="1" max="65535" value={dnsDraft.port} onChange={(event) => setDnsDraft((draft) => ({ ...draft, port: event.target.value }))} />
-                </label>
-              </>
-            )}
-            <button className="primary-button compact" type="submit">Add Record</button>
-          </form>
-          <div className="dns-example-panel">
-            <span className="status-pill muted">Example</span>
-            <p>{dnsRecordExample(dnsDraft.type)}</p>
-          </div>
-        </article>
-      )}
 
       {mode === "ssl" && (
         <SslLegacyContent
@@ -7508,12 +9274,6 @@ function DomainServicesSection({ mode, cpId }) {
           </form>
         </article>
       )}
-      {mode === "dns" && (
-        <article className="panel-card knowledge-card">
-          <span className="status-pill muted">KB Article</span>
-          <a href="http://www.smarterasp.net/support/kb/a1544/how-to-set-mx-records-for-google-mail.aspx" target="_blank" rel="noreferrer">How to set MX records for Google Mail</a>
-        </article>
-      )}
       {mode === "cdn" && (
         <article className="panel-card knowledge-card">
           <span className="status-pill muted">KB Article</span>
@@ -7524,8 +9284,14 @@ function DomainServicesSection({ mode, cpId }) {
         </article>
       )}
 
-      {isLoadingDomains && <LoadingState label="Loading mapped domains" />}
-      {isLoadingSecurity && <LoadingState label={`Loading ${mode.toUpperCase()} legacy inventory`} />}
+      {mode === "ssl" ? (
+        (isLoadingDomains || isLoadingSecurity) && <LoadingState label="Loading SSL inventory" />
+      ) : (
+        <>
+          {isLoadingDomains && <LoadingState label="Loading mapped domains" />}
+          {isLoadingSecurity && <LoadingState label={`Loading ${mode.toUpperCase()} inventory`} />}
+        </>
+      )}
       {mode !== "ssl" && domainMessage && <p className="sandbox-message">{domainMessage}</p>}
       {mode !== "ssl" && serviceResult?.details?.records?.length > 0 && (
         <RuntimeRows
@@ -7550,9 +9316,11 @@ function DomainServicesSection({ mode, cpId }) {
           title={`${serviceResult.area.toUpperCase()} Action Detail`}
           rows={[{
             title: serviceResult.action,
-            subtitle: serviceResult.details.domain || serviceResult.details.legacySource || "Legacy action",
+            subtitle: serviceResult.details.domain || "Service action",
             status: "Checked",
-            details: Object.fromEntries(Object.entries(serviceResult.details).map(([key, value]) => [key, typeof value === "object" ? JSON.stringify(value) : String(value)]))
+            details: Object.fromEntries(Object.entries(serviceResult.details)
+              .filter(([key]) => key !== "legacySource")
+              .map(([key, value]) => [key, typeof value === "object" ? JSON.stringify(value) : String(value)]))
           }]}
           emptyText="No action detail."
         />
@@ -7564,7 +9332,7 @@ function DomainServicesSection({ mode, cpId }) {
           <IconActionButton label="Retry" onClick={loadDomainServices} />
         </div>
       )}
-      {!isLoadingDomains && !domainError && !domains.length && (
+      {!isLoadingDomains && !domainError && !visibleDomains.length && (
         <div className="panel-card cp-placeholder">
           <span className="status-pill muted">No domains</span>
           <h2>No mapped domains found</h2>
@@ -7580,9 +9348,9 @@ function DomainServicesSection({ mode, cpId }) {
         <RuntimeRows key={section.title} title={section.title} rows={section.rows} emptyText={section.emptyText} />
       ))}
 
-      {mode !== "ssl" && !!domains.length && viewMode === "cards" && (
+      {mode !== "ssl" && !!visibleDomains.length && effectiveViewMode === "cards" && (
         <div className="domain-service-grid">
-          {domains.map((domain) => (
+          {visibleDomains.map((domain) => (
             <article className="panel-card domain-service-card" key={`${mode}-${domain.domainUid}-${domain.label}`}>
               <div className="database-card-header">
                 <div>
@@ -7602,40 +9370,50 @@ function DomainServicesSection({ mode, cpId }) {
               </dl>
               <div className="database-action-row">
                 {domainServiceRowActions(mode, domain).map((action) => (
-                  <IconActionButton label={action} key={action} disabled={isTemporaryHostingDomain(domain.label)} onClick={() => runDomainServiceAction(mode, action, domain)} />
+                  <IconActionButton
+                    label={action}
+                    key={action}
+                    disabled={isTemporaryHostingDomain(domain.label)}
+                    onClick={() => mode === "dns" ? openCpDnsManager(domain) : runDomainServiceAction(mode, action, domain)}
+                  />
                 ))}
               </div>
             </article>
           ))}
         </div>
       )}
-      {mode !== "ssl" && !!domains.length && viewMode === "table" && (
+      {mode !== "ssl" && !!visibleDomains.length && effectiveViewMode === "table" && (
         <div className="table-wrap website-table">
           <table>
             <thead>
               <tr>
                 <th>Domain</th>
-                <th>Website</th>
-                <th>Runtime</th>
-                <th>Status</th>
-                <th>CDN</th>
-                <th>SSL</th>
+                {mode !== "dns" && <th>Website</th>}
+                {mode !== "dns" && <th>Runtime</th>}
+                {mode !== "dns" && <th>Status</th>}
+                {mode !== "dns" && <th>CDN</th>}
+                {mode !== "dns" && <th>SSL</th>}
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {domains.map((domain) => (
+              {visibleDomains.map((domain) => (
                 <tr key={`${mode}-${domain.domainUid}-${domain.label}`}>
                   <td>{domain.label}</td>
-                  <td>{domain.siteName}</td>
-                  <td>{domain.runtime}</td>
-                  <td>{domain.siteStatus}</td>
-                  <td>{domain.cdn ? "Enabled" : "Not enabled"}</td>
-                  <td>{domain.ssl ? "Enabled" : "Pending"}</td>
+                  {mode !== "dns" && <td>{domain.siteName}</td>}
+                  {mode !== "dns" && <td>{domain.runtime}</td>}
+                  {mode !== "dns" && <td>{domain.siteStatus}</td>}
+                  {mode !== "dns" && <td>{domain.cdn ? "Enabled" : "Not enabled"}</td>}
+                  {mode !== "dns" && <td>{domain.ssl ? "Enabled" : "Pending"}</td>}
                   <td>
                     <div className="website-action-buttons compact-actions">
                       {domainServiceRowActions(mode, domain).map((action) => (
-                        <IconActionButton label={action} key={action} disabled={isTemporaryHostingDomain(domain.label)} onClick={() => runDomainServiceAction(mode, action, domain)} />
+                        <IconActionButton
+                          label={action}
+                          key={action}
+                          disabled={isTemporaryHostingDomain(domain.label)}
+                          onClick={() => mode === "dns" ? openCpDnsManager(domain) : runDomainServiceAction(mode, action, domain)}
+                        />
                       ))}
                     </div>
                   </td>
@@ -7645,14 +9423,14 @@ function DomainServicesSection({ mode, cpId }) {
           </table>
         </div>
       )}
-      {mode !== "ssl" && <ActivityList jobs={domainJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle={`No recent ${mode.toUpperCase()} jobs`} onRetry={reloadActivity} />}
+      {mode !== "ssl" && mode !== "dns" && <ActivityList jobs={domainJobs} isLoading={isLoadingActivity} error={activityError} emptyTitle={`No recent ${mode.toUpperCase()} jobs`} onRetry={reloadActivity} />}
     </section>
   );
 }
 
 function domainServiceRowActions(mode, domain) {
   if (mode === "dns") {
-    return ["Add Record"];
+    return ["DNS Manager"];
   }
 
   if (mode === "cdn") {
@@ -7665,18 +9443,18 @@ function domainServiceRowActions(mode, domain) {
 function dnsRecordExample(type) {
   switch (type) {
     case "AAAA":
-      return "Name: blog, Address: 2001:0db8:85a3:0000:0000:8a2e:0370:7334";
+      return "Example Name: blog          Address: 2610:150:4000:1db:f816:3eff:fef4:262f";
     case "CNAME":
-      return "Name: blog, Address: www.google.com";
+      return "Example Name: blog          Address: www.google.com";
     case "MX":
-      return "Address: igw5002.site4now.net, Priority: 10";
+      return "Address: igw5002.site4now.net          Priority: 10";
     case "TXT":
-      return "SPF: v=spf1 a mx include:_spf.site4now.net -all; DMARC: v=DMARC1; p=none";
+      return "SPF Example: Address: v=spf1 a mx include:_spf.site4now.net -all\nDMARC Example: Name: _dmarc      Address: v=DMARC1;p=reject;pct=100;rua=mailto:postmaster@agapepapa.com";
     case "SRV":
-      return "Name: _sip._tls, Address: sipdir.online.lync.com, Priority: 10, Weight: 1, Port: 443";
+      return "Example Name: _sip._tls      Address: sipdir.online.lync.com      Priority: 10      Weight: 1      Port: 443";
     case "A":
     default:
-      return "Name: blog, Address: 123.123.123.123";
+      return "Example Name: blog          Address: 123.123.123.123";
   }
 }
 
@@ -7696,6 +9474,96 @@ function LoadingState({ label = "Loading" }) {
   );
 }
 
+function CustomSelect({ value, options = [], onChange, ariaLabel = "Choose option", disabled = false, className = "" }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState(null);
+  const menuRef = useRef(null);
+  const buttonRef = useRef(null);
+  const normalizedOptions = options.map((option) => (
+    typeof option === "object" ? option : { value: option, label: option }
+  ));
+  const selectedOption = normalizedOptions.find((option) => String(option.value) === String(value));
+
+  function updateMenuPosition() {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const menuWidth = Math.min(Math.max(rect.width, 180), 360, Math.max(180, window.innerWidth - 16));
+    const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - menuWidth - 8));
+    setMenuPosition({
+      left,
+      top: rect.bottom + 6,
+      width: menuWidth
+    });
+  }
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    updateMenuPosition();
+
+    function closeMenu(event) {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+
+    function repositionMenu() {
+      updateMenuPosition();
+    }
+
+    document.addEventListener("mousedown", closeMenu);
+    window.addEventListener("resize", repositionMenu);
+    window.addEventListener("scroll", repositionMenu, true);
+    return () => {
+      document.removeEventListener("mousedown", closeMenu);
+      window.removeEventListener("resize", repositionMenu);
+      window.removeEventListener("scroll", repositionMenu, true);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className={`custom-select-menu ${className}`.trim()} ref={menuRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        className="custom-select-button"
+        disabled={disabled}
+        ref={buttonRef}
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <span>{selectedOption?.label ?? "Please choose"}</span>
+        <MenuIcon name="chevron-down" />
+      </button>
+      {isOpen && !disabled && (
+        <div
+          className="custom-select-options floating-custom-select-options"
+          role="listbox"
+          aria-label={ariaLabel}
+          style={menuPosition ? { left: `${menuPosition.left}px`, top: `${menuPosition.top}px`, width: `${menuPosition.width}px` } : undefined}
+        >
+          {normalizedOptions.map((option) => (
+            <button
+              aria-selected={String(option.value) === String(value)}
+              className={String(option.value) === String(value) ? "custom-select-option active" : "custom-select-option"}
+              disabled={option.disabled}
+              key={`${option.value}-${option.label}`}
+              role="option"
+              type="button"
+              onClick={() => {
+                onChange?.(option.value);
+                setIsOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IconActionButton({ label, icon = "", onClick, disabled = false, className = "secondary-button compact icon-only-button", type = "button" }) {
   return (
     <button
@@ -7703,7 +9571,6 @@ function IconActionButton({ label, icon = "", onClick, disabled = false, classNa
       className={className}
       disabled={disabled}
       onClick={onClick}
-      title={label}
       type={type}
     >
       <MenuIcon name={icon || iconForAction(label)} />
@@ -7813,6 +9680,12 @@ function MenuIcon({ name }) {
       <>
         <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6a2.5 2.5 0 0 1 2.5 2.5V17A2.5 2.5 0 0 1 18 19.5H6A2.5 2.5 0 0 1 3.5 17Z" />
         <path d="M12 10.5v6M9 13.5h6" />
+      </>
+    ),
+    "new-file": (
+      <>
+        <path d="M7 3.5h7l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V5A1.5 1.5 0 0 1 7.5 3.5Z" />
+        <path d="M14 3.5V8h4M12 11.5v6M9 14.5h6" />
       </>
     ),
     "folder-search": (
@@ -8073,6 +9946,12 @@ function MenuIcon({ name }) {
         <circle cx="18.5" cy="12" r="1.6" />
       </>
     ),
+    "work-queue": (
+      <>
+        <path d="M5 5h14v4H5zM5 10.5h14v4H5zM5 16h14v3H5z" />
+        <path d="M8 7h4M8 12.5h6M8 17.5h3" />
+      </>
+    ),
     "site-name": (
       <>
         <circle cx="12" cy="12" r="8.5" />
@@ -8215,9 +10094,11 @@ function MenuIcon({ name }) {
     )
   };
 
+  const iconName = icons[name] ? name : iconForAction(name);
+
   return (
     <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-      {icons[name]}
+      {icons[iconName] ?? icons.more}
     </svg>
   );
 }
@@ -8229,7 +10110,6 @@ function RefreshButton({ onClick, label = "Refresh" }) {
       type="button"
       onClick={onClick}
       aria-label={label}
-      title={label}
     >
       <MenuIcon name="refresh" />
     </button>
@@ -8420,7 +10300,7 @@ function NewOrderSection({ onChangeSection }) {
               {isLoading && <LoadingState label="Loading live catalog" />}
               {message && <p className="inline-status">{message}</p>}
               {!isLoading && !message && catalog?.products?.length === 0 && (
-                <p className="inline-status">No active products were found for this legacy catalog.</p>
+                <p className="inline-status">No active products were found for this catalog.</p>
               )}
               <div className="new-order-products">
                 {(catalog?.products ?? []).map((product) => {
@@ -8433,20 +10313,19 @@ function NewOrderSection({ onChangeSection }) {
                         <p>{product.description || product.productType}</p>
                       </div>
                       <div className="new-order-product-actions">
-                        <select
+                        <CustomSelect
                           aria-label={`${product.name} billing term`}
                           value={selectedPrice?.priceId ?? ""}
-                          onChange={(event) => setSelectedPrices((current) => ({
+                          ariaLabel={`${product.name} billing term`}
+                          onChange={(value) => setSelectedPrices((current) => ({
                             ...current,
-                            [product.productId]: Number(event.target.value)
+                            [product.productId]: Number(value)
                           }))}
-                        >
-                          {(product.prices ?? []).map((price) => (
-                            <option key={price.priceId} value={price.priceId}>
-                              {formatPaymentTerm(price.paymentTerm)} - {formatMoney(price.amount, price.currency)}
-                            </option>
-                          ))}
-                        </select>
+                          options={(product.prices ?? []).map((price) => ({
+                            value: price.priceId,
+                            label: `${formatPaymentTerm(price.paymentTerm)} - ${formatMoney(price.amount, price.currency)}`
+                          }))}
+                        />
                         <button
                           className="primary-button compact"
                           type="button"
@@ -8705,7 +10584,7 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
             <div>
               <span className="eyebrow">Hosting Upgrade</span>
               <h2>{upgradeCatalog?.current?.cpLogin ? `Upgrade ${upgradeCatalog.current.cpLogin}` : "Upgrade Hosting Plan"}</h2>
-              <p>{upgradeCatalog?.legacyTrace ?? "Loading upgrade options from the old account-panel flow."}</p>
+              <p>{upgradeCatalog?.legacyTrace ?? "Loading upgrade options for this hosting plan."}</p>
             </div>
             <button className="secondary-button compact" type="button" onClick={() => {
               setUpgradeCatalog(null);
@@ -8736,12 +10615,13 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
               <div className="upgrade-summary-box">
                 <label className="form-label" htmlFor="hosting-upgrade-target">Upgrade To</label>
                 <div className="upgrade-select-row">
-                  <select
-                    id="hosting-upgrade-target"
+                  <CustomSelect
+                    className="hosting-upgrade-target-select"
                     value={upgradeTargetId}
                     disabled={upgradeCalculating}
-                    onChange={(event) => {
-                      const nextTargetId = event.target.value;
+                    ariaLabel="Upgrade to"
+                    onChange={(value) => {
+                      const nextTargetId = value;
                       setUpgradeTargetId(nextTargetId);
                       setUpgradePreview(null);
                       setUpgradeOrder(null);
@@ -8752,14 +10632,14 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                         setUpgradeMessage("Please choose a plan.");
                       }
                     }}
-                  >
-                    <option value="">Please choose a plan</option>
-                    {(upgradeCatalog.targets ?? []).map((target) => (
-                      <option key={target.productId} value={target.productId}>
-                        {target.description || target.name}
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: "", label: "Please choose a plan" },
+                      ...(upgradeCatalog.targets ?? []).map((target) => ({
+                        value: target.productId,
+                        label: target.description || target.name
+                      }))
+                    ]}
+                  />
                 </div>
                 {upgradeCalculating && (
                   <p className="inline-help-text loading-help-text">
@@ -8850,7 +10730,7 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
       </div>
 
       {(viewMode === "cards" || isDashboardLoading || !accounts.length) && (
-        <div className="card-grid">
+        <div className="card-grid hosting-plan-card-grid">
           {isDashboardLoading && (
             <article className="service-card">
               <span className="status-pill blue"><LoadingIcon label="Loading hosting plans" /></span>
@@ -9059,13 +10939,61 @@ const domainRegistrarActionDefaults = {
   forwarding: "support@example.com"
 };
 
-function DnsManagementPage({ domain, manager, isLoading, message, recordsPreview, busy, draft, onDraftChange, onBack, onReload, onSubmitAction }) {
+function DnsManagementPage({ domain, manager, isLoading, message, recordsPreview, busy, draft, onDraftChange, onBack, onReload, onSubmitAction, domainOptions = [], selectedDomainId = "", onDomainChange = null }) {
   const recordTypes = ["A", "AAAA", "CNAME", "MX", "TXT", "SRV"];
   const dnsServers = manager?.dnsServers?.length ? manager.dnsServers : ["NS1.SITE4NOW.NET", "NS2.SITE4NOW.NET", "NS3.SITE4NOW.NET"];
-  const rows = recordsPreview?.length ? recordsPreview : manager?.records ?? [];
+  const rows = (recordsPreview?.length ? recordsPreview : manager?.records ?? [])
+    .filter((record) => String(record?.type ?? "").toUpperCase() !== "NS");
   const example = dnsRecordExample(draft.recordType === "TXT" ? "SPF/TXT" : draft.recordType);
   const [editingRecordIndex, setEditingRecordIndex] = useState(null);
   const [editingRecordDraft, setEditingRecordDraft] = useState(null);
+  const [isDomainMenuOpen, setIsDomainMenuOpen] = useState(false);
+  const [isRecordTypeMenuOpen, setIsRecordTypeMenuOpen] = useState(false);
+  const [inlineRecordTypeMenuIndex, setInlineRecordTypeMenuIndex] = useState(null);
+  const domainMenuRef = useRef(null);
+  const recordTypeMenuRef = useRef(null);
+  const inlineRecordTypeMenuRef = useRef(null);
+  const sortedDomainOptions = [...domainOptions].sort((left, right) => String(left.label ?? "").localeCompare(String(right.label ?? ""), undefined, { sensitivity: "base" }));
+  const selectedDomainOption = sortedDomainOptions.find((option) => String(option.domainUid) === String(selectedDomainId));
+
+  useEffect(() => {
+    if (!isDomainMenuOpen) return undefined;
+
+    function closeDomainMenu(event) {
+      if (domainMenuRef.current && !domainMenuRef.current.contains(event.target)) {
+        setIsDomainMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeDomainMenu);
+    return () => document.removeEventListener("mousedown", closeDomainMenu);
+  }, [isDomainMenuOpen]);
+
+  useEffect(() => {
+    if (!isRecordTypeMenuOpen) return undefined;
+
+    function closeRecordTypeMenu(event) {
+      if (recordTypeMenuRef.current && !recordTypeMenuRef.current.contains(event.target)) {
+        setIsRecordTypeMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeRecordTypeMenu);
+    return () => document.removeEventListener("mousedown", closeRecordTypeMenu);
+  }, [isRecordTypeMenuOpen]);
+
+  useEffect(() => {
+    if (inlineRecordTypeMenuIndex == null) return undefined;
+
+    function closeInlineRecordTypeMenu(event) {
+      if (inlineRecordTypeMenuRef.current && !inlineRecordTypeMenuRef.current.contains(event.target)) {
+        setInlineRecordTypeMenuIndex(null);
+      }
+    }
+
+    document.addEventListener("mousedown", closeInlineRecordTypeMenu);
+    return () => document.removeEventListener("mousedown", closeInlineRecordTypeMenu);
+  }, [inlineRecordTypeMenuIndex]);
 
   function updateDraft(field, value) {
     onDraftChange((current) => ({ ...current, [field]: value }));
@@ -9105,14 +11033,38 @@ function DnsManagementPage({ domain, manager, isLoading, message, recordsPreview
     if (isEditing && editingRecordDraft) {
       if (field === "recordType") {
         return (
-          <select
-            aria-label={label}
-            className="dns-record-inline-control"
-            value={editingRecordDraft.recordType}
-            onChange={(event) => updateEditingRecord("recordType", event.target.value)}
-          >
-            {recordTypes.map((type) => <option key={type} value={type}>{type === "TXT" ? "SPF/TXT" : type}</option>)}
-          </select>
+          <div className="dns-type-menu inline-dns-type-menu" ref={inlineRecordTypeMenuRef}>
+            <button
+              aria-expanded={inlineRecordTypeMenuIndex === index}
+              aria-haspopup="listbox"
+              aria-label={label}
+              className="dns-type-select dns-record-inline-control"
+              type="button"
+              onClick={() => setInlineRecordTypeMenuIndex((current) => current === index ? null : index)}
+            >
+              <span>{editingRecordDraft.recordType === "TXT" ? "SPF/TXT" : editingRecordDraft.recordType}</span>
+              <MenuIcon name="chevron-down" />
+            </button>
+            {inlineRecordTypeMenuIndex === index && (
+              <div className="dns-type-options" role="listbox" aria-label={label}>
+                {recordTypes.map((type) => (
+                  <button
+                    aria-selected={editingRecordDraft.recordType === type}
+                    className={editingRecordDraft.recordType === type ? "dns-type-option active" : "dns-type-option"}
+                    key={type}
+                    role="option"
+                    type="button"
+                    onClick={() => {
+                      updateEditingRecord("recordType", type);
+                      setInlineRecordTypeMenuIndex(null);
+                    }}
+                  >
+                    {type === "TXT" ? "SPF/TXT" : type}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         );
       }
 
@@ -9145,18 +11097,51 @@ function DnsManagementPage({ domain, manager, isLoading, message, recordsPreview
   return (
     <aside className="domain-settings-page dns-management-page">
       <div className="domain-settings-header">
-        <button className="secondary-button compact" type="button" onClick={onBack}>
-          <MenuIcon name="back" />
-          Back to Domains
-        </button>
-        <div className="dns-page-actions">
-          <RefreshButton onClick={onReload} />
-        </div>
+        {onBack ? (
+          <button className="secondary-button compact" type="button" onClick={onBack}>
+            <MenuIcon name="back" />
+            Back to Domains
+          </button>
+        ) : <span />}
       </div>
       <div className="database-card-header dns-manager-title">
         <div>
-          <span className="status-pill blue">DNS Manager</span>
-          <h3>{domain?.domainName ?? manager?.domainName}</h3>
+          {!!domainOptions.length && onDomainChange && (
+            <div className="dns-domain-select-row" ref={domainMenuRef}>
+              <div className="dns-domain-menu">
+                <button
+                  aria-expanded={isDomainMenuOpen}
+                  aria-haspopup="listbox"
+                  className="dns-domain-select"
+                  type="button"
+                  onClick={() => setIsDomainMenuOpen((open) => !open)}
+                >
+                  <span>{selectedDomainOption?.label ?? domain?.domainName ?? manager?.domainName ?? "Choose domain"}</span>
+                  <MenuIcon name="chevron-down" />
+                </button>
+                {isDomainMenuOpen && (
+                  <div className="dns-domain-options" role="listbox" aria-label="Choose DNS domain">
+                    {sortedDomainOptions.map((option) => (
+                      <button
+                        aria-selected={String(option.domainUid) === String(selectedDomainId)}
+                        className={String(option.domainUid) === String(selectedDomainId) ? "dns-domain-option active" : "dns-domain-option"}
+                        key={option.domainUid}
+                        role="option"
+                        type="button"
+                        onClick={() => {
+                          setIsDomainMenuOpen(false);
+                          onDomainChange(String(option.domainUid));
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <RefreshButton onClick={onReload} />
+            </div>
+          )}
           <p>Manage DNS records using the same A, AAAA, CNAME, MX, SPF/TXT, and SRV.</p>
         </div>
       </div>
@@ -9167,19 +11152,49 @@ function DnsManagementPage({ domain, manager, isLoading, message, recordsPreview
         ))}
       </section>
 
+      <article className="panel-card knowledge-card dns-kb-card">
+        <span className="status-pill muted">KB Article</span>
+        <a href="http://www.smarterasp.net/support/kb/a1544/how-to-set-mx-records-for-google-mail.aspx" target="_blank" rel="noreferrer">How to set MX records for Google Mail</a>
+      </article>
+
       {isLoading && <LoadingState label="Loading DNS manager" />}
       {message && <p className="renewal-action-message">{message}</p>}
 
       <article className="panel-card dns-record-draft-card flush-card">
         <form className="advance-inline-form dns-management-form" onSubmit={(event) => submit(event, "add")}>
-          <div className="dns-add-edit-badge-cell">
-            <span className="status-pill muted">Add / Edit Record</span>
-          </div>
           <label>
             Type
-            <select value={draft.recordType} onChange={(event) => updateDraft("recordType", event.target.value)}>
-              {recordTypes.map((type) => <option key={type} value={type}>{type === "TXT" ? "SPF/TXT" : type}</option>)}
-            </select>
+            <div className="dns-type-menu" ref={recordTypeMenuRef}>
+              <button
+                aria-expanded={isRecordTypeMenuOpen}
+                aria-haspopup="listbox"
+                className="dns-type-select"
+                type="button"
+                onClick={() => setIsRecordTypeMenuOpen((open) => !open)}
+              >
+                <span>{draft.recordType === "TXT" ? "SPF/TXT" : draft.recordType}</span>
+                <MenuIcon name="chevron-down" />
+              </button>
+              {isRecordTypeMenuOpen && (
+                <div className="dns-type-options" role="listbox" aria-label="Choose DNS record type">
+                  {recordTypes.map((type) => (
+                    <button
+                      aria-selected={draft.recordType === type}
+                      className={draft.recordType === type ? "dns-type-option active" : "dns-type-option"}
+                      key={type}
+                      role="option"
+                      type="button"
+                      onClick={() => {
+                        updateDraft("recordType", type);
+                        setIsRecordTypeMenuOpen(false);
+                      }}
+                    >
+                      {type === "TXT" ? "SPF/TXT" : type}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </label>
           <label>
             Name
@@ -10520,9 +12535,9 @@ function DomainSection() {
                         <td>
                           <button
                             aria-pressed={privacyEnabled}
+                            aria-label={privacyLabel}
                             className={domain.whoisPrivacySupported ? "domain-privacy-toggle" : "domain-privacy-toggle disabled"}
                             disabled={privacyDisabled}
-                            title={privacyLabel}
                             type="button"
                             onClick={() => toggleDomainPrivacy(domain, !privacyEnabled)}
                           >
@@ -10533,9 +12548,9 @@ function DomainSection() {
                         <td>
                           <button
                             aria-pressed={lockEnabled}
+                            aria-label={lockEnabled ? "Domain Locked" : "Domain Unlocked"}
                             className="domain-privacy-toggle domain-lock-toggle"
                             disabled={lockDisabled}
-                            title={lockEnabled ? "Domain Locked" : "Domain Unlocked"}
                             type="button"
                             onClick={() => toggleDomainLock(domain, !lockEnabled)}
                           >
@@ -10548,9 +12563,8 @@ function DomainSection() {
                             {canRenew && (
                               <button
                                 aria-label="Renew"
-                                className="secondary-button compact domain-row-action-button"
+                                className="secondary-button compact icon-only-button domain-row-action-button"
                                 disabled={isDomainActionBusy}
-                                title="Renew"
                                 type="button"
                                 onClick={() => renewSelectedDomain(domain)}
                               >
@@ -10559,8 +12573,8 @@ function DomainSection() {
                             )}
                             {canManageDns && (
                               <button
-                                className="secondary-button compact domain-row-action-button"
-                                title="DNS Manager"
+                                aria-label="DNS Manager"
+                                className="secondary-button compact icon-only-button domain-row-action-button"
                                 type="button"
                                 onClick={() => openDomainDnsManager(domain)}
                               >
@@ -10569,8 +12583,8 @@ function DomainSection() {
                             )}
                             {canManage && (
                               <button
-                                className="secondary-button compact domain-row-action-button manage"
-                                title="Manage"
+                                aria-label="Manage"
+                                className="secondary-button compact icon-only-button domain-row-action-button manage"
                                 type="button"
                                 onClick={() => openDomainSettings(domain)}
                               >
@@ -10579,14 +12593,14 @@ function DomainSection() {
                             )}
                             {!canManage && domain.transferActionLabel && (
                               <button
+                                aria-label={domain.transferActionLabel}
                                 className="secondary-button compact domain-transfer-action"
                                 type="button"
-                                title={domain.transferActionUrl || domain.transferActionLabel}
                                 onClick={() => {
                                   setSelectedDomain(domain);
                                   setDomainActionDomainId(domain.id);
                                   setDomainActionUrl("");
-                                  setDomainActionMessage(`${domain.transferActionLabel}: ${domain.transferActionUrl || "legacy transfer action"}`);
+                                  setDomainActionMessage(`${domain.transferActionLabel}: ${domain.transferActionUrl || "Transfer action"}`);
                                 }}
                               >
                                 {domain.transferActionLabel}
@@ -10970,26 +12984,30 @@ function VpnSection() {
             </label>
             <label>
               Type
-              <select
+              <CustomSelect
                 className="inline-select"
                 value={vpnUserForm.type}
-                onChange={(event) => setVpnUserForm((form) => ({ ...form, type: event.target.value }))}
-              >
-                <option value="IKEv2">IKEv2</option>
-                <option value="OpenVPN">OpenVPN</option>
-              </select>
+                ariaLabel="VPN type"
+                onChange={(value) => setVpnUserForm((form) => ({ ...form, type: value }))}
+                options={[
+                  { value: "IKEv2", label: "IKEv2" },
+                  { value: "OpenVPN", label: "OpenVPN" }
+                ]}
+              />
             </label>
             <label>
               Location
-              <select
+              <CustomSelect
                 className="inline-select"
                 value={vpnUserForm.area}
-                onChange={(event) => setVpnUserForm((form) => ({ ...form, area: event.target.value }))}
-              >
-                <option value="US">US</option>
-                <option value="EU">EU</option>
-                <option value="Asia">Asia</option>
-              </select>
+                ariaLabel="VPN location"
+                onChange={(value) => setVpnUserForm((form) => ({ ...form, area: value }))}
+                options={[
+                  { value: "US", label: "US" },
+                  { value: "EU", label: "EU" },
+                  { value: "Asia", label: "Asia" }
+                ]}
+              />
             </label>
             <button className="primary-button compact" type="submit" disabled={isVpnActionBusy}>
               {isVpnActionBusy ? "Preparing..." : "Create User"}
@@ -11009,29 +13027,26 @@ function VpnSection() {
             <div className="vpn-buy-form">
               <label>
                 Product
-                <select
+                <CustomSelect
                   className="inline-select"
                   value={selectedVpnProduct?.productId ?? ""}
-                  onChange={(event) => setVpnSelection({ productId: Number(event.target.value), quantity: vpnSelection.quantity ?? 1 })}
-                >
-                  {vpnCatalog.map((product) => (
-                    <option key={product.productId} value={product.productId}>{product.name}</option>
-                  ))}
-                </select>
+                  ariaLabel="VPN product"
+                  onChange={(value) => setVpnSelection({ productId: Number(value), quantity: vpnSelection.quantity ?? 1 })}
+                  options={vpnCatalog.map((product) => ({ value: product.productId, label: product.name }))}
+                />
               </label>
               <label>
                 Billing
-                <select
+                <CustomSelect
                   className="inline-select"
                   value={selectedVpnPrice?.priceId ?? ""}
-                  onChange={(event) => setVpnSelection((selection) => ({ ...selection, priceId: Number(event.target.value) }))}
-                >
-                  {(selectedVpnProduct?.prices ?? []).map((price) => (
-                    <option key={price.priceId} value={price.priceId}>
-                      {formatVpnPriceOption(price)}
-                    </option>
-                  ))}
-                </select>
+                  ariaLabel="VPN billing"
+                  onChange={(value) => setVpnSelection((selection) => ({ ...selection, priceId: Number(value) }))}
+                  options={(selectedVpnProduct?.prices ?? []).map((price) => ({
+                    value: price.priceId,
+                    label: formatVpnPriceOption(price)
+                  }))}
+                />
               </label>
               <label>
                 Qty
@@ -11254,31 +13269,31 @@ function AddonSection() {
               return [
                 <span className="addon-product-name">{addon.name}</span>,
                 addon.description,
-                <select
+                <CustomSelect
                   className="inline-select"
                   aria-label={`${addon.name} billing term`}
                   value={selection.priceId ?? ""}
-                  onChange={(event) => updateAddonSelection(addon.productId, { priceId: Number(event.target.value) })}
-                >
-                  {addon.prices.length ? addon.prices.map((price) => (
-                    <option key={price.priceId} value={price.priceId}>
-                      {formatPaymentTerm(price.paymentTerm)} {formatMoney(price.amount, price.currency)}
-                    </option>
-                  )) : <option value="">No price available</option>}
-                </select>,
-                <select
+                  ariaLabel={`${addon.name} billing term`}
+                  onChange={(value) => updateAddonSelection(addon.productId, { priceId: Number(value) })}
+                  options={addon.prices.length ? addon.prices.map((price) => ({
+                    value: price.priceId,
+                    label: `${formatPaymentTerm(price.paymentTerm)} ${formatMoney(price.amount, price.currency)}`
+                  })) : [{ value: "", label: "No price available", disabled: true }]}
+                />,
+                <CustomSelect
                   className="inline-select"
                   aria-label={`${addon.name} target hosting account`}
                   value={selection.cpId}
-                  onChange={(event) => updateAddonSelection(addon.productId, { cpId: event.target.value })}
-                >
-                  <option value="">No hosting target</option>
-                  {addonHostingAccounts.map((account) => (
-                    <option key={account.cpId} value={account.cpId}>
-                      {account.cpLogin || account.primaryDomain || `CP ${account.cpId}`}
-                    </option>
-                  ))}
-                </select>,
+                  ariaLabel={`${addon.name} target hosting account`}
+                  onChange={(value) => updateAddonSelection(addon.productId, { cpId: value })}
+                  options={[
+                    { value: "", label: "No hosting target" },
+                    ...addonHostingAccounts.map((account) => ({
+                      value: account.cpId,
+                      label: account.cpLogin || account.primaryDomain || `CP ${account.cpId}`
+                    }))
+                  ]}
+                />,
                 <input
                   className="qty-input"
                   type="number"
@@ -11395,7 +13410,7 @@ function BillingSection({ currentUser, onChangeSection }) {
   const [purchaseDates, setPurchaseDates] = useState(() => {
     const now = new Date();
     return {
-      start: formatDateForInput(addYears(now, -1)),
+      start: "2000-01-01",
       end: formatDateForInput(addYears(now, 1))
     };
   });
@@ -11967,14 +13982,18 @@ function ProductRenewPage({ product, catalog, message, busy, onBack, onCheckout 
           <div className="product-renew-grid">
             <label>
               Payment Terms
-              <select value={selectedKey} onChange={(event) => setSelectedKey(event.target.value)}>
-                <option value="">Please choose a payment term</option>
-                {options.map((option) => (
-                  <option key={renewalOptionKey(option)} value={renewalOptionKey(option)}>
-                    {renewalOptionLabel(catalog, option)}
-                  </option>
-                ))}
-              </select>
+              <CustomSelect
+                value={selectedKey}
+                ariaLabel="Payment terms"
+                onChange={(value) => setSelectedKey(value)}
+                options={[
+                  { value: "", label: "Please choose a payment term" },
+                  ...options.map((option) => ({
+                    value: renewalOptionKey(option),
+                    label: renewalOptionLabel(catalog, option)
+                  }))
+                ]}
+              />
             </label>
             {selectedOption && (
               <section className="renewal-price-section">
@@ -13247,7 +15266,7 @@ function SettingsSection() {
             <div>
               <span className="status-pill blue">Mobile</span>
               <h2>Verify Mobile Number</h2>
-              <p>Send a one-time PIN through the same SMS gateway used by the old account panel.</p>
+              <p>Send a one-time PIN to verify this mobile number.</p>
             </div>
             <form className="settings-form" onSubmit={sendMobilePin}>
               <label>
@@ -13337,7 +15356,7 @@ function SettingsSection() {
             <div>
               <span className="status-pill blue">Password</span>
               <h2>Change Account Password</h2>
-              <p>This updates the main account login password and can sync selected hosting passwords like the old control panel.</p>
+              <p>This updates the main account login password and can sync selected hosting passwords.</p>
             </div>
             <form className="settings-form password-change-form" onSubmit={changePassword}>
               <div className="password-change-fields">
