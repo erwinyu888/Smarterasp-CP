@@ -205,6 +205,8 @@ namespace controlpanel
                 endpoints.MapGet("/api/hosting/sites/{siteUid:int}/functions/{functionKey}", HandleHostingSiteFunctionGetAsync);
                 endpoints.MapPost("/api/hosting/sites/{siteUid:int}/functions/{functionKey}", HandleHostingSiteFunctionPostAsync);
                 endpoints.MapGet("/api/hosting/sites/{siteUid:int}/github", HandleHostingSiteGithubStatusAsync);
+                endpoints.MapPost("/api/hosting/sites/{siteUid:int}/github/environment", HandleHostingSiteGithubEnvironmentSaveAsync);
+                endpoints.MapGet("/api/hosting/sites/{siteUid:int}/github/deployments/{deploymentId:long}/log", HandleHostingSiteGithubDeploymentLogAsync);
                 endpoints.MapPost("/api/hosting/sites/{siteUid:int}/github/deployhook/revoke", HandleHostingSiteGithubDeployHookRevokeAsync);
                 endpoints.MapGet("/api/hosting/databases", HandleHostingDatabasesAsync);
                 endpoints.MapGet("/api/hosting/databases/deleted", HandleHostingDeletedDatabasesAsync);
@@ -4600,6 +4602,80 @@ VALUES (@customerId, @secret, GETDATE(), 1);", command =>
 
             var status = await LoadGithubDeployStatusAsync(connection, site);
             await Results.Ok(new GithubDeployStatusResponse(true, "Github deploy status loaded.", status)).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingSiteGithubEnvironmentSaveAsync(HttpContext context, int siteUid)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Not signed in."), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var request = await context.Request.ReadFromJsonAsync<GithubEnvironmentSaveRequest>() ?? new GithubEnvironmentSaveRequest(0, "");
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var site = await LoadOwnedHostingSiteAsync(connection, sessionUser.CustomerId, request.CpId > 0 ? request.CpId : GetRequestedCpId(context), siteUid);
+            if (site == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Website not found for this account."), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var cp = new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType);
+            var fileRequest = new HostingFileManagerActionRequest(site.CpId, "save-file", site.SitePath, ".env", "", ".env", true, request.EnvironmentSettings ?? "", "utf-8");
+            var result = await RunFileManagerActionAsync(connection, cp, fileRequest);
+            await Results.Json(new AccountActionResponse(result.Success, result.Success ? "Environment variables saved." : result.Message), statusCode: result.Success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest).ExecuteAsync(context);
+        }
+
+        private async Task HandleHostingSiteGithubDeploymentLogAsync(HttpContext context, int siteUid, long deploymentId)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Not signed in."), statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var site = await LoadOwnedHostingSiteAsync(connection, sessionUser.CustomerId, GetRequestedCpId(context), siteUid);
+            if (site == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Website not found for this account."), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            var deployment = await LoadGithubDeploymentLogAsync(connection, site, deploymentId);
+            if (deployment == null)
+            {
+                await Results.Json(new AccountActionResponse(false, "Deployment log not found."), statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
+                return;
+            }
+
+            await Results.Ok(new
+            {
+                success = true,
+                message = "Deployment log loaded.",
+                deployment
+            }).ExecuteAsync(context);
         }
 
         private async Task HandleHostingSiteGithubDeployHookRevokeAsync(HttpContext context, int siteUid)
@@ -15214,7 +15290,40 @@ WHERE dp.id = @domainId
         private async Task<GithubDeployStatus> LoadGithubDeployStatusAsync(SqlConnection connection, OwnedHostingSite site)
         {
             var token = await LoadGithubTokenRowAsync(connection, site.CpId);
+            if (!string.IsNullOrWhiteSpace(token.AccessToken) &&
+                token.ExpiresAt != null &&
+                token.ExpiresAt.Value <= DateTime.Now.AddMinutes(5) &&
+                !string.IsNullOrWhiteSpace(token.RefreshToken))
+            {
+                var refreshToken = await TryLegacyDecryptImportKey2Async(token.RefreshToken);
+                if (string.IsNullOrWhiteSpace(refreshToken))
+                {
+                    refreshToken = token.RefreshToken;
+                }
+
+                var refreshed = await RefreshGithubTokensAsync(refreshToken);
+                if (refreshed.Success)
+                {
+                    await SaveGithubTokensAsync(connection, site.CpId, refreshed.AccessToken, refreshed.RefreshToken, refreshed.ExpiresAt);
+                    token = await LoadGithubTokenRowAsync(connection, site.CpId);
+                }
+            }
+
             var hook = await LoadGithubDeployHookAsync(connection, site.SiteUid);
+            var deployments = await LoadGithubDeploymentsAsync(connection, site);
+            var environmentSettings = await LoadGithubEnvironmentSettingsAsync(connection, site);
+            var repositories = new List<GithubRepositoryRow>();
+            if (!string.IsNullOrWhiteSpace(token.AccessToken))
+            {
+                var accessToken = await TryLegacyDecryptImportKey2Async(token.AccessToken);
+                if (string.IsNullOrWhiteSpace(accessToken))
+                {
+                    accessToken = token.AccessToken;
+                }
+
+                repositories = await ListGithubRepositoriesAsync(accessToken);
+            }
+
             var hookUrl = "";
             if (hook.WorkqueueId > 0)
             {
@@ -15235,7 +15344,184 @@ WHERE dp.id = @domainId
                 hook.WorkqueueId > 0,
                 hook.WorkqueueId,
                 hookUrl,
-                hook.LastUpdate);
+                hook.LastUpdate,
+                deployments,
+                repositories,
+                environmentSettings);
+        }
+
+        private static async Task<List<GithubRepositoryRow>> ListGithubRepositoriesAsync(string accessToken)
+        {
+            var repositories = new List<GithubRepositoryRow>();
+            if (string.IsNullOrWhiteSpace(accessToken))
+            {
+                return repositories;
+            }
+
+            try
+            {
+                using var http = new HttpClient();
+                using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/user/repos?per_page=100&type=all");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+                request.Headers.UserAgent.ParseAdd("SmarterASP-ControlPanel/1.0");
+                using var response = await http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return repositories;
+                }
+
+                var json = await response.Content.ReadAsStringAsync();
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    return repositories;
+                }
+
+                foreach (var repo in document.RootElement.EnumerateArray())
+                {
+                    var fullName = JsonStringProperty(repo, "full_name");
+                    var cloneUrl = JsonStringProperty(repo, "clone_url");
+                    if (string.IsNullOrWhiteSpace(fullName) || string.IsNullOrWhiteSpace(cloneUrl))
+                    {
+                        continue;
+                    }
+
+                    repositories.Add(new GithubRepositoryRow(
+                        JsonStringProperty(repo, "name"),
+                        fullName,
+                        cloneUrl,
+                        JsonBoolProperty(repo, "private", false)));
+                }
+            }
+            catch
+            {
+                return repositories;
+            }
+
+            return repositories
+                .OrderBy(repository => repository.FullName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private async Task<GithubTokenExchangeResult> RefreshGithubTokensAsync(string refreshToken)
+        {
+            var settings = GetGithubSettings(new DefaultHttpContext());
+            if (!settings.IsConfigured || string.IsNullOrWhiteSpace(refreshToken))
+            {
+                return new GithubTokenExchangeResult(false, "GitHub OAuth refresh is not configured.", "", "", null);
+            }
+
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                var tokenFields = new Dictionary<string, string>
+                {
+                    ["client_id"] = settings.ClientId,
+                    ["client_secret"] = settings.ClientSecret,
+                    ["grant_type"] = "refresh_token",
+                    ["refresh_token"] = refreshToken
+                };
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://github.com/login/oauth/access_token")
+                {
+                    Content = new FormUrlEncodedContent(tokenFields)
+                };
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.UserAgent.ParseAdd("SmarterASP-ControlPanel/1.0");
+
+                var response = await httpClient.SendAsync(request);
+                var json = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new GithubTokenExchangeResult(false, $"GitHub token refresh failed: {Preview(json)}", "", "", null);
+                }
+
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+                var accessToken = root.TryGetProperty("access_token", out var accessTokenElement) ? accessTokenElement.GetString() ?? "" : "";
+                var newRefreshToken = root.TryGetProperty("refresh_token", out var refreshTokenElement) ? refreshTokenElement.GetString() ?? "" : "";
+                var expiresIn = root.TryGetProperty("expires_in", out var expiresInElement) && expiresInElement.TryGetInt32(out var seconds)
+                    ? seconds
+                    : 28800;
+                if (string.IsNullOrWhiteSpace(accessToken))
+                {
+                    return new GithubTokenExchangeResult(false, "GitHub did not return a refreshed access token.", "", "", null);
+                }
+
+                return new GithubTokenExchangeResult(true, "GitHub token refresh completed.", accessToken, newRefreshToken, DateTime.Now.AddSeconds(expiresIn));
+            }
+            catch (Exception ex)
+            {
+                return new GithubTokenExchangeResult(false, $"GitHub token refresh failed: {ex.Message}", "", "", null);
+            }
+        }
+
+        private static async Task<List<GithubDeploymentRow>> LoadGithubDeploymentsAsync(SqlConnection connection, OwnedHostingSite site)
+        {
+            var rows = new List<GithubDeploymentRow>();
+            const string sql = @"
+SELECT TOP 3 id, zipfile, enterdate, status
+FROM dbo.workqueue
+WHERE cplogin = @cpLogin
+  AND siteowner = @siteName
+  AND type = 'deploy'
+  AND enterdate > DATEADD(DAY, -90, GETDATE())
+ORDER BY enterdate DESC";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpLogin", site.CpLogin);
+            command.Parameters.AddWithValue("@siteName", site.SiteName);
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                rows.Add(new GithubDeploymentRow(
+                    reader.IsDBNull(0) ? 0 : Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture),
+                    reader.IsDBNull(1) ? "" : Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture) ?? "",
+                    reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                    reader.IsDBNull(3) ? 0 : Convert.ToInt32(reader.GetValue(3), CultureInfo.InvariantCulture)));
+            }
+
+            return rows;
+        }
+
+        private static async Task<GithubDeploymentLogRow?> LoadGithubDeploymentLogAsync(SqlConnection connection, OwnedHostingSite site, long deploymentId)
+        {
+            const string sql = @"
+SELECT TOP 1 id, zipfile, enterdate, status, ISNULL(errormessage, '')
+FROM dbo.workqueue
+WHERE id = @id
+  AND cplogin = @cpLogin
+  AND siteowner = @siteName
+  AND type = 'deploy'";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@id", deploymentId);
+            command.Parameters.AddWithValue("@cpLogin", site.CpLogin);
+            command.Parameters.AddWithValue("@siteName", site.SiteName);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new GithubDeploymentLogRow(
+                reader.IsDBNull(0) ? 0 : Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture),
+                reader.IsDBNull(1) ? "" : Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture) ?? "",
+                reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                reader.IsDBNull(3) ? 0 : Convert.ToInt32(reader.GetValue(3), CultureInfo.InvariantCulture),
+                reader.IsDBNull(4) ? "" : Convert.ToString(reader.GetValue(4), CultureInfo.InvariantCulture) ?? "");
+        }
+
+        private async Task<string> LoadGithubEnvironmentSettingsAsync(SqlConnection connection, OwnedHostingSite site)
+        {
+            var cp = new SelectedHostingCp(site.CpId, site.CpLogin, site.ServerId, site.WebHostType);
+            var fileRequest = new HostingFileManagerActionRequest(site.CpId, "read-file", site.SitePath, ".env", "", "", false, null, "utf-8");
+            var result = await RunFileManagerActionAsync(connection, cp, fileRequest);
+            if (!result.Success || result.FileManager == null)
+            {
+                return "";
+            }
+
+            return result.FileManager.Preview ?? "";
         }
 
         private async Task<GithubTokenRow> LoadGithubTokenRowAsync(SqlConnection connection, long cpId)
@@ -23864,7 +24150,11 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             public static GithubDeployHookRow Empty { get; } = new(0, null);
         }
         private sealed record GithubDeployStatusResponse(bool Success, string Message, GithubDeployStatus? Github);
-        private sealed record GithubDeployStatus(long CpId, int SiteUid, bool Connected, bool HasInstallation, DateTime? ExpiresAt, string InstallationId, bool HasDeployHook, long WorkqueueId, string HookUrl, DateTime? HookLastUpdate);
+        private sealed record GithubDeployStatus(long CpId, int SiteUid, bool Connected, bool HasInstallation, DateTime? ExpiresAt, string InstallationId, bool HasDeployHook, long WorkqueueId, string HookUrl, DateTime? HookLastUpdate, List<GithubDeploymentRow> Deployments, List<GithubRepositoryRow> Repositories, string EnvironmentSettings);
+        private sealed record GithubRepositoryRow(string Name, string FullName, string CloneUrl, bool Private);
+        private sealed record GithubDeploymentRow(long Id, string Source, DateTime? CreatedAt, int Status);
+        private sealed record GithubDeploymentLogRow(long Id, string Source, DateTime? CreatedAt, int Status, string Log);
+        private sealed record GithubEnvironmentSaveRequest(long CpId, string EnvironmentSettings);
         private sealed record GithubDeployHookRunResponse(GithubDeployHookJob Job);
         private sealed record GithubDeployHookJob(string Id, string State, string CreatedAt);
         private sealed record HostingSiteFunctionResponse(bool Success, string Message, HostingSiteFunctionDetails? Function);

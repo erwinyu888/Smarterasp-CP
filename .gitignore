@@ -6,3 +6,4 @@ ClientApp/.vite/
 .env
 .env.*
 !.env.example
+.certs/

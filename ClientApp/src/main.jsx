@@ -2499,7 +2499,7 @@ function HostingPoolDrawer({ mode, cpId, dashboard, runtime, isLoading, isRunnin
           </div>
           <div className="function-drawer-actions">
             {mode !== "ram" && <RefreshButton onClick={onRefresh} />}
-            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} aria-label="Close">
               <MenuIcon name="Close" />
             </button>
           </div>
@@ -2697,7 +2697,7 @@ function PoolRamEditor({ pool, dashboard, isRunning, onClose, onSave }) {
       <form className="pool-ram-modal panel-card" onSubmit={submitRam}>
         <header>
           <span className="status-pill blue">Pool Memory</span>
-          <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+          <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} aria-label="Close">
             <MenuIcon name="Close" />
           </button>
         </header>
@@ -2908,6 +2908,45 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
           return key === String(siteKey)
             ? { ...site, siteName, displayName: siteName }
             : site;
+        })
+      };
+      writeCachedWebsites(nextDashboard);
+      return nextDashboard;
+    });
+  }
+
+  function updateCachedWebsiteStatus(siteKey, status) {
+    const isActive = String(status).toLowerCase() !== "stopped";
+    setSiteRecords((currentSites) => currentSites.map((site) => (site.siteKey === siteKey ? { ...site, status } : site)));
+    setSitesDashboard((currentDashboard) => {
+      if (!currentDashboard) return currentDashboard;
+      const nextDashboard = {
+        ...currentDashboard,
+        sites: (currentDashboard.sites ?? []).map((site) => {
+          const key = String(site.siteUid ?? site.siteName ?? site.rootName);
+          return key === String(siteKey)
+            ? { ...site, status, iisStatus: isActive, runningStatus: status }
+            : site;
+        })
+      };
+      writeCachedWebsites(nextDashboard);
+      return nextDashboard;
+    });
+  }
+
+  function removeCachedWebsite(siteKey) {
+    setSiteRecords((currentSites) => {
+      const nextSites = currentSites.filter((site) => String(site.siteKey) !== String(siteKey));
+      setSelectedSiteKey((current) => (String(current) === String(siteKey) ? nextSites[0]?.siteKey || "" : current));
+      return nextSites;
+    });
+    setSitesDashboard((currentDashboard) => {
+      if (!currentDashboard) return currentDashboard;
+      const nextDashboard = {
+        ...currentDashboard,
+        sites: (currentDashboard.sites ?? []).filter((site) => {
+          const key = String(site.siteUid ?? site.siteName ?? site.rootName);
+          return key !== String(siteKey);
         })
       };
       writeCachedWebsites(nextDashboard);
@@ -3144,7 +3183,7 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
       }
 
       setWebsiteFunctionMessage(result.message);
-      const refreshWebsiteListKeys = new Set(["domain-manager", "site-on-off", "site-name", "delete-website"]);
+      const refreshWebsiteListKeys = new Set(["domain-manager", "site-name"]);
       if (activeWebsiteFunction.key === "detail-error") {
         const enabled = action !== "disable";
         setActiveWebsiteFunction((current) => current ? {
@@ -3185,12 +3224,38 @@ function WebsitesSection({ cpId, currentUser, onChangeSection, onOpenFileManager
         return;
       }
 
+      if (activeWebsiteFunction.key === "site-on-off") {
+        const nextStatus = action === "stop" || action === "off" ? "Stopped" : "Active";
+        updateCachedWebsiteStatus(activeWebsiteFunction.site.siteKey, nextStatus);
+        setActiveWebsiteFunction((current) => current ? {
+          ...current,
+          site: { ...current.site, status: nextStatus },
+          details: current.details ? {
+            ...current.details,
+            data: {
+              ...(current.details.data ?? {}),
+              site: {
+                ...(current.details.data?.site ?? {}),
+                status: nextStatus,
+                runningStatus: nextStatus
+              }
+            }
+          } : current.details
+        } : current);
+        await reloadActivity();
+        return;
+      }
+
+      if (activeWebsiteFunction.key === "delete-website") {
+        removeCachedWebsite(activeWebsiteFunction.site.siteKey);
+        setActiveWebsiteFunction(null);
+        await reloadActivity();
+        return;
+      }
+
       if (refreshWebsiteListKeys.has(activeWebsiteFunction.key)) {
         await loadHostingSites({ force: true, keepExisting: true });
         await reloadActivity();
-        if (activeWebsiteFunction.key === "delete-website") {
-          setActiveWebsiteFunction(null);
-        }
       }
     } catch {
       setWebsiteFunctionError("Unable to run website function.");
@@ -3703,7 +3768,7 @@ function NewSiteDrawer({ draft, message, isBusy, cpLogin, onChange, onClose, onS
             <p>Create a new website.</p>
           </div>
           <div className="function-drawer-actions">
-            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} title="Close" aria-label="Close">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} aria-label="Close">
               <MenuIcon name="x" />
             </button>
           </div>
@@ -3780,7 +3845,7 @@ function SubdomainDrawer({ draft, domains, message, isBusy, onChange, onClose, o
             <p>Create a subdomain site from one owned mapped domain.</p>
           </div>
           <div className="function-drawer-actions">
-            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} title="Close" aria-label="Close">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} aria-label="Close">
               <MenuIcon name="x" />
             </button>
           </div>
@@ -3849,6 +3914,11 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
   const [isLoadingStatus, setIsLoadingStatus] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [isHookPanelOpen, setIsHookPanelOpen] = useState(false);
+  const [isEnvironmentPanelOpen, setIsEnvironmentPanelOpen] = useState(false);
+  const [environmentDraft, setEnvironmentDraft] = useState("");
+  const [isSavingEnvironment, setIsSavingEnvironment] = useState(false);
+  const [deploymentLog, setDeploymentLog] = useState(null);
+  const [isLoadingLog, setIsLoadingLog] = useState(false);
   const [isRevokingHook, setIsRevokingHook] = useState(false);
   const [draft, setDraft] = useState({
     repourl: "https://github.com/User/MyRepository.git",
@@ -3874,6 +3944,7 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
         return;
       }
       setGithubStatus(result.github);
+      setEnvironmentDraft(result.github?.environmentSettings || "");
     } catch {
       setStatusMessage("Unable to reach Github deploy status service.");
     } finally {
@@ -3905,7 +3976,31 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
       cpId: String(cpId || ""),
       returnUrl: `${window.location.pathname}${window.location.search}`
     });
-    window.location.href = `/github/callback?${query.toString()}`;
+    const url = `/github/callback?${query.toString()}`;
+    const title = "GitHub Authentication";
+    const width = 600;
+    const height = 700;
+    const dualScreenLeft = window.screenLeft !== undefined ? window.screenLeft : window.screen.left;
+    const dualScreenTop = window.screenTop !== undefined ? window.screenTop : window.screen.top;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || screen.width;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || screen.height;
+    const systemZoom = viewportWidth / window.screen.availWidth;
+    const left = (viewportWidth - width) / 2 / systemZoom + dualScreenLeft;
+    const top = (viewportHeight - height) / 2 / systemZoom + dualScreenTop;
+    const popup = window.open(
+      url,
+      title,
+      `scrollbars=yes,width=${width / systemZoom},height=${height / systemZoom},top=${top},left=${left}`
+    );
+
+    if (window.focus && popup) popup.focus();
+
+    const timer = window.setInterval(() => {
+      if (!popup || popup.closed) {
+        window.clearInterval(timer);
+        loadGithubStatus();
+      }
+    }, 1000);
   }
 
   async function revokeDeployHook() {
@@ -3931,6 +4026,49 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
     if (!githubStatus?.hookUrl) return;
     await navigator.clipboard?.writeText(githubStatus.hookUrl);
     setStatusMessage("Deploy hook URL copied.");
+  }
+
+  async function saveEnvironmentSettings(event) {
+    event.preventDefault();
+    if (!site?.siteUid) return;
+    setIsSavingEnvironment(true);
+    setStatusMessage("");
+    try {
+      const response = await fetch(`/api/hosting/sites/${site.siteUid}/github/environment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId, environmentSettings: environmentDraft })
+      });
+      const result = await response.json().catch(() => null);
+      setStatusMessage(result?.message || "Environment variables saved.");
+      if (response.ok && result?.success) {
+        await loadGithubStatus();
+      }
+    } catch {
+      setStatusMessage("Unable to save environment variables.");
+    } finally {
+      setIsSavingEnvironment(false);
+    }
+  }
+
+  async function openDeploymentLog(deployment) {
+    if (!deployment?.id || !site?.siteUid) return;
+    setIsLoadingLog(true);
+    setDeploymentLog({ deployment, log: "" });
+    try {
+      const query = cpId ? `?cpId=${encodeURIComponent(cpId)}` : "";
+      const response = await fetch(`/api/hosting/sites/${site.siteUid}/github/deployments/${deployment.id}/log${query}`);
+      const result = await response.json().catch(() => null);
+      if (response.ok && result?.success) {
+        setDeploymentLog({ deployment: result.deployment, log: result.deployment?.log || "" });
+      } else {
+        setDeploymentLog({ deployment, log: result?.message || "Deployment log not found." });
+      }
+    } catch {
+      setDeploymentLog({ deployment, log: "Unable to load deployment log." });
+    } finally {
+      setIsLoadingLog(false);
+    }
   }
 
   async function submit(event) {
@@ -3961,16 +4099,69 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
   const connectAction = hasGitHubAppInstalled ? "auth" : "install";
   const connectionLabel = isConnected ? "Connected" : hasGitHubAppInstalled ? "App Installed" : "Not connected";
   const connectButtonLabel = isConnected ? "Reconnect GitHub Account" : hasGitHubAppInstalled ? "Authorize GitHub Account" : "Connect GitHub Account";
+  const deployments = githubStatus?.deployments || [];
+  const repositories = githubStatus?.repositories || [];
+  const repositoryOptions = [
+    { value: "", label: "-- Select a Repository to Deploy --" },
+    ...repositories.map((repository) => ({
+      value: repository.cloneUrl,
+      label: repository.fullName || repository.name || repository.cloneUrl
+    }))
+  ];
 
   return (
     <section className="github-deploy-page">
       <div className="panel-card github-deploy-header">
         <div>
-          <span className="status-pill blue">Github Deploy</span>
           <h2>Auto Build and Deploy</h2>
           <p>Build and deploy frontend, backend, and full-stack projects by connecting to a Git repository or uploading a ZIP file.</p>
         </div>
         <button className="secondary-button compact" type="button" onClick={onBack}>Back to Websites</button>
+      </div>
+
+      <div className="panel-card github-deployments-card">
+        <div className="section-heading-row">
+          <div>
+            <h3>Deployments History</h3>
+          </div>
+          {isLoadingStatus && <LoadingIcon label="Loading deployments" />}
+        </div>
+        <div className="solid-table-wrap">
+          <table className="solid-table github-deployments-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Source</th>
+                <th>Created</th>
+                <th>Status</th>
+                <th>Build Logs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deployments.length ? deployments.map((deployment) => (
+                <tr key={deployment.id}>
+                  <td>#{deployment.id}</td>
+                  <td className="table-source-cell">{deployment.source || "Git Repository"}</td>
+                  <td>{deployment.createdAt ? new Date(deployment.createdAt).toLocaleString() : "Not available"}</td>
+                  <td><GithubDeploymentStatusBadge status={deployment.status} /></td>
+                  <td>
+                    {(deployment.status === 2 || deployment.status === 3) ? (
+                      <button className="secondary-button compact icon-only-button" type="button" onClick={() => openDeploymentLog(deployment)} title="Build Logs" aria-label="Build Logs">
+                        <MenuIcon name="file" />
+                      </button>
+                    ) : (
+                      <span className="muted-text">Not ready</span>
+                    )}
+                  </td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan="5">No deployments found in the past 90 days.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="panel-card github-connect-card">
@@ -3985,14 +4176,20 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
           </div>
         </div>
         <div className="github-connect-actions">
-          <button className="secondary-button compact" type="button" onClick={() => openGitHubAuth(connectAction)}>
+          <button className="github-auth-button compact" type="button" onClick={() => openGitHubAuth(connectAction)}>
+            <GithubLogoIcon />
             {connectButtonLabel}
           </button>
-          <button className="secondary-button compact danger" type="button" onClick={() => openGitHubAuth("disconnect")} disabled={!isConnected}>
-            Disconnect GitHub Account
-          </button>
+          {isConnected && (
+            <button className="secondary-button compact danger" type="button" onClick={() => openGitHubAuth("disconnect")}>
+              Disconnect GitHub Account
+            </button>
+          )}
           <button className="secondary-button compact" type="button" onClick={() => setIsHookPanelOpen((open) => !open)}>
             Deploy Hooks
+          </button>
+          <button className="secondary-button compact" type="button" onClick={() => setIsEnvironmentPanelOpen(true)}>
+            Environment Variables
           </button>
         </div>
       </div>
@@ -4023,6 +4220,25 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
         </div>
       )}
 
+      {isEnvironmentPanelOpen && (
+        <GithubEnvironmentDrawer
+          siteName={site?.siteName}
+          value={environmentDraft}
+          onChange={setEnvironmentDraft}
+          onClose={() => setIsEnvironmentPanelOpen(false)}
+          onSubmit={saveEnvironmentSettings}
+          isSaving={isSavingEnvironment}
+        />
+      )}
+
+      {deploymentLog && (
+        <GithubDeploymentLogDrawer
+          deploymentLog={deploymentLog}
+          isLoading={isLoadingLog}
+          onClose={() => setDeploymentLog(null)}
+        />
+      )}
+
       <form className="panel-card github-deploy-form" onSubmit={submit}>
         <fieldset className="choice-fieldset">
           <legend>Deployment Method</legend>
@@ -4039,11 +4255,28 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
         </fieldset>
 
         {deployMethod === "git" ? (
-          <label>
-            Git Repository URL
-            <input value={draft.repourl} onChange={(event) => updateDraft("repourl", event.target.value)} placeholder="https://github.com/User/MyRepository.git" required />
-            <small>Access token or deploy key is needed for private repositories.</small>
-          </label>
+          isConnected && repositories.length ? (
+            <label>
+              Target Repository
+              <select
+                className="github-repository-select"
+                value={repositories.some((repository) => repository.cloneUrl === draft.repourl) ? draft.repourl : ""}
+                onChange={(event) => updateDraft("repourl", event.target.value)}
+                required
+              >
+                {repositoryOptions.map((option) => (
+                  <option key={`${option.value}-${option.label}`} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <small>Select the project repository you intend to build and deploy.</small>
+            </label>
+          ) : (
+            <label>
+              Git Repository URL
+              <input value={draft.repourl} onChange={(event) => updateDraft("repourl", event.target.value)} placeholder="https://github.com/User/MyRepository.git" required />
+              <small>Access token or deploy key is needed for private repositories.</small>
+            </label>
+          )
         ) : (
           <label>
             Select ZIP File
@@ -4120,8 +4353,151 @@ function GithubDeployPage({ site, cpId, cpLogin, isBusy, message, onBack, onSubm
           <button className="primary-button compact" type="submit" disabled={isBusy}>
             {isBusy ? <LoadingIcon label="Deploying from Github" /> : "Deploy Now"}
           </button>
+          <button className="orange-action-button compact" type="button" onClick={() => setIsEnvironmentPanelOpen(true)}>
+            Environment Variables
+          </button>
         </div>
       </form>
+
+      <GithubFaqSection />
+    </section>
+  );
+}
+
+function GithubLogoIcon() {
+  return (
+    <svg className="github-logo-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="currentColor" d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.39 0-.19-.01-.84-.01-1.52-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.63.82-2.2-.08-.21-.36-1.04.08-2.17 0 0 .67-.22 2.2.84A7.43 7.43 0 0 1 8 4c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.13.16 1.96.08 2.17.51.57.82 1.3.82 2.2 0 3.14-1.87 3.83-3.65 4.04.29.26.54.75.54 1.52 0 1.09-.01 1.97-.01 2.24 0 .21.15.47.55.39A8.05 8.05 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
+    </svg>
+  );
+}
+
+function GithubDeploymentStatusBadge({ status }) {
+  if (status === 2) return <span className="status-pill green">Success</span>;
+  if (status === 3) return <span className="status-pill danger">Failed</span>;
+  if (status === 1) return <span className="status-pill blue"><LoadingIcon label="Building" /> Building</span>;
+  return <span className="status-pill blue">Building</span>;
+}
+
+function GithubEnvironmentDrawer({ siteName, value, onChange, onClose, onSubmit, isSaving }) {
+  const [isDraggingEnvFile, setIsDraggingEnvFile] = useState(false);
+
+  function importEnvFile(file) {
+    if (!file) return;
+    if (file.name !== ".env") {
+      onChange(value);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => onChange(String(reader.result || ""));
+    reader.readAsText(file);
+  }
+
+  function handleEnvFileInput(event) {
+    importEnvFile(event.target.files?.[0]);
+    event.target.value = "";
+  }
+
+  function handleEnvFileDrop(event) {
+    event.preventDefault();
+    setIsDraggingEnvFile(false);
+    importEnvFile(event.dataTransfer?.files?.[0]);
+  }
+
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="function-drawer panel-card settings-drawer github-env-drawer" role="dialog" aria-modal="true" aria-label="Environment Variables">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">Environment</span>
+            <h2>Environment Variables</h2>
+            <p>Environment Variables for {siteName}</p>
+          </div>
+          <div className="function-drawer-actions">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} aria-label="Close">
+              <MenuIcon name="Close" />
+            </button>
+          </div>
+        </header>
+        <form className="settings-form github-env-form" onSubmit={onSubmit}>
+          <label>
+            .env
+            <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={15} />
+          </label>
+          <section className="github-env-dropzone-wrap">
+            <span className="helpdesk-dropzone-label">Import .env</span>
+            <label
+              className={["helpdesk-dropzone github-env-dropzone", isDraggingEnvFile ? "dragging" : ""].filter(Boolean).join(" ")}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setIsDraggingEnvFile(true);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setIsDraggingEnvFile(false)}
+              onDrop={handleEnvFileDrop}
+            >
+              <span className="helpdesk-dropzone-icon" aria-hidden="true"><MenuIcon name="upload" /></span>
+              <span className="helpdesk-dropzone-copy">
+                <strong>Drop .env here or click to choose</strong>
+                <small>All existing environment variables will be overwritten.</small>
+              </span>
+              <input className="helpdesk-dropzone-input" type="file" accept=".env" onChange={handleEnvFileInput} />
+            </label>
+          </section>
+          <button className="primary-button compact drawer-full-button" type="submit" disabled={isSaving}>
+            {isSaving ? <LoadingIcon label="Saving environment variables" /> : "Save Environment Variables"}
+          </button>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
+function GithubDeploymentLogDrawer({ deploymentLog, isLoading, onClose }) {
+  const deployment = deploymentLog.deployment || {};
+  return (
+    <div className="function-drawer-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <aside className="function-drawer panel-card settings-drawer github-log-drawer" role="dialog" aria-modal="true" aria-label="Build Logs">
+        <header className="function-drawer-header">
+          <div>
+            <span className="status-pill blue">Build Logs</span>
+            <h2>Deployment #{deployment.id}</h2>
+            <p>{deployment.source || "Git Repository"}</p>
+          </div>
+          <div className="function-drawer-actions">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} aria-label="Close">
+              <MenuIcon name="Close" />
+            </button>
+          </div>
+        </header>
+        {isLoading ? <LoadingIcon label="Loading build log" /> : <pre className="github-build-log">{deploymentLog.log || "No build log was returned."}</pre>}
+      </aside>
+    </div>
+  );
+}
+
+function GithubFaqSection() {
+  const faqs = [
+    ["What frameworks are supported?", "Our platform automatically detects and supports all major modern frameworks, including Next.js, Express, Fastify, Nest.js, Remix, Nuxt, Astro, SvelteKit, React, Vue, Angular, Solid, Sails, and more."],
+    ["Why hosting Node.js application with us?", "We provide a full-stack cloud platform where hosting, CDN, security, and compute are built in. Push code and the platform builds, runs, and serves your application globally."],
+    ["How to deploy Node.js app?", "Connect to Git Repository such as GitHub, GitLab, or Bitbucket, or upload a ZIP file of your project. We create a secure build environment, build the app, and upload the output to your site root."],
+    ["My app runs fine locally. Why does it fail to deploy?", "Please check the logs first. Common issues include missing PORT configuration, an invalid start command, or missing environment variables."]
+  ];
+  return (
+    <section className="panel-card github-faq-card">
+      <span className="status-pill blue">FAQs</span>
+      <div className="github-faq-grid">
+        {faqs.map(([title, body]) => (
+          <article className="panel-card github-faq-item" key={title}>
+            <h3>{title}</h3>
+            <p>{body}</p>
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
@@ -4404,7 +4780,7 @@ function WebsiteFunctionDrawer({ activeFunction, fields, error, isLoading, busyA
           </div>
           <div className="function-drawer-actions">
             <RefreshButton onClick={onRefresh} />
-            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} aria-label="Close">
               <MenuIcon name="x" />
             </button>
           </div>
@@ -6160,7 +6536,7 @@ function FtpCreateDrawer({ draft, isBusy, onChange, onClose, onOpenFolderPicker,
             <p>Create an FTP user with login, password, confirm password, and folder access.</p>
           </div>
           <div className="function-drawer-actions">
-            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} title="Close" aria-label="Close">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onClose} aria-label="Close">
               <MenuIcon name="x" />
             </button>
           </div>
@@ -6936,7 +7312,7 @@ function FilesSection({ cpId, initialPath = "", showBackToWebsites = false, onBa
                 <p>{fileEditor.path || "Hosting root"}</p>
               </div>
               <div className="function-drawer-actions">
-                <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={() => setFileEditor(null)} title="Close" aria-label="Close">
+                <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={() => setFileEditor(null)} aria-label="Close">
                   <MenuIcon name="x" />
                 </button>
               </div>
@@ -6998,7 +7374,7 @@ function FileWorkQueueDrawer({ jobs, isLoading, error, deletingId, onClose, onRe
           </div>
           <div className="function-drawer-actions">
             <IconActionButton label="Refresh" onClick={onRetry} />
-            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} aria-label="Close">
               <MenuIcon name="x" />
             </button>
           </div>
@@ -7112,7 +7488,7 @@ function FileManagerActionPanel({ action, item, draft, isBusy, onChange, onCance
           {currentName && <p>{currentName}</p>}
         </div>
         <div className="function-drawer-actions">
-          <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onCancel} title="Close" aria-label="Close">
+          <button className="secondary-button compact icon-only-button drawer-close-button" type="button" disabled={isBusy} onClick={onCancel} aria-label="Close">
             <MenuIcon name="x" />
           </button>
         </div>
@@ -7245,7 +7621,7 @@ function FolderPickerModal({ title, currentPath, folders, parentPath, isLoading,
             <h2>{title}</h2>
             <p>{currentPath}</p>
           </div>
-          <button className="secondary-button compact icon-only-button" type="button" title="Close" aria-label="Close" onClick={onClose}>
+          <button className="secondary-button compact icon-only-button" type="button" aria-label="Close" onClick={onClose}>
             <MenuIcon name="x" />
           </button>
         </div>
@@ -8741,7 +9117,7 @@ function SslActionDrawer({ activeWorkflow, firstDomain, sslDraft, setSslDraft, d
             <p>{isCsr ? "Creates a certificate signing request for this domain." : isImport ? "Upload a .cer, .crt, or .pfx certificate before installing it." : "Runs the selected SSL action for this domain."}</p>
           </div>
           <div className="function-drawer-actions">
-            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} title="Close" aria-label="Close">
+            <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={onClose} aria-label="Close">
               <MenuIcon name="Close" />
             </button>
           </div>
@@ -9596,9 +9972,10 @@ function CustomSelect({ value, options = [], onChange, ariaLabel = "Choose optio
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
     const viewportPadding = 8;
+    const maxMenuWidth = 150;
     const menuWidth = Math.min(
-      Math.max(rect.width, 160),
-      Math.max(160, window.innerWidth - (viewportPadding * 2))
+      maxMenuWidth,
+      Math.max(120, window.innerWidth - (viewportPadding * 2))
     );
     const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - menuWidth - 8));
     const optionCount = Math.max(1, normalizedOptions.length);
@@ -15266,7 +15643,7 @@ function SettingsSection() {
               <p>{settingsEditorDescription(settingsEditor)}</p>
             </div>
             <div className="function-drawer-actions">
-              <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={() => setSettingsEditor("")} title="Close" aria-label="Close">
+              <button className="secondary-button compact icon-only-button drawer-close-button" type="button" onClick={() => setSettingsEditor("")} aria-label="Close">
                 <MenuIcon name="x" />
               </button>
             </div>
