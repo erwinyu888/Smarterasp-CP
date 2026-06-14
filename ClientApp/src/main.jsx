@@ -550,7 +550,7 @@ function App() {
     );
   }
 
-  if ((route === "panel" || route === "panel_cp" || route === "cp-renew-promotion" || route === "cp-renew") && !currentUser) return null;
+  if ((route === "panel" || route === "panel_cp" || route === "cp-renew-promotion" || route === "cp-renew" || route === "cp-upgrade-list") && !currentUser) return null;
 
   if (route === "panel_cp") {
     return (
@@ -581,6 +581,17 @@ function App() {
       <>
         <AccountPanelShell theme={theme} currentUser={currentUser} activeTitle="Product Renew" onLogout={handleLogout} onToggleTheme={toggleTheme}>
           <CpRenewPage theme={theme} currentUser={currentUser} onBackToPanel={goToPanel} onToggleTheme={toggleTheme} embedded />
+        </AccountPanelShell>
+        <ChatbaseChatbot forceVisible />
+      </>
+    );
+  }
+
+  if (route === "cp-upgrade-list") {
+    return (
+      <>
+        <AccountPanelShell theme={theme} currentUser={currentUser} activeTitle="Upgrade Hosting" onLogout={handleLogout} onToggleTheme={toggleTheme}>
+          <CpUpgradeListPage embedded />
         </AccountPanelShell>
         <ChatbaseChatbot forceVisible />
       </>
@@ -625,10 +636,12 @@ function App() {
 
 function ChatbaseChatbot({ forceVisible = false }) {
   const [isHidden, setIsHidden] = useState(() => !forceVisible && getLiveChatSessionFlag());
+  const [isCollapsed, setIsCollapsed] = useState(() => !forceVisible);
 
   useEffect(() => {
     if (forceVisible) {
       document.documentElement.classList.remove("ai-chat-hidden");
+      document.documentElement.classList.remove("ai-chat-collapsed");
       for (const selector of ["#chatbase-message-bubbles", "#chatbase-bubble-button", "#chatbase-bubble-window"]) {
         const element = document.querySelector(selector);
         if (element instanceof HTMLElement) {
@@ -639,11 +652,13 @@ function ChatbaseChatbot({ forceVisible = false }) {
     }
 
     document.documentElement.classList.toggle("ai-chat-hidden", isHidden);
-  }, [forceVisible, isHidden]);
+    document.documentElement.classList.toggle("ai-chat-collapsed", !isHidden && isCollapsed);
+  }, [forceVisible, isHidden, isCollapsed]);
 
   useEffect(() => {
     if (forceVisible) {
       setIsHidden(false);
+      setIsCollapsed(false);
       return undefined;
     }
 
@@ -652,6 +667,7 @@ function ChatbaseChatbot({ forceVisible = false }) {
     return () => {
       window.removeEventListener("controlpanel:live-chat-opened", handleLiveChatOpened);
       document.documentElement.classList.remove("ai-chat-hidden");
+      document.documentElement.classList.remove("ai-chat-collapsed");
     };
   }, [forceVisible]);
 
@@ -674,6 +690,41 @@ function ChatbaseChatbot({ forceVisible = false }) {
     script.setAttribute("data-chatbase-chatbot", chatbaseChatbotId);
     document.body.appendChild(script);
   }, [isHidden]);
+
+  useEffect(() => {
+    if (forceVisible || isHidden) return undefined;
+
+    const collapseChatWindow = () => {
+      if (!isCollapsed) return;
+      const bubbleWindow = document.querySelector("#chatbase-bubble-window");
+      if (bubbleWindow instanceof HTMLElement) {
+        bubbleWindow.style.setProperty("display", "none", "important");
+      }
+    };
+
+    const handleClick = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("#chatbase-bubble-button, #chatbase-message-bubbles")) {
+        setIsCollapsed(false);
+        document.documentElement.classList.remove("ai-chat-collapsed");
+        const bubbleWindow = document.querySelector("#chatbase-bubble-window");
+        if (bubbleWindow instanceof HTMLElement) {
+          bubbleWindow.style.display = "";
+        }
+      }
+    };
+
+    collapseChatWindow();
+    const observer = new MutationObserver(collapseChatWindow);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class"] });
+    document.addEventListener("click", handleClick, true);
+
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("click", handleClick, true);
+    };
+  }, [forceVisible, isHidden, isCollapsed]);
 
   return null;
 }
@@ -886,6 +937,7 @@ function appRouteFromPath(pathname) {
   if (pathname === "/panel_cp") return "panel_cp";
   if (pathname === "/account/cp_renew_promotion") return "cp-renew-promotion";
   if (pathname === "/account/cp_renew") return "cp-renew";
+  if (pathname === "/account/cp_upgrade_list") return "cp-upgrade-list";
   if (pathname === "/account/printreceipt" || pathname === "/invoice") return "invoice";
   if (pathname.startsWith("/checkout")) return "checkout";
   if (pathname === "/account/emailchangeverify") return "email-verify";
@@ -1036,6 +1088,8 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
   const [isPayingWithBalance, setIsPayingWithBalance] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isPaymentPopupOpen, setIsPaymentPopupOpen] = useState(false);
+  const [couponCode, setCouponCode] = useState("");
+  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
   const paymentPopupTimerRef = useRef(null);
   const query = useMemo(() => new URLSearchParams(window.location.search), []);
   const guid = query.get("guid") ?? "";
@@ -1099,6 +1153,32 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
       setOrderMessage("Unable to reach checkout balance service.");
     } finally {
       setIsPayingWithBalance(false);
+    }
+  }
+
+  async function applyCoupon(event) {
+    event.preventDefault();
+    if (!guid || !couponCode.trim()) return;
+    setIsApplyingCoupon(true);
+    setOrderMessage("");
+
+    try {
+      const response = await fetch(`/api/account/checkout-temp/${encodeURIComponent(guid)}/coupon`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ couponCode })
+      });
+      const result = await response.json().catch(() => null);
+      setOrderMessage(result?.message ?? "Unable to apply coupon.");
+      if (response.ok && result?.success) {
+        setOrder(result.order);
+        setCheckoutState(result);
+        setCouponCode("");
+      }
+    } catch {
+      setOrderMessage("Unable to reach coupon service.");
+    } finally {
+      setIsApplyingCoupon(false);
     }
   }
 
@@ -1184,10 +1264,27 @@ function CheckoutHandoff({ theme, currentUser, onBackToPanel, onToggleTheme }) {
           <div><dt>Total</dt><dd>{formatMoney(total || 0)}</dd></div>
           {order?.info1 && <div><dt>Info 1</dt><dd>{order.info1}</dd></div>}
           {order?.info2 && <div><dt>Info 2</dt><dd>{order.info2}</dd></div>}
+          {order?.info4 && <div><dt>Coupon</dt><dd>{order.info4}</dd></div>}
           {order?.renewInfo && <div><dt>Renew Info</dt><dd>{order.renewInfo}</dd></div>}
           {order?.fulfillmentPath && <div><dt>Next Step</dt><dd>{order.fulfillmentPath}</dd></div>}
           {!!shortfall && <div><dt>Remaining</dt><dd>{formatMoney(shortfall)}</dd></div>}
         </dl>
+        {!isRenewTemp && order && !orderPaid && !orderProcessed && (
+          <form className="checkout-coupon-form" onSubmit={applyCoupon}>
+            <label>
+              Coupon Code
+              <input
+                value={couponCode}
+                onChange={(event) => setCouponCode(event.target.value)}
+                placeholder="Extra3Mo"
+                autoComplete="off"
+              />
+            </label>
+            <button className="secondary-button checkout-dark-button" type="submit" disabled={isApplyingCoupon || !couponCode.trim()}>
+              {isApplyingCoupon ? <LoadingIcon label="Applying coupon" /> : "Apply"}
+            </button>
+          </form>
+        )}
         {orderMessage && (
           orderMessage.startsWith("Loading")
             ? <LoadingState label="Loading checkout order" />
@@ -13090,8 +13187,29 @@ function NewOrderSection({ onChangeSection }) {
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [busyProductId, setBusyProductId] = useState(null);
+  const [trialUpgradeAccount, setTrialUpgradeAccount] = useState(null);
 
   const activeOption = orderOptions.find((option) => option.type === activeType) ?? orderOptions[0];
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadTrialStatus() {
+      try {
+        const response = await fetch("/api/account/dashboard");
+        const result = await response.json().catch(() => null);
+        if (ignore || !response.ok || !result?.success) return;
+        const trialAccount = (result.dashboard?.hostingAccounts ?? []).find((account) => account.isActiveTrialOnly || account.isTrial);
+        setTrialUpgradeAccount(trialAccount ?? null);
+      } catch {
+        if (!ignore) setTrialUpgradeAccount(null);
+      }
+    }
+
+    loadTrialStatus();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   useEffect(() => {
     let ignore = false;
@@ -13144,6 +13262,11 @@ function NewOrderSection({ onChangeSection }) {
   }
 
   async function createNewOrder(product) {
+    if (["hosting", "managed-hosting", "windows-vps", "linux-vps", "cloud", "dedicated"].includes(activeType) && trialUpgradeAccount?.cpId) {
+      window.location.href = hostingRenewUrl(trialUpgradeAccount, "/account/cp_upgrade_list");
+      return;
+    }
+
     const selectedPrice = selectedPriceFor(product);
     if (!selectedPrice) {
       setMessage(`${product.name} has no available billing terms.`);
@@ -13310,6 +13433,8 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
   };
   const planFirstDomain = (account) => planDomains(account)[0] ?? "No Primary domain";
   const planDomainCount = (account) => planDomains(account).length;
+  const activeTrialAccount = accounts.find((account) => account.isActiveTrialOnly);
+  const trialOfferMessage = activeTrialAccount?.trialUpgradeOffer;
 
   async function loadHostingRenewalPreview(notice) {
     setRenewalBusyId(notice.clientProductId);
@@ -13346,6 +13471,10 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
 
   function openHostingRenewPromotion(account) {
     if (!account?.clientProductId) return;
+    if (account.isTrial) {
+      window.location.href = hostingRenewUrl(account, "/account/cp_upgrade_list");
+      return;
+    }
     window.location.href = hostingRenewUrl(account, "/account/cp_renew_promotion");
   }
 
@@ -13486,6 +13615,16 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
         <article className="panel-card dashboard-error-panel">
           <p>{dashboardError}</p>
           <IconActionButton label="Retry" onClick={onReloadDashboard} />
+        </article>
+      )}
+
+      {trialOfferMessage && (
+        <article className="trial-upgrade-offer panel-card">
+          <span className="status-pill warning">Limited-Time Offer</span>
+          <p>{trialOfferMessage}</p>
+          <button className="primary-button compact" type="button" onClick={() => openHostingRenewPromotion(activeTrialAccount)}>
+            Upgrade to paid plan
+          </button>
         </article>
       )}
 
@@ -13697,12 +13836,12 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                   <MenuIcon name="rocket" /> Manage
                 </button>
                 <button
-                  className="secondary-button"
+                  className={account.isTrial ? "secondary-button trial-upgrade-action-button" : "secondary-button"}
                   type="button"
                   disabled={!account.clientProductId || renewalBusyId !== null}
                   onClick={() => openHostingRenewPromotion(account)}
                 >
-                  <MenuIcon name="order" /> Renew
+                  <MenuIcon name="order" /> {account.isTrial ? "Upgrade to paid plan" : "Renew"}
                 </button>
                 <button className="secondary-button" type="button" onClick={() => openHostingUpgrade(account)}>
                   <MenuIcon name="arrow-up" /> Upgrade
@@ -13738,11 +13877,11 @@ function HostingSection({ dashboard, dashboardError, isDashboardLoading, onManag
                         <MenuIcon name="rocket" />
                       </button>
                       <button
-                        className="secondary-button compact icon-only-button"
+                        className={account.isTrial ? "secondary-button compact icon-only-button trial-upgrade-action-button" : "secondary-button compact icon-only-button"}
                         type="button"
                         disabled={!account.clientProductId || renewalBusyId !== null}
-                        title="Renew"
-                        aria-label="Renew"
+                        title={account.isTrial ? "Upgrade to paid plan" : "Renew"}
+                        aria-label={account.isTrial ? "Upgrade to paid plan" : "Renew"}
                         onClick={() => openHostingRenewPromotion(account)}
                       >
                         <MenuIcon name="order" />
@@ -13868,6 +14007,181 @@ function findHostingAccountForRenewal(accounts, renewParams) {
     (renewParams.cpId && Number(account.cpId) === renewParams.cpId)
     || (renewParams.clientProductId && Number(account.clientProductId) === renewParams.clientProductId)
   )) ?? accounts[0] ?? null;
+}
+
+function CpUpgradeListPage({ embedded = false }) {
+  const [account, setAccount] = useState(null);
+  const [catalog, setCatalog] = useState(null);
+  const [targetId, setTargetId] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isBusy, setIsBusy] = useState(false);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const renewParams = currentRenewParams();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadUpgradeList() {
+      setIsLoading(true);
+      setMessage("");
+      setCatalog(null);
+      setPreview(null);
+      setTargetId("");
+      try {
+        const dashboardResponse = await fetch("/api/account/dashboard");
+        const dashboardResult = await dashboardResponse.json().catch(() => null);
+        if (!dashboardResponse.ok || !dashboardResult?.success) {
+          throw new Error(dashboardResult?.message ?? "Unable to load hosting plans.");
+        }
+
+        const selectedAccount = findHostingAccountForRenewal(dashboardResult.dashboard?.hostingAccounts ?? [], renewParams);
+        if (!selectedAccount?.cpId) {
+          throw new Error("Unable to find the hosting plan for upgrade.");
+        }
+
+        const catalogResponse = await fetch(`/api/account/hosting-upgrade/${selectedAccount.cpId}`);
+        const catalogResult = await catalogResponse.json().catch(() => null);
+        if (!catalogResponse.ok || !catalogResult?.success) {
+          throw new Error(catalogResult?.message ?? "Unable to load upgrade options.");
+        }
+
+        if (!isMounted) return;
+        setAccount(selectedAccount);
+        setCatalog(catalogResult.catalog);
+        setMessage(catalogResult.catalog?.targets?.length ? "Please choose a plan." : "No upgrade targets were found for this hosting plan.");
+      } catch (error) {
+        if (isMounted) setMessage(error.message || "Unable to load upgrade options.");
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadUpgradeList();
+    return () => {
+      isMounted = false;
+    };
+  }, [renewParams.cpId, renewParams.clientProductId]);
+
+  async function calculateUpgrade(nextTargetId) {
+    if (!account?.cpId || !nextTargetId) return;
+    setIsCalculating(true);
+    setPreview(null);
+    setMessage("");
+    try {
+      const response = await fetch("/api/account/hosting-upgrade/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId: account.cpId, targetProductId: Number(nextTargetId) })
+      });
+      const result = await response.json().catch(() => null);
+      setPreview(result?.preview ?? null);
+      setMessage(result?.message ?? "Unable to calculate upgrade price.");
+    } catch {
+      setMessage("Unable to reach hosting upgrade service.");
+    } finally {
+      setIsCalculating(false);
+    }
+  }
+
+  async function createUpgradeCheckout() {
+    if (!account?.cpId || !targetId) return;
+    setIsBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/account/hosting-upgrade/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpId: account.cpId, targetProductId: Number(targetId) })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        setMessage(result?.message ?? "Unable to create upgrade checkout.");
+        return;
+      }
+
+      if (goToCheckoutOrder(result.order)) return;
+      setMessage("Upgrade checkout order created.");
+    } catch {
+      setMessage("Unable to reach hosting upgrade checkout.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  const content = (
+    <section className="checkout-handoff-card account-embedded-renew-card">
+      <span className="status-pill blue">Upgrade Hosting</span>
+      <h1>Upgrade Hosting Account</h1>
+      <p>Choose an eligible paid hosting plan for this trial account.</p>
+      {isLoading && <LoadingState label="Loading upgrade options" />}
+      {account && (
+        <dl className="card-meta single">
+          <div><dt>Hosting Plan</dt><dd>{account.cpLogin}</dd></div>
+          <div><dt>Current Plan</dt><dd>{account.webHostType}</dd></div>
+          <div><dt>Due Date</dt><dd>{formatDate(account.renewalDate)}</dd></div>
+        </dl>
+      )}
+      {catalog && (
+        <div className="hosting-upgrade-grid">
+          <div className="upgrade-summary-box">
+            <label className="form-label">Upgrade To</label>
+            <CustomSelect
+              className="hosting-upgrade-target-select"
+              value={targetId}
+              disabled={isCalculating || isBusy}
+              ariaLabel="Upgrade to"
+              onChange={(value) => {
+                setTargetId(value);
+                setPreview(null);
+                if (value) {
+                  calculateUpgrade(value);
+                } else {
+                  setMessage("Please choose a plan.");
+                }
+              }}
+              options={[
+                { value: "", label: "Please choose a plan" },
+                ...(catalog.targets ?? []).map((target) => ({
+                  value: target.productId,
+                  label: target.description || target.name
+                }))
+              ]}
+            />
+            {isCalculating && (
+              <p className="inline-help-text loading-help-text">
+                <span>Calculating upgrade price...</span>
+                <LoadingIcon label="Calculating upgrade price" />
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {message && !isCalculating && <p className="renewal-action-message">{message}</p>}
+      {preview && !isCalculating && (
+        <div className="checkout-preview-card">
+          <dl className="card-meta">
+            <div><dt>Current Price</dt><dd>{formatMoney(preview.currentPrice, "USD")}</dd></div>
+            <div><dt>Target Price</dt><dd>{formatMoney(preview.targetPrice, "USD")}</dd></div>
+            <div><dt>Days Left</dt><dd>{preview.daysLeft}</dd></div>
+            <div><dt>Total Upgrade</dt><dd>{formatMoney(preview.totalAmount, "USD")}</dd></div>
+          </dl>
+          <div className="upgrade-action-row">
+            <button className="primary-button compact hosting-upgrade-now-button" type="button" disabled={!preview.canCheckout || isBusy} onClick={createUpgradeCheckout}>
+              {isBusy ? <LoadingIcon label="Creating checkout" /> : "Upgrade Now"}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+
+  return embedded ? content : (
+    <main className="checkout-page account-standalone-page">
+      {content}
+    </main>
+  );
 }
 
 function hostingPromotionType(account) {

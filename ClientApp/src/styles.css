@@ -139,6 +139,10 @@ body::after {
   display: none !important;
 }
 
+.ai-chat-collapsed #chatbase-bubble-window {
+  display: none !important;
+}
+
 .olark-launch-button-wrapper {
   bottom: 22px !important;
   left: 22px !important;
@@ -312,6 +316,30 @@ p {
   flex-wrap: wrap;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.checkout-coupon-form {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(220px, 1fr) auto;
+}
+
+.checkout-coupon-form label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.78rem;
+  gap: 8px;
+}
+
+.checkout-coupon-form input {
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 42px;
+  padding: 0 12px;
 }
 
 .checkout-dark-button {
@@ -725,6 +753,22 @@ a:focus {
   border-color: #fbbf24;
 }
 
+.trial-upgrade-action-button {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #111827;
+}
+
+.trial-upgrade-action-button:hover:not(:disabled) {
+  background: #fbbf24;
+  border-color: #fbbf24;
+  color: #111827;
+}
+
+.trial-upgrade-action-button .menu-icon {
+  color: currentColor;
+}
+
 .primary-button.as-link {
   cursor: pointer;
   text-decoration: none;
@@ -740,6 +784,20 @@ a:focus {
 .secondary-button:hover,
 .ghost-button:hover {
   border-color: var(--line-strong);
+}
+
+.trial-upgrade-offer .primary-button,
+button.trial-upgrade-action-button {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #111827;
+}
+
+.trial-upgrade-offer .primary-button:hover:not(:disabled),
+button.trial-upgrade-action-button:hover:not(:disabled) {
+  background: #fbbf24;
+  border-color: #fbbf24;
+  color: #111827;
 }
 
 .compact {
@@ -2032,6 +2090,30 @@ html[data-theme="light"] .reward-card span:not(.user-dot) {
 .urgent-panel {
   display: grid;
   gap: 14px;
+}
+
+.trial-upgrade-offer {
+  align-items: center;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--warning) 20%, transparent), color-mix(in srgb, var(--blue) 14%, transparent)),
+    var(--panel-strong);
+  border-color: color-mix(in srgb, var(--warning) 48%, var(--line));
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.trial-upgrade-offer p {
+  color: var(--ink);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+html[data-theme="light"] .trial-upgrade-offer {
+  background:
+    linear-gradient(135deg, rgba(245, 165, 36, 0.16), rgba(50, 145, 255, 0.08)),
+    #ffffff;
 }
 
 .renewal-panel-header {

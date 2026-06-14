@@ -16,6 +16,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Mail;
 using System.Net.Sockets;
+using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -32,6 +33,7 @@ namespace controlpanel
         private static readonly object LoginFailureLock = new();
         private static readonly Dictionary<string, LoginFailureWindow> LoginFailures = new(StringComparer.OrdinalIgnoreCase);
         private const string HostingDashboardSessionPrefix = "hosting_dashboard_cache:";
+        private const string TrialUpgradeOfferMessage = "Limited-Time Offer: Upgrade Your Trial Account Today with Coupon Code: Extra3Mo. Get Extra 3 Months of Hosting Service and Free SSL Certificate(Saving $53/year).";
         private const int ConstPageTypeNewCp = 1;
         private const int ConstPageTypeNewSite = 2;
         private const int ConstPageTypeBuyDomain = 3;
@@ -48,6 +50,7 @@ namespace controlpanel
         private const int ConstPageTypeAddonRenew = 15;
         private const int ConstPageTypeOptionAddonRenew = 16;
         private const int ConstPageTypeEmailQuota = 17;
+        private const int ConstPageTypeTrialUpgrade = 18;
         private const int ConstPageTypeWhoisPrivacy = 19;
         private const int ConstPageTypeReseller = 20;
         private const int ConstPageTypeUpgradePlan = 21;
@@ -197,6 +200,7 @@ namespace controlpanel
                 endpoints.MapPost("/api/account/helpdesk/tickets/{callId:long}/close", HandleAccountHelpdeskTicketCloseAsync);
                 endpoints.MapGet("/api/account/helpdesk/attachments/{fileName}", HandleAccountHelpdeskAttachmentAsync);
                 endpoints.MapGet("/api/account/checkout-temp/{guid}", HandleCheckoutTempOrderAsync);
+                endpoints.MapPost("/api/account/checkout-temp/{guid}/coupon", HandleCheckoutApplyCouponAsync);
                 endpoints.MapPost("/api/account/checkout-temp/{guid}/pay-with-balance", HandleCheckoutPayWithBalanceAsync);
                 endpoints.MapGet("/api/account/renew-temp/{guid}", HandleRenewTempOrderAsync);
                 endpoints.MapPost("/api/account/renew-temp/{guid}/pay-with-balance", HandleRenewTempPayWithBalanceAsync);
@@ -2939,6 +2943,19 @@ WHERE client_product_id = @clientProductId
 
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
+
+            if (type is "hosting" or "managed-hosting" or "windows-vps" or "linux-vps" or "cloud" or "dedicated")
+            {
+                var trialCpId = await LoadActiveTrialOnlyCpIdAsync(connection, sessionUser.CustomerId);
+                if (trialCpId > 0)
+                {
+                    await Results.BadRequest(new NewPurchaseStartResponse(
+                        false,
+                        "Your trial hosting account must be upgraded from the trial upgrade page.",
+                        null)).ExecuteAsync(context);
+                    return;
+                }
+            }
 
             var catalog = await LoadNewOrderCatalogAsync(connection, sessionUser.CustomerType, type);
             var product = catalog.Find(item => item.ProductId == request.ProductId);
@@ -7006,6 +7023,85 @@ WHERE id = @id
             await Results.Ok(BuildCheckoutTempOrderResponse("Account balance covers this checkout. Continue purchase setup to finish provisioning.", updated, balance, brandName: brandName)).ExecuteAsync(context);
         }
 
+        private async Task HandleCheckoutApplyCouponAsync(HttpContext context)
+        {
+            var sessionUser = GetSessionUser(context);
+            if (sessionUser == null)
+            {
+                await Results.Json(
+                    new CheckoutTempOrderResponse(false, "Not signed in.", null),
+                    statusCode: StatusCodes.Status401Unauthorized
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            var guid = context.Request.RouteValues["guid"]?.ToString() ?? "";
+            var request = await context.Request.ReadFromJsonAsync<CouponApplyRequest>() ?? new CouponApplyRequest("");
+            var couponCode = NormalizeCouponCode(request.CouponCode);
+            if (string.IsNullOrWhiteSpace(guid) || string.IsNullOrWhiteSpace(couponCode))
+            {
+                await Results.BadRequest(new CheckoutTempOrderResponse(false, "Enter a coupon code.", null)).ExecuteAsync(context);
+                return;
+            }
+
+            var connectionString = GetEhbConfigConnectionString();
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                await Results.Problem("Missing EhbConfig connection string.").ExecuteAsync(context);
+                return;
+            }
+
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+
+            var order = await LoadCheckoutTempOrderAsync(connection, sessionUser.CustomerId, guid);
+            if (order == null)
+            {
+                await Results.Json(
+                    new CheckoutTempOrderResponse(false, "Checkout temp order was not found for this account.", null),
+                    statusCode: StatusCodes.Status404NotFound
+                ).ExecuteAsync(context);
+                return;
+            }
+
+            if (order.Processed || order.IsPaid)
+            {
+                var lockedBalance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+                var lockedBrand = GetBrandDomainForCustomer(sessionUser.CustomerId);
+                await Results.BadRequest(BuildCheckoutTempOrderResponse("Coupon cannot be changed after this checkout is paid or processed.", order, lockedBalance, success: false, brandName: lockedBrand)).ExecuteAsync(context);
+                return;
+            }
+
+            var coupon = await ValidateCheckoutCouponAsync(connection, sessionUser.CustomerId, order, couponCode);
+            if (!coupon.Success)
+            {
+                var invalidBalance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+                var invalidBrand = GetBrandDomainForCustomer(sessionUser.CustomerId);
+                await Results.BadRequest(BuildCheckoutTempOrderResponse(coupon.Message, order, invalidBalance, success: false, brandName: invalidBrand)).ExecuteAsync(context);
+                return;
+            }
+
+            await ExecuteNonQueryAsync(connection, @"
+UPDATE oms.dbo.buyer_temp
+SET info4 = @couponCode,
+    amount = @amount
+WHERE id = @id
+  AND customer_id = @customerId
+  AND ISNULL(ispaid, 0) = 0
+  AND ISNULL(processed, 0) = 0", command =>
+            {
+                command.Parameters.AddWithValue("@couponCode", coupon.Code);
+                command.Parameters.AddWithValue("@amount", coupon.Amount);
+                command.Parameters.AddWithValue("@id", guid);
+                command.Parameters.AddWithValue("@customerId", sessionUser.CustomerId);
+            });
+
+            var updated = await LoadCheckoutTempOrderAsync(connection, sessionUser.CustomerId, guid);
+            var balance = await LoadAccountCreditBalanceAsync(connection, sessionUser.CustomerId);
+            var brandName = GetBrandDomainForCustomer(sessionUser.CustomerId);
+            await Results.Ok(BuildCheckoutTempOrderResponse(coupon.Message, updated, balance, brandName: brandName)).ExecuteAsync(context);
+        }
+
         private async Task HandleRenewTempOrderAsync(HttpContext context)
         {
             var sessionUser = GetSessionUser(context);
@@ -10896,6 +10992,162 @@ WHERE id = @id
             );
         }
 
+        private static string NormalizeCouponCode(string? couponCode)
+        {
+            var normalized = (couponCode ?? "").Trim();
+            return Regex.IsMatch(normalized, "^[A-Za-z0-9_-]{1,50}$", RegexOptions.CultureInvariant) ? normalized : "";
+        }
+
+        private async Task<CouponApplyResult> ValidateCheckoutCouponAsync(SqlConnection connection, long customerId, CheckoutTempOrder order, string couponCode)
+        {
+            if (couponCode.Equals("Extra3Mo", StringComparison.Ordinal))
+            {
+                return await ValidateExtra3MoCouponAsync(connection, customerId, order);
+            }
+
+            var coupon = await LoadCouponAsync(connection, couponCode);
+            if (coupon == null || !coupon.Status)
+            {
+                return new CouponApplyResult(false, "Invalid coupon code!", "", order.Amount);
+            }
+
+            if (!CouponFormulaAllowsCustomer(coupon.Formula, customerId) || !CouponFormulaNotExpired(coupon.Formula))
+            {
+                return new CouponApplyResult(false, "Invalid coupon code!", "", order.Amount);
+            }
+
+            var repriced = await TryGetPriceWithCouponAsync(order.ProductId, order.Info2, order.Info1, customerId, coupon.Code);
+            if (!repriced.Success)
+            {
+                return new CouponApplyResult(false, $"Coupon is valid, but price recalculation failed: {repriced.Message}", "", order.Amount);
+            }
+
+            return new CouponApplyResult(true, $"Coupon OK - {coupon.Description}", coupon.Code, repriced.DiscountedAmount);
+        }
+
+        private static async Task<CouponApplyResult> ValidateExtra3MoCouponAsync(SqlConnection connection, long customerId, CheckoutTempOrder order)
+        {
+            if (order.PageType != ConstPageTypeTrialUpgrade)
+            {
+                return new CouponApplyResult(false, "Sorry, early hosting plan upgrade promotion has expired.", "", order.Amount);
+            }
+
+            if (!long.TryParse(order.Info5, NumberStyles.Integer, CultureInfo.InvariantCulture, out var cpId) || cpId <= 0)
+            {
+                return new CouponApplyResult(false, "Sorry, early hosting plan upgrade promotion has expired.", "", order.Amount);
+            }
+
+            var activeTrialCpId = await LoadActiveTrialOnlyCpIdAsync(connection, customerId);
+            if (activeTrialCpId != cpId)
+            {
+                return new CouponApplyResult(false, "Sorry, early hosting plan upgrade promotion has expired.", "", order.Amount);
+            }
+
+            var dueDate = await ExecuteScalarAsync<DateTime>(connection, @"
+SELECT TOP 1 cp.next_due_date
+FROM dbo.cp_config c
+INNER JOIN oms.dbo.client_product cp ON cp.client_product_id = c.client_product_id
+WHERE c.cpID = @cpId
+  AND c.customerID = @customerId", command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cpId);
+                command.Parameters.AddWithValue("@customerId", customerId);
+            });
+            if (dueDate == default || DateTime.Now >= dueDate.AddDays(-45))
+            {
+                return new CouponApplyResult(false, "Sorry, early hosting plan upgrade promotion has expired.", "", order.Amount);
+            }
+
+            return new CouponApplyResult(true, "Extra 3 Months of Free Hosting and 1 Free SSL! This applies to your account automatically after upgrade.", "Extra3Mo", order.Amount);
+        }
+
+        private static async Task<CouponInfo?> LoadCouponAsync(SqlConnection connection, string couponCode)
+        {
+            const string sql = @"
+SELECT TOP 1 coupon_code, description, formula, credit_type, credit_value, status
+FROM oms.dbo.coupon
+WHERE coupon_code = @couponCode";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@couponCode", couponCode);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new CouponInfo(
+                reader.GetString(0).Trim(),
+                reader.GetString(1).Trim(),
+                reader.GetString(2).Trim(),
+                reader.GetString(3).Trim(),
+                reader.GetString(4).Trim(),
+                !reader.IsDBNull(5) && reader.GetBoolean(5));
+        }
+
+        private static bool CouponFormulaAllowsCustomer(string formula, long customerId)
+        {
+            var match = Regex.Match(formula ?? "", @"@customerid\s*=\s*'?(\d+)'?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            return !match.Success || match.Groups[1].Value == customerId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static bool CouponFormulaNotExpired(string formula)
+        {
+            var match = Regex.Match(formula ?? "", @"@expiredate\s*=\s*'?([^')]+)'?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!match.Success)
+            {
+                return true;
+            }
+
+            return DateTime.TryParse(match.Groups[1].Value.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var expireDate)
+                && expireDate >= DateTime.Now;
+        }
+
+        private async Task<CouponPriceResult> TryGetPriceWithCouponAsync(int productId, string currency, string paymentTerm, long customerId, string couponCode)
+        {
+            if (productId <= 0 || string.IsNullOrWhiteSpace(currency) || string.IsNullOrWhiteSpace(paymentTerm))
+            {
+                return new CouponPriceResult(false, "This checkout does not have enough product information for coupon pricing.", 0m);
+            }
+
+            var endpoint = ConfigOrEnv("OmsPriceAdmin:Url", "OMS_PRICE_ADMIN_URL", "http://member.smarterasp.net/WebServices/omsAdmin/PriceAdmin.svc");
+            var envelope = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:soap=""http://schemas.xmlsoap.org/soap/envelope/"" xmlns:tem=""http://tempuri.org/"">
+  <soap:Body>
+    <tem:GetPriceWithCoupon>
+      <tem:productid>{productId}</tem:productid>
+      <tem:currency>{SecurityElement.Escape(currency)}</tem:currency>
+      <tem:paymentterm>{SecurityElement.Escape(paymentTerm)}</tem:paymentterm>
+      <tem:customerid>{customerId}</tem:customerid>
+      <tem:coupon>{SecurityElement.Escape(couponCode)}</tem:coupon>
+    </tem:GetPriceWithCoupon>
+  </soap:Body>
+</soap:Envelope>";
+
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+                request.Headers.TryAddWithoutValidation("SOAPAction", "http://tempuri.org/IPriceAdmin/GetPriceWithCoupon");
+                request.Content = new StringContent(envelope, Encoding.UTF8, "text/xml");
+                using var response = await client.SendAsync(request);
+                var body = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    return new CouponPriceResult(false, $"Price service returned {(int)response.StatusCode}.", 0m);
+                }
+
+                var xml = XDocument.Parse(body);
+                var discounted = xml.Descendants().FirstOrDefault(node => node.Name.LocalName == "DiscountedPriceAmount")?.Value;
+                return decimal.TryParse(discounted, NumberStyles.Any, CultureInfo.InvariantCulture, out var amount)
+                    ? new CouponPriceResult(true, "OK", Math.Round(amount, 2))
+                    : new CouponPriceResult(false, "Price service did not return a discounted amount.", 0m);
+            }
+            catch (Exception ex)
+            {
+                return new CouponPriceResult(false, ex.Message, 0m);
+            }
+        }
+
         private static RenewTempOrderResponse BuildRenewTempOrderResponse(string message, RenewTempOrder? order, decimal balance, bool success = true, string brandName = "")
         {
             var shortfall = order == null ? 0m : Math.Max(0m, order.Amount - balance);
@@ -11038,6 +11290,7 @@ ORDER BY adddate DESC";
             ConstPageTypeAddonRenew => "/account/addon_renew_action",
             ConstPageTypeOptionAddonRenew => "/account/option_addon_renew_1",
             ConstPageTypeEmailQuota => "/account/addon_purchase_detail?type=17",
+            ConstPageTypeTrialUpgrade => "/account/cp_upgrade_action",
             ConstPageTypeWhoisPrivacy => "/account/addon_purchase_detail?type=19",
             ConstPageTypeUpgradePlan => "/account/upgrade_plan_action",
             ConstPageTypeGeneral => "/account/addon_purchase_detail?type=22",
@@ -12523,7 +12776,20 @@ WHERE customerID = @customerId";
             const string sql = @"
 SELECT c.cpID, c.cpLogin, c.WebHostType, c.ServerID, c.status, c.client_product_id,
        c.AdditionalSite, c.AdditionalSiteLimit, c.firstDomain, c.AdditionalRAM,
-       cp.next_due_date, cp.product_id, d.domain_name
+       cp.next_due_date, cp.product_id, d.domain_name,
+       CASE WHEN EXISTS (
+           SELECT 1
+           FROM oms.dbo.client_product_ext cpe
+           WHERE cpe.client_product_id = c.client_product_id
+             AND ISNULL(cpe.isTrial, 0) = 1
+       ) THEN 1 ELSE 0 END AS isTrial,
+       CASE WHEN EXISTS (
+           SELECT 1
+           FROM dbo.customer_trial_flags ctf
+           WHERE ctf.customerID = c.customerID
+             AND ISNULL(ctf.cp_trial, 0) = 1
+       ) THEN 1 ELSE 0 END AS hasCustomerTrialFlag,
+       COUNT(*) OVER (PARTITION BY c.customerID) AS cpCount
 FROM dbo.cp_config c
 LEFT JOIN oms.dbo.client_product cp ON cp.client_product_id = c.client_product_id
 LEFT JOIN dbo.cp_config_Sites s ON s.cpID = c.cpID
@@ -12568,6 +12834,10 @@ ORDER BY CASE WHEN c.status = 1 THEN 0 ELSE 1 END, c.cpID, d.domain_name";
                 var domains = new List<string>();
                 AddHostingDomain(domains, reader.IsDBNull(12) ? "" : reader.GetString(12));
                 var firstDomain = domains.FirstOrDefault() ?? "No Primary domain";
+                var isTrial = !reader.IsDBNull(13) && Convert.ToInt32(reader.GetValue(13), CultureInfo.InvariantCulture) == 1;
+                var hasCustomerTrialFlag = !reader.IsDBNull(14) && Convert.ToInt32(reader.GetValue(14), CultureInfo.InvariantCulture) == 1;
+                var cpCount = reader.IsDBNull(15) ? 0 : Convert.ToInt32(reader.GetValue(15), CultureInfo.InvariantCulture);
+                var isActiveTrialOnly = isTrial && hasCustomerTrialFlag && cpCount == 1;
 
                 accountIndex[cpId] = accounts.Count;
                 accountDomains[cpId] = domains;
@@ -12583,7 +12853,10 @@ ORDER BY CASE WHEN c.status = 1 THEN 0 ELSE 1 END, c.cpID, d.domain_name";
                     dueDate,
                     totalSites,
                     reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
-                    domains
+                    domains,
+                    isTrial,
+                    isActiveTrialOnly,
+                    isActiveTrialOnly ? TrialUpgradeOfferMessage : ""
                 ));
             }
 
@@ -18486,6 +18759,7 @@ WHERE cpID = @cpId", command => command.Parameters.AddWithValue("@cpId", cpId)) 
             }
 
             var legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/domainbind_actions.asp";
+            var isTrialHosting = await IsTrialHostingCpAsync(connection, site.CpId);
             if (remove || move)
             {
                 var requestedDomainUid = ParseLong(FieldValue(fields, "domainUid", FieldValue(fields, "DomainUid", "0")));
@@ -18493,6 +18767,13 @@ WHERE cpID = @cpId", command => command.Parameters.AddWithValue("@cpId", cpId)) 
                 if (mappedDomain == null)
                 {
                     return new HostingSiteFunctionMutationResponse(false, "Domain is not mapped to this website.", null);
+                }
+                if (remove && isTrialHosting && IsTemporaryHostingDomain(mappedDomain.DomainName))
+                {
+                    return new HostingSiteFunctionMutationResponse(false, "Sorry, you must upgrade to a paid hosting plan to delete this.", new
+                    {
+                        legacySource = "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:buildEditTable"
+                    });
                 }
 
                 var call = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
@@ -18563,6 +18844,13 @@ WHERE cpID = @cpId", command => command.Parameters.AddWithValue("@cpId", cpId)) 
             {
                 return new HostingSiteFunctionMutationResponse(false, "This domain is already mapped in the control panel.", null);
             }
+            if (isTrialHosting && await IsTrialDomainTrackedAsync(connection, site.CpId, domain))
+            {
+                return new HostingSiteFunctionMutationResponse(false, "domain is not allowed on trial hosting account.", new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/functions/functions.inc:isTrialDomainExist"
+                });
+            }
 
             var callAdd = await PostLegacyAgentAsync(GetLegacyAgentSettings(), site.ServerId, "/IIS_api.asp", new Dictionary<string, string>
             {
@@ -18580,6 +18868,10 @@ WHERE cpID = @cpId", command => command.Parameters.AddWithValue("@cpId", cpId)) 
             }
 
             var domainUidAdded = await InsertHostingDomainAsync(connection, site.SiteUid, domain);
+            if (isTrialHosting)
+            {
+                await AddTrialDomainTrackAsync(connection, site.CpId, domain);
+            }
             return new HostingSiteFunctionMutationResponse(true, "Domain added to IIS and account data.", new { legacySource, domainUid = domainUidAdded, call = callAdd });
         }
 
@@ -20926,13 +21218,23 @@ WHERE cpID = @cpId
         private static async Task<SelectedHostingCp> LoadSelectedHostingCpAsync(SqlConnection connection, long customerId, long requestedCpId = 0)
         {
             const string sql = @"
-SELECT TOP 1 cpID, cpLogin, ISNULL(ServerID, ''), ISNULL(WebHostType, '')
+SELECT TOP 1 c.cpID,
+       c.cpLogin,
+       ISNULL(c.ServerID, ''),
+       ISNULL(c.WebHostType, ''),
+       CASE WHEN EXISTS (
+           SELECT 1
+           FROM oms.dbo.client_product_ext cpe
+           WHERE cpe.client_product_id = c.client_product_id
+             AND ISNULL(cpe.isTrial, 0) = 1
+       ) THEN 1 ELSE 0 END AS isTrial
 FROM dbo.cp_config
-WHERE customerID = @customerId
-  AND ISNULL(hideit, 0) = 0
-  AND status <> 3
-  AND (@requestedCpId = 0 OR cpID = @requestedCpId)
-ORDER BY CASE WHEN status = 1 THEN 0 ELSE 1 END, cpID";
+AS c
+WHERE c.customerID = @customerId
+  AND ISNULL(c.hideit, 0) = 0
+  AND c.status <> 3
+  AND (@requestedCpId = 0 OR c.cpID = @requestedCpId)
+ORDER BY CASE WHEN c.status = 1 THEN 0 ELSE 1 END, c.cpID";
 
             await using var command = new SqlCommand(sql, connection);
             command.Parameters.AddWithValue("@customerId", customerId);
@@ -20947,8 +21249,107 @@ ORDER BY CASE WHEN status = 1 THEN 0 ELSE 1 END, cpID";
                 reader.GetInt64(0),
                 reader.GetString(1).Trim(),
                 reader.IsDBNull(2) ? "" : reader.GetString(2).Trim(),
-                reader.IsDBNull(3) ? "" : reader.GetString(3).Trim()
+                reader.IsDBNull(3) ? "" : reader.GetString(3).Trim(),
+                !reader.IsDBNull(4) && Convert.ToInt32(reader.GetValue(4), CultureInfo.InvariantCulture) == 1
             );
+        }
+
+        private static async Task<long> LoadActiveTrialOnlyCpIdAsync(SqlConnection connection, long customerId)
+        {
+            const string sql = @"
+SELECT c.cpID,
+       CASE WHEN EXISTS (
+           SELECT 1
+           FROM oms.dbo.client_product_ext cpe
+           WHERE cpe.client_product_id = c.client_product_id
+             AND ISNULL(cpe.isTrial, 0) = 1
+       ) THEN 1 ELSE 0 END AS isTrial
+FROM dbo.cp_config c
+WHERE c.customerID = @customerId
+  AND c.status = 1
+  AND ISNULL(c.hideit, 0) = 0";
+
+            var activeCount = 0;
+            long trialCpId = 0;
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@customerId", customerId);
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                activeCount++;
+                var isTrial = !reader.IsDBNull(1) && Convert.ToInt32(reader.GetValue(1), CultureInfo.InvariantCulture) == 1;
+                if (isTrial)
+                {
+                    trialCpId = Convert.ToInt64(reader.GetValue(0), CultureInfo.InvariantCulture);
+                }
+            }
+
+            return activeCount == 1 && trialCpId > 0 ? trialCpId : 0;
+        }
+
+        private static async Task<bool> IsTrialHostingCpAsync(SqlConnection connection, long cpId)
+        {
+            if (cpId <= 0)
+            {
+                return false;
+            }
+
+            const string sql = @"
+SELECT COUNT(1)
+FROM dbo.cp_config c
+INNER JOIN oms.dbo.client_product_ext cpe ON cpe.client_product_id = c.client_product_id
+WHERE c.cpID = @cpId
+  AND ISNULL(cpe.isTrial, 0) = 1";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            var value = await command.ExecuteScalarAsync();
+            return value != null && value != DBNull.Value && Convert.ToInt32(value, CultureInfo.InvariantCulture) > 0;
+        }
+
+        private static async Task<bool> IsTrialDomainTrackedAsync(SqlConnection connection, long cpId, string domainName)
+        {
+            if (cpId <= 0 || string.IsNullOrWhiteSpace(domainName))
+            {
+                return false;
+            }
+
+            const string sql = @"
+SELECT COUNT(1)
+FROM dbo.cp_config_Domains_Trial_Track
+WHERE cpID = @cpId
+  AND LOWER(domainname) = LOWER(@domainName)
+  AND ISNULL(isTrial, 0) = 1";
+            await using var command = new SqlCommand(sql, connection);
+            command.Parameters.AddWithValue("@cpId", cpId);
+            command.Parameters.AddWithValue("@domainName", domainName.Trim());
+            var value = await command.ExecuteScalarAsync();
+            return value != null && value != DBNull.Value && Convert.ToInt32(value, CultureInfo.InvariantCulture) > 0;
+        }
+
+        private static async Task AddTrialDomainTrackAsync(SqlConnection connection, long cpId, string domainName)
+        {
+            if (cpId <= 0 || string.IsNullOrWhiteSpace(domainName))
+            {
+                return;
+            }
+
+            var customerId = await ExecuteScalarAsync<long>(connection, "SELECT TOP 1 customerID FROM dbo.cp_config WHERE cpID = @cpId", command =>
+            {
+                command.Parameters.AddWithValue("@cpId", cpId);
+            });
+            if (customerId <= 0)
+            {
+                return;
+            }
+
+            await ExecuteNonQueryAsync(connection, @"
+INSERT INTO dbo.cp_config_Domains_Trial_Track (customerID, cpID, domainname, isTrial)
+VALUES (@customerId, @cpId, @domainName, 1)", command =>
+            {
+                command.Parameters.AddWithValue("@customerId", customerId);
+                command.Parameters.AddWithValue("@cpId", cpId);
+                command.Parameters.AddWithValue("@domainName", domainName.Trim());
+            });
         }
 
         private async Task<OwnedMappedDomain?> LoadOwnedMappedDomainAsync(SqlConnection connection, SelectedHostingCp cp, string domainName)
@@ -21743,6 +22144,14 @@ VALUES (@cpLogin, @from, @to, GETDATE(), @serverId, 'panel-test', 0, @note, 'pan
 
         private async Task<HostingProvisionResponse> ProvisionHostingDatabaseAsync(SqlConnection connection, SelectedHostingCp cp, HostingDatabaseProvisionRequest request)
         {
+            if (cp.IsTrial || cp.WebHostType.StartsWith("W60-", StringComparison.OrdinalIgnoreCase) || cp.WebHostType.StartsWith("W30-", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HostingProvisionResponse(false, "Sorry, this feature is not available for trial hosting. Please upgrade.", "database", new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/mssql_user_create.asp and mysql_user_create.asp"
+                });
+            }
+
             var engine = request.Engine.Equals("MySQL", StringComparison.OrdinalIgnoreCase) ? "MySQL" : "MSSQL";
             var databaseName = SafeProvisionName(request.Name, 64, allowDash: false);
             var login = SafeProvisionName(request.Login, 64, allowDash: false);
@@ -21926,7 +22335,11 @@ WHERE cpid = CONVERT(varchar(50), @cpId)
 
             var ftpUserCount = await LoadHostingFtpUserCountAsync(connection, cp.CpId);
             var ftpUserQuota = await LoadAdditionalFtpUserQuotaAsync(connection, cp.CpId);
-            if (ftpUserQuota <= 0)
+            if (cp.WebHostType.StartsWith("W60-", StringComparison.OrdinalIgnoreCase))
+            {
+                ftpUserQuota = 1;
+            }
+            else if (ftpUserQuota <= 0)
             {
                 ftpUserQuota = 100;
             }
@@ -21997,6 +22410,14 @@ VALUES (@pp1, @cpId, @ftpLogin, @ftpPassword, @ftpPath, @ftpQuota, @permission, 
         private async Task<HostingProvisionResponse> ProvisionHostingEmailAsync(SqlConnection connection, SelectedHostingCp cp, HostingEmailProvisionRequest request)
         {
             await Task.CompletedTask;
+            if (cp.IsTrial)
+            {
+                return new HostingProvisionResponse(false, "Trial account does not support email services. Please consider upgrading.", "email", new
+                {
+                    legacySource = "/Users/erwinyu/Downloads/hosting/cp8/cp/email_action.asp"
+                });
+            }
+
             var domain = NormalizeProvisionDomainName(request.Domain);
             var password = (request.Password ?? "").Trim();
             var quotaMb = ClampInt(request.QuotaMb.ToString(CultureInfo.InvariantCulture), 100, 102400);
@@ -25124,6 +25545,10 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record BillingInvoiceResponse(bool Success, string Message, BillingInvoiceDetail? Invoice);
         private sealed record CheckoutPreviewResponse(bool Success, string Message, CheckoutPreview? Preview);
         private sealed record CheckoutCreateResponse(bool Success, string Message, CheckoutOrder? Order);
+        private sealed record CouponApplyRequest(string CouponCode);
+        private sealed record CouponInfo(string Code, string Description, string Formula, string CreditType, string CreditValue, bool Status);
+        private sealed record CouponApplyResult(bool Success, string Message, string Code, decimal Amount);
+        private sealed record CouponPriceResult(bool Success, string Message, decimal DiscountedAmount);
         private sealed record CheckoutTempOrderResponse(bool Success, string Message, CheckoutTempOrder? Order, AccountBalanceSummary? Balance = null, bool CanContinueWithBalance = false, decimal Shortfall = 0m, string BrandName = "");
         private sealed record RenewTempOrderResponse(bool Success, string Message, RenewTempOrder? Order, AccountBalanceSummary? Balance = null, bool CanContinueWithBalance = false, decimal Shortfall = 0m, string BrandName = "");
         private sealed record AffiliateWithdrawResponse(bool Success, string Message, AffiliateWithdrawPreview? Preview);
@@ -25142,7 +25567,7 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
         private sealed record HostingSitesResponse(bool Success, string Message, HostingSitesDashboard? Dashboard);
         private sealed record AccountDashboard(CustomerSummary Customer, List<HostingAccountSummary> HostingAccounts, List<HostingStatusCount> HostingStatusSummary, List<RenewalNoticeSummary> RenewalNotices, List<UrgentLogSummary> UrgentLogs);
         private sealed record CustomerSummary(long CustomerId, string Login, string CustomerType, string Status, string Name, string CompanyName, DateOnly? AccountStartDate, string BrandDomain);
-        private sealed record HostingAccountSummary(long CpId, string CpLogin, string PrimaryDomain, string WebHostType, string ServerId, string Status, long ClientProductId, int ProductId, DateOnly? RenewalDate, int TotalSites, int AdditionalRam, List<string> Domains);
+        private sealed record HostingAccountSummary(long CpId, string CpLogin, string PrimaryDomain, string WebHostType, string ServerId, string Status, long ClientProductId, int ProductId, DateOnly? RenewalDate, int TotalSites, int AdditionalRam, List<string> Domains, bool IsTrial, bool IsActiveTrialOnly, string TrialUpgradeOffer);
         private sealed record HostingStatusCount(string Status, int Count);
         private sealed record RenewalNoticeSummary(string Name, long ClientProductId, DateOnly RenewalDate, int DaysLeft, string Status);
         private sealed record UrgentLogSummary(int Id, long CustomerId, string CustomerLogin, string Message, DateTime CreatedAt);
@@ -25480,7 +25905,7 @@ ORDER BY ISNULL(installCount, 0) DESC, p.name";
             int ConfigFiles,
             int ParameterSets,
             int PermissionRules);
-        private sealed record SelectedHostingCp(long CpId, string CpLogin, string ServerId, string WebHostType)
+        private sealed record SelectedHostingCp(long CpId, string CpLogin, string ServerId, string WebHostType, bool IsTrial = false)
         {
             public static SelectedHostingCp Empty { get; } = new(0, "", "", "");
         }
